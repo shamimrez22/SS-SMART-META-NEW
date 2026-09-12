@@ -851,7 +851,7 @@ export default function App() {
             setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: retryCount > 0 ? 'retrying' : 'generating', errorMessage: undefined } : f));
 
             const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error("Generation timed out (120s)")), 120000)
+              setTimeout(() => reject(new Error("Generation timed out (45s)")), 45000)
             );
             
             const result = await Promise.race([
@@ -884,15 +884,14 @@ export default function App() {
             const errorMsg = error.message || "Unknown Error";
             
             // Handle Rate Limit (429) specifically
-            if (errorMsg.includes("429") || errorMsg.includes("Rate limit")) {
-              console.warn("Rate limit hit! Pausing all workers...");
+            if (errorMsg.includes("429") || errorMsg.includes("Rate limit") || errorMsg.includes("RESOURCE_EXHAUSTED")) {
+              console.warn("Rate limit hit! Backing off briefly (5s)...");
               setIsPaused(true);
-              showNotification("Rate limit hit. Pausing for 30 seconds...", 'error');
+              showNotification("Rate limit reached. Auto-resuming in 5s...", 'info');
               
-              // Wait for 30 seconds before resuming
-              await new Promise(resolve => setTimeout(resolve, 30000));
+              // Wait briefly (5 seconds) before automatically resuming
+              await new Promise(resolve => setTimeout(resolve, 5000));
               setIsPaused(false);
-              showNotification("Resuming generation...", 'success');
               
               // Don't increment retry count for rate limits, just try again
               continue;

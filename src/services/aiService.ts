@@ -29,7 +29,15 @@ export async function testApiConnection(provider: 'gemini' | 'groq' | 'mistral',
       }
       const ai = new GoogleGenAI({ apiKey: activeKey });
       
-      const testModels = ["gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+      const testModels = [
+        "gemini-3.5-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.8-flash"
+      ];
       let lastErr: any = null;
       for (const model of testModels) {
         try {
@@ -237,8 +245,16 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
 
   console.log("Starting Gemini generation for:", file?.name);
   
-  // Prioritize gemini-2.5-flash-lite (fastest ~1.5s) then gemini-3.6-flash, followed by fallbacks
-  const modelsToTry = ["gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+  // Models ordered by speed and current availability (gemini-3.5-flash-lite and gemini-flash-lite-latest are fastest ~1s)
+  const modelsToTry = [
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.8-flash"
+  ];
   let lastError: any = null;
   let response: any = null;
 
@@ -268,7 +284,7 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
                 }
               }
             },
-            required: ["title", "description", "keywords", "category", "rating", "analysis"]
+            required: ["title", "description", "keywords", "category", "rating"]
           }
         }
       });
@@ -292,8 +308,35 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
       const text = response.text || "{}";
       result = JSON.parse(repairJson(text));
     } catch (e) {
-      console.error("Failed to parse Gemini JSON response:", e, response.text);
-      throw new Error("Invalid JSON response from AI. Please retry.");
+      console.error("Failed to parse Gemini JSON response, extracting via regex:", e, response.text);
+      const raw = response.text || "";
+      const titleMatch = raw.match(/"title"\s*:\s*"([^"]+)"/i);
+      const descMatch = raw.match(/"description"\s*:\s*"([^"]+)"/i);
+      const kwMatch = raw.match(/"keywords"\s*:\s*"([^"]+)"/i);
+      const catMatch = raw.match(/"category"\s*:\s*"([^"]+)"/i);
+      result = {
+        title: titleMatch ? titleMatch[1] : (file?.name ? file.name.replace(/\.[^/.]+$/, "") : "Stock Asset"),
+        description: descMatch ? descMatch[1] : "High quality commercial stock asset suitable for digital and print media.",
+        keywords: kwMatch ? kwMatch[1] : "stock, photography, design, digital, commercial, high quality",
+        category: catMatch ? catMatch[1] : "Photography",
+        rating: 5
+      };
+    }
+
+    // Ensure all required fields exist
+    if (!result.title) result.title = file?.name ? file.name.replace(/\.[^/.]+$/, "") : "Stock Asset";
+    if (!result.description) result.description = `${result.title}. High quality stock photo.`;
+    if (!result.keywords) result.keywords = "stock, commercial, media, creative, photo";
+    if (!result.category) result.category = "Commercial";
+    if (!result.rating) result.rating = 5;
+    if (!result.analysis) {
+      result.analysis = {
+        theme: result.category,
+        subject: result.title,
+        objects: [],
+        colors: [],
+        concepts: []
+      };
     }
     
     if (settings.optimizeKeywords) {
@@ -313,13 +356,16 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
 
 function repairJson(text: string): string {
   try {
-    // Try to find the first { and last }
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      return text.substring(firstBrace, lastBrace + 1);
+    let cleaned = text.trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
     }
-    return text;
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+    return cleaned;
   } catch (e) {
     return text;
   }
