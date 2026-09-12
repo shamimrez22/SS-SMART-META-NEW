@@ -1,0 +1,8 @@
+{
+  "name": "SS SMART META",
+  "description": "Professional SEO metadata generator for stock marketplaces (Shutterstock, Adobe Stock, Freepik, Envato) using AI.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

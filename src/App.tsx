@@ -1,0 +1,2270 @@
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { FixedSizeList } from 'react-window';
+import { 
+  Play, 
+  Pause, 
+  Trash2, 
+  Download, 
+  History as HistoryIcon, 
+  Zap,
+  LayoutDashboard,
+  Plus,
+  CheckCircle2,
+  AlertCircle,
+  Upload,
+  Settings,
+  X,
+  FileText,
+  Video,
+  Layers,
+  FileImage,
+  Clock,
+  Database,
+  Copy,
+  Check,
+  Loader2,
+  Eye,
+  Share2,
+  MoreVertical,
+  ChevronRight,
+  ChevronLeft,
+  ArrowUp,
+  Info,
+  FolderPlus,
+  Square,
+  FileSpreadsheet,
+  FileJson,
+  Key,
+  Star,
+  Tag,
+  Sparkles,
+  RefreshCw,
+  RefreshCcw
+} from 'lucide-react';
+import Papa from 'papaparse';
+import * as piexif from "piexifjs";
+import { StockMetadata, ApiConfig, GeneratorSettings, ApiStatus, HistoryItem } from './types';
+import { generateMetadata, testApiConnection, extractEpsThumbnail } from './services/aiService';
+import { cn } from './lib/utils';
+
+const STORAGE_KEY = 'ai-metadata-pro-config';
+const HISTORY_KEY = 'ai-metadata-pro-history';
+
+// Optimized Copyable Cell Component
+const CopyableCell = React.memo(({ value, onChange, placeholder, colorClass, isGenerating, onCopy }: any) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (!value) return;
+    navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    if (onCopy) onCopy();
+  };
+
+  return (
+    <div className="w-full h-full relative group/cell p-0.5">
+      <textarea 
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          "w-full h-full bg-secondary border border-border rounded-[1px] p-1 text-[9px] resize-none focus:ring-1 focus:ring-blue-500 outline-none custom-scrollbar leading-none placeholder:text-muted-foreground/20 uppercase font-bold transition-all shadow-inner",
+          colorClass,
+          isGenerating && "opacity-50 blur-[1px]"
+        )}
+        placeholder={placeholder}
+      />
+      {isGenerating && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <RefreshCw size={12} className="animate-spin text-blue-500 opacity-80" />
+        </div>
+      )}
+      <button 
+        onClick={handleCopy}
+        className={cn(
+          "absolute top-1 right-2 p-0.5 bg-muted border border-border rounded-[1px] opacity-0 group-hover/cell:opacity-100 transition-all hover:bg-accent shadow-sm",
+          copied && "opacity-100 bg-emerald-500/20 border-emerald-500/50"
+        )}
+        title="COPY"
+      >
+        {copied ? <Check size={8} className="text-emerald-500" /> : <Copy size={8} className="text-muted-foreground" />}
+      </button>
+    </div>
+  );
+});
+
+// Optimized Row Component for Virtualization
+const FileRow = React.memo(({ index, style, data }: any) => {
+  const { files, updateFile, regenerateSingleFile, deleteFile, isGenerating, openErrorModal } = data;
+  const file = files[index];
+  if (!file) return null;
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    deleteFile(file.id);
+  };
+
+  return (
+    <div 
+      style={style}
+      className={cn(
+        "flex flex-row w-full hover:bg-blue-500/5 transition-colors group items-center border-b border-border bg-background",
+        file.status === 'generating' && "bg-blue-500/5"
+      )}
+    >
+      <div className="w-[12%] px-1 py-0.5 border-r border-border flex items-center gap-1.5 overflow-hidden shrink-0 h-full">
+        <div className="w-6 h-6 bg-muted rounded-[1px] border border-border flex-shrink-0 overflow-hidden relative shadow-sm">
+          {file.previewUrl ? (
+            <img src={file.previewUrl} alt="" className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+              <FileText size={12} />
+            </div>
+          )}
+          {file.status === 'completed' && (
+            <div className="absolute inset-0 bg-emerald-500/10 flex items-center justify-center">
+              <CheckCircle2 size={12} className="text-emerald-500" />
+            </div>
+          )}
+          {(file.status === 'generating' || file.status === 'retrying') && (
+            <div className="absolute inset-0 bg-blue-500/10 flex items-center justify-center">
+              <RefreshCw size={12} className="animate-spin text-blue-500" />
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[9px] font-black text-muted-foreground truncate leading-none uppercase tracking-tighter">{file.filename}</div>
+          <div className="flex items-center gap-1 mt-0.5">
+            <span 
+              onClick={(e) => {
+                if (file.status === 'error' && file.errorMessage) {
+                  e.stopPropagation();
+                  openErrorModal(file.errorMessage, file.filename);
+                }
+              }}
+              className={cn(
+                "text-[6px] font-black px-1 py-0 rounded-[1px] uppercase tracking-widest border group relative cursor-help",
+                file.status === 'completed' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                (file.status === 'generating' || file.status === 'retrying') ? "bg-blue-500/10 text-blue-400 border-blue-500/20 animate-pulse" :
+                file.status === 'error' ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-muted text-muted-foreground border-border"
+              )}
+            >
+              {file.status}
+              {file.status === 'error' && file.errorMessage && (
+                <div className="absolute top-full left-0 mt-2 w-64 p-3 bg-background border border-red-500/50 rounded shadow-2xl text-[10px] font-bold text-red-400 z-[100] hidden group-hover:block break-words normal-case backdrop-blur-xl ring-1 ring-red-500/20">
+                  <div className="flex items-center gap-2 mb-2 border-b border-red-500/20 pb-1 text-red-500">
+                    <AlertCircle size={12} />
+                    <span className="tracking-widest">ERROR DETAILS</span>
+                  </div>
+                  <div className="opacity-90 leading-relaxed">
+                    {file.errorMessage}
+                  </div>
+                </div>
+              )}
+              {file.status === 'error' && (
+                <AlertCircle size={8} className="inline-block ml-1 text-red-500 animate-pulse" />
+              )}
+            </span>
+            {(file.status === 'error' || file.status === 'completed') && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); regenerateSingleFile(file.id); }}
+                className={cn(
+                  "text-[6px] font-black px-1 py-0 rounded-[1px] uppercase tracking-widest transition-colors flex items-center gap-0.5 shadow-sm active:scale-95 border border-transparent",
+                  file.status === 'error' ? "bg-red-500 text-white hover:bg-red-400" : "bg-blue-500 text-white hover:bg-blue-400"
+                )}
+                title="RE-GENERATE METADATA"
+              >
+                <RefreshCw size={6} />
+                {file.status === 'completed' ? 'R' : 'G'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="w-[15%] px-1 py-0.5 border-r border-border h-full shrink-0">
+        <CopyableCell 
+          value={file.title}
+          onChange={(val: string) => updateFile(file.id, { title: val })}
+          placeholder="TITLE..."
+          colorClass="text-blue-400"
+          isGenerating={file.status === 'generating' || file.status === 'retrying'}
+        />
+      </div>
+
+      <div className="w-[25%] px-1 py-0.5 border-r border-border h-full shrink-0 relative">
+        <CopyableCell 
+          value={file.keywords}
+          onChange={(val: string) => updateFile(file.id, { keywords: val })}
+          placeholder="KEYWORDS..."
+          colorClass="text-orange-400"
+          isGenerating={file.status === 'generating' || file.status === 'retrying'}
+        />
+        {file.keywordScore && (
+          <div className="absolute bottom-1 right-2 text-[6px] font-black text-blue-400 bg-blue-500/10 px-0.5 py-0 rounded-[1px] border border-blue-500/20 z-10">
+            {file.keywordScore}%
+          </div>
+        )}
+      </div>
+
+      <div className="w-[20%] px-1 py-0.5 border-r border-border h-full shrink-0">
+        <CopyableCell 
+          value={file.description}
+          onChange={(val: string) => updateFile(file.id, { description: val })}
+          placeholder="DESCRIPTION..."
+          colorClass="text-emerald-400"
+          isGenerating={file.status === 'generating' || file.status === 'retrying'}
+        />
+      </div>
+
+      <div className="w-[10%] px-1 py-0.5 border-r border-border h-full shrink-0">
+        <CopyableCell 
+          value={file.category}
+          onChange={(val: string) => updateFile(file.id, { category: val })}
+          placeholder="CATEGORY..."
+          colorClass="text-purple-400"
+          isGenerating={file.status === 'generating' || file.status === 'retrying'}
+        />
+      </div>
+
+      <div className="w-[8%] px-1 py-0.5 border-r border-border h-full shrink-0 flex items-center justify-center">
+        <div className="text-[9px] font-black text-muted-foreground bg-muted px-1 py-0 rounded-[1px] border border-border">
+          {file.keywords ? file.keywords.split(',').length : 0}
+        </div>
+      </div>
+
+      <div className="w-[10%] px-1 py-0.5 h-full shrink-0 flex items-center justify-center gap-1">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <Star 
+            key={star} 
+            size={8} 
+            className={cn(
+              "transition-all",
+              star <= (file.rating || 0) ? "text-amber-400 fill-amber-400" : "text-muted-foreground/10"
+            )} 
+          />
+        ))}
+        <button 
+          onClick={handleDelete}
+          className="ml-2 p-1 text-muted-foreground/30 hover:text-red-400 hover:bg-red-500/10 rounded-[1px] transition-all opacity-0 group-hover:opacity-100"
+          title="DELETE FILE"
+        >
+          <Trash2 size={10} />
+        </button>
+      </div>
+    </div>
+  );
+});
+
+export default function App() {
+  const [apiConfig, setApiConfig] = useState<ApiConfig>({
+    gemini: ['', '', '', '', ''],
+    groq: ['', '', '', '', ''],
+    mistral: ['', '', '', '', '']
+  });
+
+  const [activeKey, setActiveKey] = useState<{provider: keyof ApiConfig, index: number}>({
+    provider: 'gemini',
+    index: 0
+  });
+
+  const [settings, setSettings] = useState<GeneratorSettings>({
+    titleLength: [30, 70],
+    descriptionLength: [100, 200],
+    keywordsCount: 30,
+    autoDownload: false,
+    promptMode: 'default',
+    customPrompt: '',
+    optimizeKeywords: true,
+    minTitleWords: 5,
+    maxTitleWords: 15,
+    minDescriptionWords: 15,
+    maxDescriptionWords: 30,
+    minKeywords: 10,
+    maxKeywords: 50,
+    titleChoice: 1,
+    metadataFor: 'all',
+    singleWordKeywords: false,
+    silhouette: false,
+    transparentBackground: false,
+    prohibitedWords: false,
+    customPromptEnabled: false,
+    autoGenerateOnAdd: false,
+    savedKeywords: [],
+    concurrency: 2
+  });
+
+  const [files, setFiles] = useState<StockMetadata[]>([]);
+  const [fileObjects, setFileObjects] = useState<Record<string, File>>({});
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [cooldownTimer, setCooldownTimer] = useState(0);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const stopRef = React.useRef(false);
+  const isPausedRef = React.useRef(false);
+  
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+    if (isPaused) {
+      setCooldownTimer(30);
+      const interval = setInterval(() => {
+        setCooldownTimer(prev => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [isPaused]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [mode, setMode] = useState<'image' | 'vector' | 'video' | 'prompt'>('vector');
+  const [theme, setTheme] = useState<'dark' | 'light' | 'blue'>('dark');
+  const filesRef = useRef(files);
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
+  const [genOptions, setGenOptions] = useState({
+    description: true,
+    filenameHint: true,
+    autoEmbed: false,
+    autoRetry: true,
+    pngIsolated: true,
+    refinePngBg: false,
+    autoSave: false,
+    autoExport: false,
+    aiEnhance: false
+  });
+
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isAppLoading, setIsAppLoading] = useState(true);
+  const [newKeyword, setNewKeyword] = useState('');
+  const [notification, setNotification] = useState<{ message: string; type: 'info' | 'error' | 'success' } | null>(null);
+
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  const formatFilename = useCallback((text: string) => {
+    return text
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, '') // Remove special chars
+      .replace(/[\s_-]+/g, '-') // Replace spaces and underscores with hyphens
+      .replace(/^-+|-+$/g, ''); // Trim hyphens
+  }, []);
+
+  const updateFile = useCallback((id: string, updates: Partial<StockMetadata>) => {
+    setFiles(prev => {
+      const exists = prev.find(f => f.id === id);
+      if (!exists) return prev;
+      
+      return prev.map(f => {
+        if (f.id === id) {
+          const newMetadata = { ...f, ...updates };
+          if (updates.title !== undefined) {
+            const extension = f.filename.split('.').pop() || f.fileType;
+            newMetadata.filename = `${formatFilename(updates.title)}.${extension}`;
+          }
+          return newMetadata;
+        }
+        return f;
+      });
+    });
+  }, [formatFilename]);
+
+  const deleteFile = useCallback((id: string) => {
+    setFiles(prev => prev.filter(f => f.id !== id));
+    setFileObjects(prev => {
+      const newObjs = { ...prev };
+      delete newObjs[id];
+      return newObjs;
+    });
+  }, []);
+
+  const showNotification = (message: string, type: 'info' | 'error' | 'success' = 'info') => {
+    setNotification({ message, type });
+  };
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [errorModal, setErrorModal] = useState<{ isOpen: boolean; message: string; filename: string }>({ isOpen: false, message: '', filename: '' });
+
+  const openErrorModal = useCallback((message: string, filename: string) => {
+    setErrorModal({ isOpen: true, message, filename });
+  }, []);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [selectedExportSite, setSelectedExportSite] = useState('adobe');
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [directoryHandle, setDirectoryHandle] = useState<any>(null);
+  const [apiStatus, setApiStatus] = useState<ApiStatus>({});
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const savedConfig = localStorage.getItem(STORAGE_KEY);
+        if (savedConfig) {
+          const { apiConfig: savedApi, settings: savedSettings, activeKey: savedActiveKey } = JSON.parse(savedConfig);
+          
+          if (savedApi) {
+            setApiConfig(prev => ({
+              ...prev,
+              ...savedApi
+            }));
+          }
+          
+          if (savedSettings) {
+            setSettings(prev => ({
+              ...prev,
+              ...savedSettings
+            }));
+          }
+          
+          if (savedActiveKey) {
+            setActiveKey(savedActiveKey);
+          }
+        }
+
+        const savedHistory = localStorage.getItem(HISTORY_KEY);
+        if (savedHistory) {
+          setHistory(JSON.parse(savedHistory));
+        }
+      } catch (err) {
+        console.error("Failed to load settings:", err);
+      } finally {
+        // Ensure the loader stays for at least 800ms for visual consistency
+        setTimeout(() => setIsAppLoading(false), 800);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  // Save config to local storage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiConfig, settings, activeKey }));
+    } catch (err) {
+      console.error("Failed to save config to local storage:", err);
+    }
+  }, [apiConfig, settings, activeKey]);
+
+  // Save history to local storage with optimization
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        // Strip non-serializable and heavy data from history
+        const optimizedHistory = history.map(item => ({
+          ...item,
+          files: item.files.map(f => ({
+            ...f,
+            previewUrl: undefined,
+            handle: undefined
+          }))
+        }));
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(optimizedHistory));
+      } catch (err) {
+        console.error("Failed to save history to local storage:", err);
+        if (history.length > 5) {
+          setHistory(prev => prev.slice(0, 5));
+        }
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [history]);
+
+  // Handle Theme Switching
+  useEffect(() => {
+    const root = window.document.documentElement;
+    root.classList.remove('dark', 'blue');
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else if (theme === 'blue') {
+      root.classList.add('blue');
+    }
+  }, [theme]);
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
+
+  const handleDirectorySelect = async () => {
+    if (!('showDirectoryPicker' in window)) {
+      showNotification("Your browser doesn't support folder selection. Please use Chrome or Edge.", 'error');
+      return;
+    }
+    try {
+      // @ts-ignore
+      const handle = await window.showDirectoryPicker();
+      setIsLoadingFiles(true);
+      setDirectoryHandle(handle);
+      const newItems: StockMetadata[] = [];
+      const newFileObjects: Record<string, File> = {};
+      
+      for await (const entry of handle.values()) {
+        if (entry.kind === 'file') {
+          const file = await entry.getFile();
+          const ext = file.name.split('.').pop()?.toLowerCase() || '';
+          if (['png', 'eps', 'mp4', 'mov', 'jpg', 'jpeg'].includes(ext)) {
+            const id = Math.random().toString(36).substr(2, 9);
+            newFileObjects[id] = file;
+            newItems.push({
+              id,
+              filename: file.name,
+              title: '',
+              description: '',
+              keywords: '',
+              rating: 5,
+              status: 'pending',
+              fileType: ext,
+              previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+              handle: entry
+            });
+          }
+        }
+      }
+      setFileObjects(prev => ({ ...prev, ...newFileObjects }));
+      setFiles(prev => [...newItems, ...prev]);
+    } catch (err) {
+      console.error("Directory access denied or failed:", err);
+    } finally {
+      setIsLoadingFiles(false);
+    }
+  };
+
+  const handleFileSelectDirect = async () => {
+    if (!('showOpenFilePicker' in window)) {
+      showNotification("Your browser doesn't support direct file editing. Please use Chrome or Edge.", 'error');
+      return;
+    }
+    try {
+      // @ts-ignore
+      const fileHandles = await window.showOpenFilePicker({
+        multiple: true,
+        types: [
+          {
+            description: 'Stock Assets',
+            accept: {
+              'image/jpeg': ['.jpg', '.jpeg'],
+              'image/png': ['.png'],
+              'video/mp4': ['.mp4'],
+              'video/quicktime': ['.mov'],
+              'application/postscript': ['.eps']
+            }
+          }
+        ]
+      });
+
+      setIsLoadingFiles(true);
+      const newItems: StockMetadata[] = [];
+      const newFileObjects: Record<string, File> = {};
+
+      for (const handle of fileHandles) {
+        const file = await handle.getFile();
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        const id = Math.random().toString(36).substr(2, 9);
+        
+        newFileObjects[id] = file;
+        newItems.push({
+          id,
+          filename: file.name,
+          title: '',
+          description: '',
+          keywords: '',
+          rating: 5,
+          status: 'pending',
+          fileType: ext,
+          previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+          handle: handle
+        });
+      }
+      setFileObjects(prev => ({ ...prev, ...newFileObjects }));
+      setFiles(prev => [...newItems, ...prev]);
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error("File selection failed:", err);
+      }
+    } finally {
+      setIsLoadingFiles(false);
+    }
+  };
+
+  const handleBulkEmbed = async () => {
+    if (!('showDirectoryPicker' in window)) {
+      showNotification("Your browser doesn't support folder access. Please use Chrome or Edge.", 'error');
+      return;
+    }
+
+    try {
+      // @ts-ignore
+      const dirHandle = await window.showDirectoryPicker();
+      setDirectoryHandle(dirHandle);
+      
+      const newItems: StockMetadata[] = [];
+      const newFileObjects: Record<string, File> = {};
+
+      for await (const entry of dirHandle.values()) {
+        if (entry.kind === 'file') {
+          const file = await entry.getFile();
+          const ext = file.name.split('.').pop()?.toLowerCase() || '';
+          if (['png', 'eps', 'mp4', 'mov'].includes(ext)) {
+            const id = Math.random().toString(36).substr(2, 9);
+            newFileObjects[id] = file;
+            newItems.push({
+              id,
+              filename: file.name,
+              title: '',
+              description: '',
+              keywords: '',
+              rating: 5,
+              status: 'pending',
+              fileType: ext,
+              previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+              handle: entry
+            });
+          }
+        }
+      }
+
+      if (newItems.length === 0) {
+        showNotification("No supported images or EPS files found in this folder.", 'info');
+        return;
+      }
+
+      setFileObjects(prev => ({ ...prev, ...newFileObjects }));
+      setFiles(prev => [...newItems, ...prev]);
+
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error("Bulk embed failed:", err);
+      }
+    }
+  };
+
+  const handleEmbedAll = async () => {
+    const completedFiles = files.filter(f => f.status === 'completed' && f.handle);
+    if (completedFiles.length === 0) {
+      showNotification("No completed files found to embed.", 'info');
+      return;
+    }
+
+    // Skipping confirmation for now to avoid window.confirm
+    setIsGenerating(true); // Reuse generating state to show loading
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const file of completedFiles) {
+      try {
+        await saveMetadataToLocalFile(file.id, file);
+        successCount++;
+      } catch (err) {
+        console.error(`Failed to embed ${file.filename}:`, err);
+        failCount++;
+      }
+    }
+
+    setIsGenerating(false);
+    showNotification(`Embedding complete! Success: ${successCount}, Failed: ${failCount}`, 'success');
+  };
+
+  const saveMetadataToLocalFile = async (id: string, metadata: Partial<StockMetadata>) => {
+    const fileMetadata = files.find(f => f.id === id);
+    if (!fileMetadata || !fileMetadata.handle) return;
+
+    try {
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saving' } : f));
+      const handle = fileMetadata.handle;
+      const file = await handle.getFile();
+
+      if (file.type === 'image/jpeg' || file.type === 'image/jpg') {
+        const reader = new FileReader();
+        const promise = new Promise<void>((resolve, reject) => {
+          reader.onload = async (e) => {
+            try {
+              const base64 = e.target?.result as string;
+              const zeroth: any = {};
+              zeroth[piexif.ImageIFD.ImageDescription] = metadata.description || fileMetadata.description;
+              zeroth[piexif.ImageIFD.XPSubject] = metadata.title || fileMetadata.title;
+              zeroth[piexif.ImageIFD.XPKeywords] = metadata.keywords || fileMetadata.keywords;
+              zeroth[piexif.ImageIFD.Rating] = metadata.rating || fileMetadata.rating;
+              
+              const exifObj = { "0th": zeroth, "Exif": {}, "GPS": {} };
+              const exifBytes = piexif.dump(exifObj);
+              const newBase64 = piexif.insert(exifBytes, base64);
+              
+              // Convert base64 back to blob
+              const res = await fetch(newBase64);
+              const blob = await res.blob();
+              
+              const writable = await handle.createWritable();
+              await writable.write(blob);
+              await writable.close();
+              resolve();
+            } catch (err) { reject(err); }
+          };
+          reader.onerror = reject;
+        });
+        reader.readAsDataURL(file);
+        await promise;
+      } else {
+        // For EPS/Video, try to create XMP sidecar in the same directory if possible
+        // Note: Browsers usually don't allow creating new files in the same folder 
+        // unless a directory handle was selected. 
+        // If we only have a file handle, we'll download the XMP as a fallback.
+        
+        const xmp = `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/">
+   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">${metadata.title || fileMetadata.title}</rdf:li></rdf:Alt></dc:title>
+   <dc:description><rdf:Alt><rdf:li xml:lang="x-default">${metadata.description || fileMetadata.description}</rdf:li></rdf:Alt></dc:description>
+   <dc:subject><rdf:Bag>${(metadata.keywords || fileMetadata.keywords).split(',').map(k => `<rdf:li>${k.trim()}</rdf:li>`).join('')}</rdf:Bag></dc:subject>
+   <xmp:Rating>${metadata.rating || fileMetadata.rating}</xmp:Rating>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>`;
+
+        if (directoryHandle) {
+          const xmpHandle = await directoryHandle.getFileHandle(`${fileMetadata.filename}.xmp`, { create: true });
+          const writable = await xmpHandle.createWritable();
+          await writable.write(xmp);
+          await writable.close();
+        } else {
+          // Fallback: Download XMP
+          const xmpBlob = new Blob([xmp], { type: 'application/xml' });
+          const xmpLink = document.createElement('a');
+          xmpLink.href = URL.createObjectURL(xmpBlob);
+          xmpLink.download = `${fileMetadata.filename}.xmp`;
+          xmpLink.click();
+        }
+      }
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved' } : f));
+    } catch (err) {
+      console.error("Failed to save to local file:", err);
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'error' } : f));
+    }
+  };
+
+  const regenerateSingleFile = async (id: string) => {
+    const fileMetadata = files.find(f => f.id === id);
+    if (!fileMetadata || fileMetadata.status === 'generating') return;
+
+    const currentKey = apiConfig[activeKey.provider][activeKey.index];
+    if (!currentKey && activeKey.provider !== 'gemini') {
+      showNotification("Selected API Key is empty. Please configure it in settings.", 'error');
+      return;
+    }
+
+    const actualFile = fileObjects[id];
+    if (!actualFile) {
+      showNotification("Original file data not found. Please re-upload.", 'error');
+      return;
+    }
+
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'generating', errorMessage: undefined } : f));
+
+    try {
+      const result = await generateMetadata(actualFile, settings, { [activeKey.provider]: currentKey });
+      setFiles(prev => prev.map(f => {
+        if (f.id === id) {
+          const extension = f.filename.split('.').pop() || f.fileType;
+          return { 
+            ...f, 
+            ...result, 
+            filename: `${formatFilename(result.title)}.${extension}`,
+            status: 'completed',
+            errorMessage: undefined
+          };
+        }
+        return f;
+      }));
+      showNotification(`Regenerated ${fileMetadata.filename}`, 'success');
+    } catch (error: any) {
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'error', errorMessage: error.message } : f));
+      showNotification(`Failed to regenerate ${fileMetadata.filename}: ${error.message}`, 'error');
+    }
+  };
+
+  const startGeneration = async () => {
+    if (isGenerating) return;
+    
+    let pendingFiles = filesRef.current.filter(f => f.status === 'pending');
+    
+    if (pendingFiles.length === 0 && filesRef.current.length > 0) {
+      setFiles(prev => prev.map(f => ({ ...f, status: 'pending' })));
+      setTimeout(startGeneration, 100);
+      return;
+    }
+
+    if (pendingFiles.length === 0) return;
+
+    const currentKey = apiConfig[activeKey.provider][activeKey.index];
+    if (!currentKey && activeKey.provider !== 'gemini') {
+      showNotification("Selected API Key is empty. Please configure it in settings.", 'error');
+      return;
+    }
+
+    setIsGenerating(true);
+    stopRef.current = false;
+    setProgress({ current: 0, total: pendingFiles.length });
+
+    const concurrency = settings.concurrency || 3;
+    const pending = [...pendingFiles];
+    
+    const processNext = async (index: number) => {
+      // Stagger slightly only for concurrent workers (250ms)
+      await new Promise(resolve => setTimeout(resolve, index * 250));
+      
+      while (!stopRef.current && pending.length > 0) {
+        // If system is paused due to rate limit, wait
+        while (isPausedRef.current && !stopRef.current) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+
+        if (stopRef.current) break;
+
+        const fileMetadata = pending.shift()!;
+        
+        // Check if file still exists in the list (wasn't deleted)
+        if (!filesRef.current.some(f => f.id === fileMetadata.id)) {
+          continue;
+        }
+
+        const actualFile = fileObjects[fileMetadata.id];
+        
+        if (!actualFile) {
+          console.error("File object not found for:", fileMetadata.id);
+          setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: 'error', errorMessage: "File data lost. Please re-upload." } : f));
+          continue;
+        }
+
+        let retryCount = 0;
+        const maxRetries = genOptions.autoRetry ? 3 : 0;
+
+        while (retryCount <= maxRetries && !stopRef.current) {
+          try {
+            setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: retryCount > 0 ? 'retrying' : 'generating', errorMessage: undefined } : f));
+
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error("Generation timed out (120s)")), 120000)
+            );
+            
+            const result = await Promise.race([
+              generateMetadata(actualFile, settings, { [activeKey.provider]: currentKey }, activeKey.provider),
+              timeoutPromise
+            ]) as any;
+            
+            setFiles(prev => prev.map(f => {
+              if (f.id === fileMetadata.id) {
+                const extension = f.filename.split('.').pop() || f.fileType;
+                return { 
+                  ...f, 
+                  ...result, 
+                  filename: `${formatFilename(result.title)}.${extension}`,
+                  status: 'completed',
+                  errorMessage: undefined
+                };
+              }
+              return f;
+            }));
+
+            setProgress(prev => ({ ...prev, current: prev.current + 1 }));
+            
+            // Minimal delay between requests (300ms) for high speed
+            if (pending.length > 0) {
+              await new Promise(resolve => setTimeout(resolve, 300));
+            }
+            break; // Success, exit retry loop
+          } catch (error: any) {
+            const errorMsg = error.message || "Unknown Error";
+            
+            // Handle Rate Limit (429) specifically
+            if (errorMsg.includes("429") || errorMsg.includes("Rate limit")) {
+              console.warn("Rate limit hit! Pausing all workers...");
+              setIsPaused(true);
+              showNotification("Rate limit hit. Pausing for 30 seconds...", 'error');
+              
+              // Wait for 30 seconds before resuming
+              await new Promise(resolve => setTimeout(resolve, 30000));
+              setIsPaused(false);
+              showNotification("Resuming generation...", 'success');
+              
+              // Don't increment retry count for rate limits, just try again
+              continue;
+            }
+
+            retryCount++;
+            if (retryCount > maxRetries || stopRef.current) {
+              console.error(`Error generating metadata for ${fileMetadata.filename}:`, error);
+              setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: 'error', errorMessage: errorMsg } : f));
+              setProgress(prev => ({ ...prev, current: prev.current + 1 }));
+            } else {
+              console.log(`Retrying ${fileMetadata.filename} (${retryCount}/${maxRetries}) due to: ${errorMsg}`);
+              setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, errorMessage: `Retry ${retryCount}: ${errorMsg}` } : f));
+              await new Promise(resolve => setTimeout(resolve, 5000 * retryCount)); // Exponential backoff
+            }
+          }
+        }
+      }
+    };
+
+    try {
+      const initialBatch = Array.from({ length: Math.min(concurrency, pending.length) }, (_, i) => processNext(i));
+      await Promise.all(initialBatch);
+    } catch (err) {
+      console.error("Batch processing error:", err);
+    } finally {
+      setIsGenerating(false);
+      setIsPaused(false);
+    }
+
+    const finalFiles = filesRef.current;
+    const newHistoryItem: HistoryItem = {
+      id: Math.random().toString(36).substr(2, 9),
+      timestamp: Date.now(),
+      files: [...finalFiles]
+    };
+    setHistory(prev => [newHistoryItem, ...prev].slice(0, 50));
+  };
+
+  const handleTestConnection = async (provider: keyof ApiConfig, index: number) => {
+    const key = apiConfig[provider][index];
+    if (!key && provider !== 'gemini') {
+      showNotification("Please enter an API key to test.", 'info');
+      return;
+    }
+    
+    setApiStatus(prev => ({ ...prev, [`${provider}-${index}`]: 'testing' }));
+    const result = await testApiConnection(provider, key);
+    
+    if (result.success) {
+      setApiStatus(prev => ({ ...prev, [`${provider}-${index}`]: 'connected' }));
+      showNotification(`${provider.toUpperCase()} Connection Successful!`, 'success');
+    } else {
+      setApiStatus(prev => ({ ...prev, [`${provider}-${index}`]: 'failed' }));
+      showNotification(result.message || `${provider.toUpperCase()} Connection Failed`, 'error');
+    }
+  };
+
+  const handleExport = (format: string) => {
+    const completedFiles = files.filter(f => f.status === 'completed');
+    if (completedFiles.length === 0) return;
+
+    let content = '';
+    let mimeType = 'text/csv;charset=utf-8;';
+    let extension = 'csv';
+    let filenamePrefix = 'metadata_export';
+
+    if (format === 'json') {
+      content = JSON.stringify(completedFiles, null, 2);
+      mimeType = 'application/json;charset=utf-8;';
+      extension = 'json';
+    } else if (format === 'txt') {
+      content = completedFiles.map(f => 
+        `FILE: ${f.filename}\nTITLE: ${f.title}\nDESC: ${f.description}\nKEYWORDS: ${f.keywords}\n\n`
+      ).join('---\n');
+      mimeType = 'text/plain;charset=utf-8;';
+      extension = 'txt';
+    } else {
+      // CSV Formats
+      let data: any[] = [];
+      filenamePrefix = format;
+
+      switch (format) {
+        case 'adobe':
+          data = completedFiles.map(f => ({
+            Filename: f.filename,
+            Title: f.title,
+            Description: f.description,
+            Keywords: f.keywords,
+            Category: f.category || ''
+          }));
+          break;
+        case 'shutterstock':
+          data = completedFiles.map(f => ({
+            Filename: f.filename,
+            Title: f.title,
+            Description: f.description,
+            Keywords: f.keywords
+          }));
+          break;
+        case 'getty':
+        case 'alamy':
+        case 'pond5':
+        case 'dreamstime':
+        case 'freepik':
+        case 'vecteezy':
+        case 'csv':
+        default:
+          data = completedFiles.map(f => ({
+            Filename: f.filename,
+            Title: f.title,
+            Description: f.description,
+            Keywords: f.keywords,
+            Category: f.category || '',
+            Rating: f.rating || 0
+          }));
+          break;
+      }
+      content = Papa.unparse(data);
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${filenamePrefix}_${Date.now()}.${extension}`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleEmbed = async (type: 'image' | 'video' | 'eps') => {
+    const completedFiles = files.filter(f => {
+      const ext = f.fileType.toLowerCase();
+      if (type === 'image') return ['jpg', 'jpeg', 'png'].includes(ext);
+      if (type === 'video') return ['mp4', 'mov', 'avi'].includes(ext);
+      if (type === 'eps') return ['eps', 'ai', 'svg'].includes(ext);
+      return false;
+    }).filter(f => f.status === 'completed');
+
+    if (completedFiles.length === 0) {
+      showNotification(`No completed ${type.toUpperCase()} files to embed.`, 'info');
+      return;
+    }
+
+    showNotification(`Embedding metadata for ${completedFiles.length} ${type.toUpperCase()} files...`, 'info');
+
+    for (const file of completedFiles) {
+      try {
+        await saveMetadataToLocalFile(file.id, file);
+        
+        // Special logic for EPS: Save a preview image if possible
+        if (type === 'eps' && directoryHandle) {
+          try {
+            // Simulate saving a preview image (just a placeholder for now as we can't convert EPS in browser easily)
+            const previewHandle = await directoryHandle.getFileHandle(`${file.filename}_preview.jpg`, { create: true });
+            const response = await fetch('https://picsum.photos/seed/eps_preview/800/600');
+            const blob = await response.blob();
+            const writable = await previewHandle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+          } catch (e) {
+            console.error("Failed to save EPS preview:", e);
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to embed ${type}:`, err);
+      }
+    }
+
+    // Attempt to "open" the application via protocol (this is hit-or-miss but requested)
+    if (type === 'eps') {
+      window.location.href = 'illustrator://';
+    } else if (type === 'image') {
+      window.location.href = 'photoshop://';
+    }
+
+    showNotification(`${type.toUpperCase()} Embedding Complete!`, 'success');
+  };
+
+  const filteredFiles = useMemo(() => {
+    if (settings.metadataFor === 'all') return files;
+    return files.filter(f => {
+      const ext = f.fileType.toLowerCase();
+      if (settings.metadataFor === 'image') return ['jpg', 'jpeg', 'png'].includes(ext);
+      if (settings.metadataFor === 'video') return ['mp4', 'mov'].includes(ext);
+      if (settings.metadataFor === 'eps') return ['eps'].includes(ext);
+      return true;
+    });
+  }, [files, settings.metadataFor]);
+
+  const clearAll = () => {
+    if (isGenerating) {
+      stopRef.current = true;
+      setIsGenerating(false);
+    }
+    const idsToRemove = filteredFiles.map(f => f.id);
+    setFiles(prev => prev.filter(f => !idsToRemove.includes(f.id)));
+    setFileObjects(prev => {
+      const newObjs = { ...prev };
+      idsToRemove.forEach(id => delete newObjs[id]);
+      return newObjs;
+    });
+  };
+
+  const exportCsv = () => {
+    const data = files.map(f => ({
+      Filename: f.filename,
+      Title: f.title,
+      Description: f.description,
+      Keywords: f.keywords,
+      Category: f.category || '',
+      Rating: f.rating || 0
+    }));
+    const csv = Papa.unparse(data);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `metadata_export_${new Date().getTime()}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const downloadWithMetadata = async (id: string) => {
+    const fileMetadata = files.find(f => f.id === id);
+    const actualFile = fileObjects[id];
+    if (!fileMetadata || !actualFile) return;
+
+    if (actualFile.type === 'image/jpeg' || actualFile.type === 'image/jpg') {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = e.target?.result as string;
+        
+        try {
+          const zeroth: any = {};
+          zeroth[piexif.ImageIFD.ImageDescription] = fileMetadata.description;
+          zeroth[piexif.ImageIFD.XPSubject] = fileMetadata.title;
+          zeroth[piexif.ImageIFD.XPKeywords] = fileMetadata.keywords;
+          zeroth[piexif.ImageIFD.Rating] = fileMetadata.rating;
+          
+          const exifObj = { "0th": zeroth, "Exif": {}, "GPS": {} };
+          const exifBytes = piexif.dump(exifObj);
+          const newBase64 = piexif.insert(exifBytes, base64);
+          
+          const link = document.createElement('a');
+          link.href = newBase64;
+          link.download = fileMetadata.filename;
+          link.click();
+        } catch (err) {
+          console.error("EXIF Error:", err);
+          // Fallback to normal download
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(actualFile);
+          link.download = fileMetadata.filename;
+          link.click();
+        }
+      };
+      reader.readAsDataURL(actualFile);
+    } else {
+      // For other formats, download original + XMP sidecar
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(actualFile);
+      link.download = fileMetadata.filename;
+      link.click();
+      
+      const xmp = `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/">
+   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">${fileMetadata.title}</rdf:li></rdf:Alt></dc:title>
+   <dc:description><rdf:Alt><rdf:li xml:lang="x-default">${fileMetadata.description}</rdf:li></rdf:Alt></dc:description>
+   <dc:subject><rdf:Bag>${fileMetadata.keywords.split(',').map(k => `<rdf:li>${k.trim()}</rdf:li>`).join('')}</rdf:Bag></dc:subject>
+   <xmp:Rating>${fileMetadata.rating}</xmp:Rating>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>`;
+      const xmpBlob = new Blob([xmp], { type: 'application/xml' });
+      const xmpLink = document.createElement('a');
+      xmpLink.href = URL.createObjectURL(xmpBlob);
+      xmpLink.download = `${fileMetadata.filename}.xmp`;
+      xmpLink.click();
+    }
+  };
+
+  const handleFilesAdded = (fileList: FileList | File[]) => {
+    const filesArray = Array.from(fileList);
+    const allowedExtensions = ['jpg', 'jpeg', 'png', 'eps', 'mp4', 'mov'];
+    
+    // Pre-filter files to avoid unnecessary processing
+    const validFiles = filesArray.filter(file => {
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      return allowedExtensions.includes(ext);
+    });
+
+    if (validFiles.length === 0 && filesArray.length > 0) {
+      showNotification(`No valid files found.`, 'error');
+      return;
+    }
+
+    const newItems: StockMetadata[] = [];
+    const newFileObjects: Record<string, File> = {};
+
+    for (let i = 0; i < validFiles.length; i++) {
+      const file = validFiles[i];
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      const id = Math.random().toString(36).substr(2, 9);
+      newFileObjects[id] = file;
+      
+      const isImage = file.type.startsWith('image/') && ext !== 'eps';
+      
+      newItems.push({
+        id,
+        filename: file.name,
+        title: '',
+        description: '',
+        keywords: '',
+        rating: 5,
+        status: 'pending',
+        fileType: ext,
+        previewUrl: isImage ? URL.createObjectURL(file) : undefined
+      });
+    }
+
+    setFileObjects(prev => ({ ...prev, ...newFileObjects }));
+    setFiles(prev => [...newItems, ...prev]);
+
+    // Async extraction of EPS thumbnails
+    for (let i = 0; i < newItems.length; i++) {
+      const item = newItems[i];
+      if (item.fileType === 'eps') {
+        const file = newFileObjects[item.id];
+        extractEpsThumbnail(file).then(thumb => {
+          if (thumb) {
+            setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
+          }
+        });
+      }
+    }
+  };
+
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const onDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFilesAdded(e.dataTransfer.files);
+    }
+  };
+
+  if (isAppLoading) {
+    return (
+      <div className="fixed inset-0 bg-background flex flex-col items-center justify-center gap-6 z-[200]">
+        <div className="relative">
+          <div className="w-24 h-24 border-8 border-blue-500/10 border-t-blue-500 rounded-full animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Sparkles size={32} className="text-blue-500 animate-pulse" />
+          </div>
+        </div>
+        <div className="text-center space-y-2">
+          <h2 className="text-xl font-black text-foreground uppercase tracking-[0.3em]">Initializing Engine</h2>
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest animate-pulse">Loading your professional workspace...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div 
+      className="flex flex-col h-screen bg-background text-foreground overflow-hidden font-sans selection:bg-blue-500/30 transition-colors duration-300 relative"
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={onDrop}
+    >
+      {/* Drag Overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-[200] bg-blue-600/20 backdrop-blur-sm border-4 border-dashed border-blue-500 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
+          <div className="bg-background/90 p-8 rounded-2xl shadow-2xl border border-blue-500/50 flex flex-col items-center gap-4 scale-110 transition-transform">
+            <div className="w-20 h-20 bg-blue-500 rounded-full flex items-center justify-center shadow-lg shadow-blue-500/30">
+              <Upload size={40} className="text-white animate-bounce" />
+            </div>
+            <div className="text-center">
+              <h2 className="text-xl font-black uppercase tracking-tighter">Drop Files to Upload</h2>
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mt-1">Images, Videos, and EPS Vectors</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notification Toast */}
+      {notification && (
+        <div className={cn(
+          "fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-lg shadow-2xl border flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300",
+          notification.type === 'error' ? "bg-rose-900/90 border-rose-500 text-rose-100" :
+          notification.type === 'success' ? "bg-emerald-900/90 border-emerald-500 text-emerald-100" :
+          "bg-secondary/90 border-border text-foreground"
+        )}>
+          {notification.type === 'error' ? <AlertCircle size={18} /> : 
+           notification.type === 'success' ? <CheckCircle2 size={18} /> : 
+           <Info size={18} />}
+          <span className="text-xs font-bold uppercase tracking-wider">{notification.message}</span>
+          <button onClick={() => setNotification(null)} className="ml-4 hover:opacity-70">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Main Header */}
+      <header className="bg-secondary border-b border-border z-40 shadow-xl relative text-foreground">
+        {/* Top Branding Bar */}
+        <div className="flex items-center px-4 py-2 bg-background border-b border-border/50">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 bg-blue-600 rounded flex items-center justify-center shadow-lg shadow-blue-500/20">
+              <Sparkles size={18} className="text-white" />
+            </div>
+            <h1 className="text-[13px] font-black uppercase tracking-[0.2em] text-foreground">
+              SS <span className="text-blue-500">Smart Meta</span>
+            </h1>
+          </div>
+          <div className="flex-1" />
+          <div className="flex items-center gap-4">
+            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest opacity-50 hidden sm:block">
+              Professional Metadata Engine
+            </div>
+            <button 
+              onClick={() => setIsHistoryOpen(true)}
+              className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-white/10 rounded transition-all group border border-transparent hover:border-white/10"
+              title="Open History"
+            >
+              <HistoryIcon size={16} className="text-muted-foreground group-hover:text-amber-400 transition-colors" />
+              <span className="text-[11px] font-bold text-muted-foreground group-hover:text-foreground uppercase tracking-tight">History</span>
+            </button>
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-white/10 rounded transition-all group border border-transparent hover:border-white/10"
+              title="Open Settings"
+            >
+              <Settings size={16} className="text-muted-foreground group-hover:text-blue-400 transition-colors" />
+              <span className="text-[11px] font-bold text-muted-foreground group-hover:text-foreground uppercase tracking-tight">Settings</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Ribbon Actions (The Buttons Area) */}
+        <div className="flex flex-col bg-muted">
+          {/* Controls Bar */}
+          <div className="flex items-center flex-wrap px-4 py-0.5 gap-y-1 gap-x-2 border-b border-border/30">
+            {/* Active AI Provider Group */}
+            <div className="flex flex-col gap-0.5 p-0.5 border border-border rounded-sm bg-background/20 min-w-[130px] shadow-sm">
+              <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest border border-border px-1 rounded-[1px] bg-background/60 w-fit">Active AI Provider</span>
+              <select 
+                value={activeKey.provider}
+                onChange={(e) => {
+                  const provider = e.target.value as keyof ApiConfig;
+                  const firstReadyIndex = apiConfig[provider].findIndex(key => key.trim() !== '');
+                  setActiveKey({ provider, index: firstReadyIndex !== -1 ? firstReadyIndex : 0 });
+                }}
+                className="bg-secondary border border-border text-foreground text-[11px] px-1 py-0 rounded-[1px] focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer h-7 font-bold uppercase"
+              >
+                <option value="gemini">GEMINI {apiConfig.gemini.some(k => k) ? '(READY)' : '(EMPTY)'}</option>
+                <option value="groq">GROQ {apiConfig.groq.some(k => k) ? '(READY)' : '(EMPTY)'}</option>
+                <option value="mistral">MISTRAL {apiConfig.mistral.some(k => k) ? '(READY)' : '(EMPTY)'}</option>
+              </select>
+            </div>
+
+            {/* Theme Group */}
+            <div className="flex flex-col gap-0.5 p-0.5 border border-border rounded-sm bg-background/20 shadow-sm">
+              <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest border border-border px-1 rounded-[1px] bg-background/60 w-fit">Theme</span>
+              <select 
+                value={theme}
+                onChange={(e) => setTheme(e.target.value as any)}
+                className="bg-secondary border border-border text-foreground text-[11px] px-1 py-0 rounded-[1px] focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer h-7 font-bold uppercase"
+              >
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+                <option value="blue">Blue</option>
+              </select>
+            </div>
+
+            {/* Gen Options Group */}
+            <div className="flex flex-col gap-0.5 p-0.5 border border-border rounded-sm bg-background/20 shadow-sm">
+              <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest border border-border px-1 rounded-[1px] bg-background/60 w-fit">Gen Options</span>
+              <div className="flex items-center gap-2 px-1 h-7">
+                <label className="flex items-center gap-1 cursor-pointer group">
+                  <input 
+                    type="checkbox" 
+                    checked={genOptions.autoSave}
+                    onChange={(e) => setGenOptions(prev => ({ ...prev, autoSave: e.target.checked }))}
+                    className="w-3 h-3 rounded-[1px] bg-muted border-border text-blue-600 focus:ring-0 focus:ring-offset-0"
+                  />
+                  <span className="text-[10px] font-bold text-muted-foreground group-hover:text-foreground transition-colors uppercase">Save</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer group">
+                  <input 
+                    type="checkbox" 
+                    checked={genOptions.autoExport}
+                    onChange={(e) => setGenOptions(prev => ({ ...prev, autoExport: e.target.checked }))}
+                    className="w-3 h-3 rounded-[1px] bg-muted border-border text-blue-600 focus:ring-0 focus:ring-offset-0"
+                  />
+                  <span className="text-[10px] font-bold text-muted-foreground group-hover:text-foreground transition-colors uppercase">Export</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer group">
+                  <input 
+                    type="checkbox" 
+                    checked={genOptions.aiEnhance}
+                    onChange={(e) => setGenOptions(prev => ({ ...prev, aiEnhance: e.target.checked }))}
+                    className="w-3 h-3 rounded-[1px] bg-muted border-border text-blue-600 focus:ring-0 focus:ring-offset-0"
+                  />
+                  <span className="text-[10px] font-bold text-muted-foreground group-hover:text-foreground transition-colors uppercase">Enhance</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex-1" />
+
+            {/* Input Group */}
+            <div className="flex items-center gap-1.5 p-1 border border-border rounded-sm bg-background/20 relative pt-3 shadow-sm">
+              <div className="absolute top-0 left-1 -translate-y-1/2">
+                <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest border border-border px-1 rounded-[1px] bg-background/80 backdrop-blur-sm">Input</span>
+              </div>
+              <button 
+                onClick={() => document.getElementById('file-upload')?.click()}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-white/10 rounded-[1px] transition-all group cursor-pointer border border-border hover:border-blue-500/50 shadow-sm bg-background/40"
+              >
+                <div className="p-0 text-blue-400 group-hover:scale-110 group-hover:text-blue-300 transition-all">
+                  <Plus size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Add Files</span>
+              </button>
+              <button 
+                onClick={() => document.getElementById('folder-upload')?.click()}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-white/10 rounded-[1px] transition-all group cursor-pointer border border-border hover:border-amber-500/50 shadow-sm bg-background/40"
+              >
+                <div className="p-0 text-amber-400 group-hover:scale-110 group-hover:text-amber-300 transition-all">
+                  <FolderPlus size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Add Folder</span>
+              </button>
+            </div>
+
+            {/* Processing Group */}
+            <div className="flex items-center gap-1.5 p-1 border border-border rounded-sm bg-background/20 relative pt-3 shadow-sm">
+              <div className="absolute top-0 left-1 -translate-y-1/2">
+                <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest border border-border px-1 rounded-[1px] bg-background/80 backdrop-blur-sm">Processing</span>
+              </div>
+              <button 
+                onClick={startGeneration}
+                disabled={isGenerating || files.length === 0}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-emerald-500/10 rounded-[1px] transition-all group cursor-pointer disabled:opacity-30 border border-border hover:border-emerald-500/50 shadow-sm bg-background/40"
+              >
+                <div className="p-0 text-emerald-400 group-hover:scale-110 group-hover:text-emerald-300 transition-all">
+                  {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} className="fill-current" />}
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Generate</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setFiles(prev => prev.map(f => ({ ...f, status: 'pending' })));
+                  setTimeout(startGeneration, 100);
+                }}
+                disabled={isGenerating || files.length === 0}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-blue-500/10 rounded-[1px] transition-all group cursor-pointer disabled:opacity-30 border border-border hover:border-blue-500/50 shadow-sm bg-background/40"
+              >
+                <div className="p-0 text-blue-400 group-hover:scale-110 group-hover:text-blue-300 transition-all">
+                  <RefreshCcw size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Regen All</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setFiles(prev => prev.map(f => f.status === 'error' ? { ...f, status: 'pending' } : f));
+                  setTimeout(startGeneration, 100);
+                }}
+                disabled={isGenerating || !files.some(f => f.status === 'error')}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-amber-500/10 rounded-[1px] transition-all group cursor-pointer disabled:opacity-30 border border-border hover:border-amber-500/50 shadow-sm bg-background/40"
+              >
+                <div className="p-0 text-amber-400 group-hover:scale-110 group-hover:text-amber-300 transition-all">
+                  <RefreshCw size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Retry Errors</span>
+              </button>
+              <button 
+                onClick={() => {
+                  stopRef.current = true;
+                  setIsGenerating(false);
+                }}
+                disabled={!isGenerating}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-rose-500/10 rounded-[1px] transition-all group cursor-pointer disabled:opacity-30 border border-border hover:border-rose-500/50 shadow-sm bg-background/40"
+              >
+                <div className="p-0 text-rose-400 group-hover:scale-110 group-hover:text-rose-300 transition-all">
+                  <Square size={14} className="fill-current" />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Stop</span>
+              </button>
+              <button 
+                onClick={clearAll}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-rose-500/10 rounded-[1px] transition-all group cursor-pointer border border-border hover:border-rose-500/50 shadow-sm bg-background/40"
+              >
+                <div className="p-0 text-rose-400 group-hover:scale-110 group-hover:text-rose-300 transition-all">
+                  <Trash2 size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Clear</span>
+              </button>
+            </div>
+
+            {/* Export Group */}
+            <div className="flex items-center gap-1.5 p-1 border border-border rounded-sm bg-background/20 relative pt-3 shadow-sm">
+              <div className="absolute top-0 left-1 -translate-y-1/2">
+                <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest border border-border px-1 rounded-[1px] bg-background/80 backdrop-blur-sm">Export</span>
+              </div>
+              <button 
+                onClick={() => handleExport('csv')}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-cyan-500/10 rounded-[1px] transition-all group cursor-pointer border border-border hover:border-cyan-500/50 shadow-sm bg-background/40"
+              >
+                <div className="p-0 text-cyan-400 group-hover:scale-110 group-hover:text-cyan-300 transition-all">
+                  <FileSpreadsheet size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Export CSV</span>
+              </button>
+            </div>
+
+            {/* Embed Actions Group */}
+            <div className="flex items-center gap-1.5 p-1 border border-border rounded-sm bg-background/20 relative pt-3 shadow-sm">
+              <div className="absolute top-0 left-1 -translate-y-1/2">
+                <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest border border-border px-1 rounded-[1px] bg-background/80 backdrop-blur-sm">Embed</span>
+              </div>
+              <button 
+                onClick={() => handleEmbed('image')}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-indigo-500/10 rounded-[1px] transition-all group cursor-pointer border border-border hover:border-indigo-500/50 shadow-sm bg-background/40"
+                title="Embed Metadata & Open Photoshop"
+              >
+                <div className="p-0 text-indigo-400 group-hover:scale-110 group-hover:text-indigo-300 transition-all">
+                  <FileImage size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Img Embed</span>
+              </button>
+              <button 
+                onClick={() => handleEmbed('eps')}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-orange-500/10 rounded-[1px] transition-all group cursor-pointer border border-border hover:border-orange-500/50 shadow-sm bg-background/40"
+                title="Embed Metadata & Open Illustrator"
+              >
+                <div className="p-0 text-orange-400 group-hover:scale-110 group-hover:text-orange-300 transition-all">
+                  <Layers size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">EPS Embed</span>
+              </button>
+              <button 
+                onClick={() => handleEmbed('video')}
+                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-emerald-500/10 rounded-[1px] transition-all group cursor-pointer border border-border hover:border-emerald-500/50 shadow-sm bg-background/40"
+                title="Auto Embed Video Metadata"
+              >
+                <div className="p-0 text-emerald-400 group-hover:scale-110 group-hover:text-emerald-300 transition-all">
+                  <Video size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tighter">Vid Embed</span>
+              </button>
+            </div>
+
+            {/* Utilities Group */}
+            <div className="flex-1" />
+          </div>
+
+          {/* Secondary Controls Bar */}
+          <div className="flex items-center flex-wrap px-4 py-1.5 gap-y-2 gap-x-4 bg-secondary border-b border-border/50">
+            <div className="flex items-center gap-2 border border-border/60 px-2 py-1 rounded-sm bg-muted/20">
+              <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest border border-border/30 px-1.5 rounded-[2px] bg-background/40 w-fit">Asset Type:</span>
+              <div className="flex bg-muted rounded-sm overflow-hidden border border-border p-0.5">
+                {[
+                  { id: 'all', label: 'All', icon: Database },
+                  { id: 'image', label: 'Image', icon: FileImage },
+                  { id: 'video', label: 'Video', icon: Video },
+                  { id: 'eps', label: 'EPS', icon: Layers }
+                ].map(item => (
+                  <button 
+                    key={item.id}
+                    onClick={() => setSettings(prev => ({ ...prev, metadataFor: item.id as any }))}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded-sm transition-all",
+                      settings.metadataFor === item.id ? "bg-blue-500 text-white shadow-md shadow-blue-500/20" : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                    )}
+                  >
+                    <item.icon size={12} />
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 border border-border/60 px-2 py-1 rounded-sm bg-muted/20">
+              <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest border border-border/30 px-1.5 rounded-[2px] bg-background/40 w-fit">Export Preset:</span>
+              <select 
+                value={selectedExportSite}
+                onChange={(e) => setSelectedExportSite(e.target.value)}
+                className="bg-secondary border border-border text-foreground text-[10px] px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer"
+              >
+                <option value="adobe">Adobe Stock</option>
+                <option value="shutterstock">Shutterstock</option>
+                <option value="getty">Getty/iStock</option>
+                <option value="alamy">Alamy</option>
+                <option value="pond5">Pond5</option>
+                <option value="dreamstime">Dreamstime</option>
+                <option value="freepik">Freepik</option>
+                <option value="vecteezy">Vecteezy</option>
+                <option value="csv">General CSV</option>
+              </select>
+            </div>
+
+            <button 
+              onClick={() => handleExport(selectedExportSite)}
+              className="px-3 py-1 rounded bg-blue-500 text-white border border-blue-400 text-[10px] font-black uppercase tracking-widest hover:bg-blue-400 hover:scale-105 active:scale-95 transition-all flex items-center gap-1.5 shadow-lg shadow-blue-500/20"
+            >
+              <Download size={12} strokeWidth={3} />
+              Download CSV
+            </button>
+
+            <div className="flex-1" />
+
+            <div className="flex items-center gap-3 ml-auto">
+              {isPaused && (
+                <div className="flex items-center gap-2 border border-red-500/30 px-2 py-1 rounded-sm bg-red-500/10 animate-pulse">
+                  <AlertCircle size={10} className="text-red-400" />
+                  <span className="text-[9px] font-black text-red-400 uppercase tracking-widest">Rate Limit Cooldown ({cooldownTimer}s)</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2 border border-border/30 px-2 py-1 rounded-sm bg-background/40">
+                <div className={cn("w-1.5 h-1.5 rounded-full shadow-[0_0_5px_rgba(16,185,129,0.5)]", isGenerating ? (isPaused ? "bg-red-500" : "bg-amber-500 animate-pulse") : "bg-emerald-500")} />
+                <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">
+                  {isGenerating ? (isPaused ? 'Rate Limited' : 'Processing...') : 'System Ready'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 border border-border/30 px-2 py-1 rounded-sm bg-background/40">
+                <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Assets:</span>
+                <span className="text-[10px] font-black text-blue-400 tabular-nums">{files.length}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {isGenerating && (
+          <div className="flex flex-col gap-0.5 px-4 py-1 bg-muted border-b border-border">
+            <div className="flex items-center justify-between text-[8px] font-bold uppercase tracking-widest text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <Loader2 size={9} className="animate-spin text-blue-500" />
+                <span>Processing Assets...</span>
+              </div>
+              <span>{progress.current} / {progress.total}</span>
+            </div>
+            <div className="w-full h-0.5 bg-border rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-500 transition-all duration-500 ease-out shadow-[0_0_8px_rgba(59,130,246,0.5)]"
+                style={{ width: `${(progress.current / progress.total) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </header>
+
+      {/* Main Content Area - Windows Explorer Style Table */}
+      <div className="flex-1 overflow-hidden flex flex-col bg-background relative">
+        {/* Loading Overlay for File Selection */}
+        {isLoadingFiles && (
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-[100] flex flex-col items-center justify-center gap-4">
+            <div className="relative">
+              <div className="w-16 h-16 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Upload size={24} className="text-blue-400 animate-pulse" />
+              </div>
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="text-sm font-black text-foreground uppercase tracking-widest">Reading Files...</h3>
+              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-tighter">Please wait while we process your assets</p>
+            </div>
+          </div>
+        )}
+        {/* Windows Style Table Header */}
+        <div className="flex flex-row w-full border-b border-border bg-secondary text-[8px] font-bold uppercase tracking-widest text-muted-foreground">
+          <div className="w-[12%] px-2 py-1 border-r border-border shrink-0 hover:bg-muted cursor-pointer flex items-center justify-between">
+            FILENAME <ChevronRight size={9} className="rotate-90 opacity-50" />
+          </div>
+          <div className="w-[15%] px-2 py-1 border-r border-border shrink-0 hover:bg-muted cursor-pointer flex items-center justify-between">
+            TITLE <ChevronRight size={9} className="rotate-90 opacity-50" />
+          </div>
+          <div className="w-[25%] px-2 py-1 border-r border-border shrink-0 hover:bg-muted cursor-pointer flex items-center justify-between">
+            KEYWORDS <ChevronRight size={10} className="rotate-90 opacity-50" />
+          </div>
+          <div className="w-[20%] px-3 py-2 border-r border-border shrink-0 hover:bg-muted cursor-pointer flex items-center justify-between">
+            DESCRIPTION <ChevronRight size={10} className="rotate-90 opacity-50" />
+          </div>
+          <div className="w-[10%] px-3 py-2 border-r border-border shrink-0 hover:bg-muted cursor-pointer flex items-center justify-between">
+            CATEGORY <ChevronRight size={10} className="rotate-90 opacity-50" />
+          </div>
+          <div className="w-[8%] px-3 py-2 border-r border-border shrink-0 hover:bg-muted cursor-pointer flex items-center justify-between">
+            KW COUNT <ChevronRight size={10} className="rotate-90 opacity-50" />
+          </div>
+          <div className="w-[10%] px-3 py-2 text-center shrink-0 hover:bg-muted cursor-pointer">
+            RATING
+          </div>
+        </div>
+
+        {/* Table Body */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar bg-background">
+          {filteredFiles.length === 0 ? (
+            <div 
+              className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-6 transition-all"
+            >
+              <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center border border-border">
+                <Upload size={48} strokeWidth={1} className="opacity-10" />
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-bold text-muted-foreground uppercase">NO {settings.metadataFor.toUpperCase()} FILES LOADED</p>
+              </div>
+            </div>
+          ) : (
+            <div className="h-full w-full border-t border-border">
+              <FixedSizeList
+                height={window.innerHeight - 200}
+                itemCount={filteredFiles.length}
+                itemSize={42}
+                width="100%"
+                itemData={{
+                  files: filteredFiles,
+                  updateFile,
+                  regenerateSingleFile,
+                  deleteFile,
+                  isGenerating,
+                  openErrorModal
+                }}
+                className="custom-scrollbar"
+              >
+                {FileRow}
+              </FixedSizeList>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Windows Style Footer */}
+      <footer className="bg-secondary border-t border-border px-4 py-1 flex items-center justify-between text-[9px] font-bold text-muted-foreground uppercase tracking-widest">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]" />
+            <span>System Ready</span>
+          </div>
+          <div className="w-px h-3 bg-border" />
+          <div className="flex items-center gap-1.5">
+            <Database size={10} />
+            <span>API: Connected</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
+            <span>Total Assets: {files.length}</span>
+            <span className="text-border">|</span>
+            <span>Showing: {filteredFiles.length}</span>
+            <span className="text-border">|</span>
+            <span>Completed: {filteredFiles.filter(f => f.status === 'completed').length}</span>
+            <span className="text-border">|</span>
+            <span>Errors: {filteredFiles.filter(f => f.status === 'error').length}</span>
+          </div>
+          <div className="w-px h-3 bg-border" />
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Clock size={10} />
+            <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          </div>
+        </div>
+      </footer>
+
+      {/* Settings Modal (Windows Style) */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-2xl bg-background border border-border rounded-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="p-3 border-b border-border flex items-center justify-between bg-muted">
+              <div className="flex items-center gap-2">
+                <Settings size={16} className="text-muted-foreground" />
+                <h3 className="font-bold text-[11px] uppercase tracking-widest text-foreground">Application Settings</h3>
+              </div>
+              <button onClick={() => setIsSettingsOpen(false)} className="p-1 hover:bg-red-500 hover:text-white rounded text-muted-foreground transition-all">
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar bg-background">
+              {/* API Keys Section */}
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-1">
+                  <Database size={14} />
+                  Service Configuration (5 Slots Per Provider)
+                </h4>
+                <div className="grid gap-4">
+                  {(['gemini', 'groq', 'mistral'] as const).map(provider => (
+                    <div key={provider} className="space-y-2 p-2 bg-muted/30 rounded-sm border border-border">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest">{provider} API KEYS</label>
+                        {provider === 'gemini' && (
+                          <span className="text-[9px] text-muted-foreground font-mono">Supports AIza... & AQ... keys</span>
+                        )}
+                      </div>
+                      <div className="space-y-1.5">
+                        {apiConfig[provider]?.map((key, idx) => (
+                          <div key={idx} className="flex gap-1.5 items-center">
+                            <span className="text-[9px] font-bold text-muted-foreground w-4">{idx + 1}.</span>
+                            <input 
+                              type="password"
+                              value={key || ''}
+                              onChange={(e) => {
+                                const newKeys = [...apiConfig[provider]];
+                                newKeys[idx] = e.target.value.trim();
+                                setApiConfig(prev => ({ ...prev, [provider]: newKeys }));
+                              }}
+                              placeholder={`ENTER ${provider.toUpperCase()} KEY ${idx + 1}...`}
+                              className="flex-1 bg-secondary border border-border text-[11px] h-7 rounded-sm px-2.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/30 font-mono"
+                            />
+                            <button 
+                              onClick={() => handleTestConnection(provider, idx)}
+                              disabled={!key || apiStatus[`${provider}-${idx}`] === 'testing'}
+                              className={cn(
+                                "px-2.5 h-7 rounded-sm text-[9px] font-black uppercase tracking-widest transition-all shadow-sm",
+                                apiStatus[`${provider}-${idx}`] === 'connected' ? "bg-emerald-500 text-white shadow-emerald-500/20" :
+                                apiStatus[`${provider}-${idx}`] === 'failed' ? "bg-red-500 text-white shadow-red-500/20" :
+                                "bg-white/10 hover:bg-white/20 text-foreground border border-white/10"
+                              )}
+                            >
+                              {apiStatus[`${provider}-${idx}`] === 'testing' ? '...' : 
+                               apiStatus[`${provider}-${idx}`] === 'connected' ? 'READY' : 
+                               apiStatus[`${provider}-${idx}`] === 'failed' ? 'FAILED' : 'TEST'}
+                            </button>
+                            <button 
+                              onClick={() => {
+                                const newKeys = [...apiConfig[provider]];
+                                newKeys[idx] = '';
+                                setApiConfig(prev => ({ ...prev, [provider]: newKeys }));
+                                setApiStatus(prev => {
+                                  const newStatus = { ...prev };
+                                  delete newStatus[`${provider}-${idx}`];
+                                  return newStatus;
+                                });
+                              }}
+                              className="p-1.5 h-7 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-sm border border-red-500/20 transition-all"
+                              title="CLEAR KEY"
+                            >
+                              <Trash2 size={10} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* AI Imager Options */}
+              <div className="space-y-1.5 border border-border p-2 rounded-sm bg-muted/10 shadow-sm">
+                <h4 className="text-[9px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-1">
+                  <FileImage size={12} />
+                  AI Imager Configuration
+                </h4>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { id: 'singleWordKeywords', label: 'Single Word' },
+                    { id: 'autoGenerateOnAdd', label: 'Auto-Gen' },
+                    { id: 'silhouette', label: 'Silhouette' },
+                    { id: 'customPromptEnabled', label: 'Custom Prompt' },
+                    { id: 'transparentBackground', label: 'Transparent' },
+                    { id: 'prohibitedWords', label: 'Prohibited' }
+                  ].map(option => (
+                    <div key={option.id} className="flex items-center justify-between p-1 bg-muted/20 rounded-sm border border-border hover:bg-muted/30 transition-colors">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[8px] font-black text-foreground uppercase tracking-tighter">{option.label}</span>
+                      </div>
+                      <button 
+                        onClick={() => setSettings(prev => ({ ...prev, [option.id]: !prev[option.id as keyof GeneratorSettings] }))}
+                        className={cn(
+                          "w-6 h-3 rounded-full transition-all relative border border-border",
+                          settings[option.id as keyof GeneratorSettings] ? "bg-blue-500" : "bg-muted"
+                        )}
+                      >
+                        <div className={cn(
+                          "absolute top-0.25 w-2 h-2 rounded-full bg-white transition-all shadow-sm",
+                          settings[option.id as keyof GeneratorSettings] ? "left-[14px]" : "left-0.25"
+                        )} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Saved Keywords Section */}
+              <div className="space-y-1.5 border border-border p-2 rounded-sm bg-muted/10 shadow-sm">
+                <h4 className="text-[9px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-1">
+                  <Tag size={12} />
+                  Saved Keywords (Persistent)
+                </h4>
+                <div className="space-y-1.5">
+                  <div className="flex gap-1">
+                    <input 
+                      type="text"
+                      value={newKeyword}
+                      onChange={(e) => setNewKeyword(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newKeyword.trim()) {
+                          setSettings(prev => ({ ...prev, savedKeywords: [...prev.savedKeywords, newKeyword.trim()] }));
+                          setNewKeyword('');
+                        }
+                      }}
+                      placeholder="ADD NEW KEYWORD..."
+                      className="flex-1 bg-secondary border border-border text-[9px] h-6 rounded-sm px-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 outline-none transition-all text-foreground uppercase font-bold placeholder:text-muted-foreground/20"
+                    />
+                    <button 
+                      onClick={() => {
+                        if (newKeyword.trim()) {
+                          setSettings(prev => ({ ...prev, savedKeywords: [...prev.savedKeywords, newKeyword.trim()] }));
+                          setNewKeyword('');
+                        }
+                      }}
+                      className="px-2 h-6 bg-blue-500 hover:bg-blue-400 text-white text-[8px] font-black uppercase tracking-widest rounded-sm transition-all border border-blue-400 shadow-sm"
+                    >
+                      ADD
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1 min-h-[24px] p-1.5 bg-muted/30 rounded-sm border border-border">
+                    {(!settings.savedKeywords || settings.savedKeywords.length === 0) ? (
+                      <span className="text-[7px] text-muted-foreground/40 uppercase italic font-bold">No saved keywords...</span>
+                    ) : (
+                      settings.savedKeywords.map((kw, idx) => (
+                        <div key={idx} className="flex items-center gap-1 bg-blue-500/10 border border-blue-500/30 px-1 py-0.5 rounded-sm group">
+                          <span className="text-[8px] font-black text-blue-400 uppercase">{kw}</span>
+                          <button 
+                            onClick={() => {
+                              setSettings(prev => ({
+                                ...prev,
+                                savedKeywords: (prev.savedKeywords || []).filter((_, i) => i !== idx)
+                              }));
+                            }}
+                            className="text-muted-foreground hover:text-red-400 transition-colors"
+                          >
+                            <X size={8} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Generation Parameters */}
+              <div className="space-y-1.5 border border-border p-2 rounded-sm bg-muted/10 shadow-sm">
+                <h4 className="text-[9px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-1">
+                  <Zap size={12} />
+                  Metadata Parameters
+                </h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-black text-muted-foreground uppercase tracking-widest">PLATFORM PRESET</label>
+                    <div className="flex bg-muted rounded-sm overflow-hidden border border-border p-0.5">
+                      {[
+                        { id: 'default', label: 'STD' },
+                        { id: 'adobe', label: 'ADOBE' },
+                        { id: 'shutterstock', label: 'SHUTTER' }
+                      ].map(mode => (
+                        <button 
+                          key={mode.id}
+                          onClick={() => setSettings(prev => ({ ...prev, promptMode: mode.id as any }))}
+                          className={cn(
+                            "flex-1 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-sm transition-all border border-transparent", 
+                            settings.promptMode === mode.id ? "bg-blue-500 text-white border-blue-400 shadow-sm" : "hover:bg-white/5 text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {mode.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[8px] font-black text-muted-foreground uppercase tracking-widest">TITLE WORD RANGE</label>
+                      <span className="text-[8px] font-black text-blue-400 bg-blue-500/10 px-1 rounded-[1px] uppercase border border-blue-500/20">{settings.minTitleWords} - {settings.maxTitleWords}</span>
+                    </div>
+                    <div className="space-y-2 px-1.5 py-1 bg-muted/20 rounded-sm border border-border">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[6px] font-black text-muted-foreground w-4">MIN</span>
+                          <input 
+                            type="range" 
+                            min="1" 
+                            max="50" 
+                            value={settings.minTitleWords}
+                            onChange={(e) => setSettings(prev => ({ ...prev, minTitleWords: Math.min(parseInt(e.target.value), prev.maxTitleWords) }))}
+                            className="modern-slider slider-blue h-1"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[6px] font-black text-muted-foreground w-4">MAX</span>
+                          <input 
+                            type="range" 
+                            min="1" 
+                            max="50" 
+                            value={settings.maxTitleWords}
+                            onChange={(e) => setSettings(prev => ({ ...prev, maxTitleWords: Math.max(parseInt(e.target.value), prev.minTitleWords) }))}
+                            className="modern-slider slider-blue h-1"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">DESCRIPTION WORD RANGE</label>
+                      <span className="text-[9px] font-black text-cyan-400 bg-cyan-500/10 px-1 rounded uppercase border border-cyan-500/20">{settings.minDescriptionWords} - {settings.maxDescriptionWords}</span>
+                    </div>
+                    <div className="space-y-3 px-1.5 py-1.5 bg-muted/20 rounded-sm border border-border/30">
+                      <div className="relative h-0.5 bg-muted rounded-full">
+                        <div 
+                          className="absolute h-full bg-cyan-500/30 rounded-full"
+                          style={{ 
+                            left: `${(settings.minDescriptionWords / 100) * 100}%`, 
+                            right: `${100 - (settings.maxDescriptionWords / 100) * 100}%` 
+                          }}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[7px] font-bold text-muted-foreground w-5">MIN</span>
+                          <input 
+                            type="range" 
+                            min="5" 
+                            max="100" 
+                            value={settings.minDescriptionWords}
+                            onChange={(e) => setSettings(prev => ({ ...prev, minDescriptionWords: Math.min(parseInt(e.target.value), prev.maxDescriptionWords) }))}
+                            className="modern-slider slider-cyan"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[7px] font-bold text-muted-foreground w-5">MAX</span>
+                          <input 
+                            type="range" 
+                            min="5" 
+                            max="100" 
+                            value={settings.maxDescriptionWords}
+                            onChange={(e) => setSettings(prev => ({ ...prev, maxDescriptionWords: Math.max(parseInt(e.target.value), prev.minDescriptionWords) }))}
+                            className="modern-slider slider-cyan"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">KEYWORD RANGE</label>
+                      <span className="text-[9px] font-black text-emerald-400 bg-emerald-500/10 px-1 rounded uppercase border border-emerald-500/20">{settings.minKeywords} - {settings.maxKeywords}</span>
+                    </div>
+                    <div className="space-y-3 px-1.5 py-1.5 bg-muted/20 rounded-sm border border-border/30">
+                      <div className="relative h-0.5 bg-muted rounded-full">
+                        <div 
+                          className="absolute h-full bg-emerald-500/30 rounded-full"
+                          style={{ 
+                            left: `${(settings.minKeywords / 50) * 100}%`, 
+                            right: `${100 - (settings.maxKeywords / 50) * 100}%` 
+                          }}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[7px] font-bold text-muted-foreground w-5">MIN</span>
+                          <input 
+                            type="range" 
+                            min="5" 
+                            max="50" 
+                            value={settings.minKeywords}
+                            onChange={(e) => setSettings(prev => ({ ...prev, minKeywords: Math.min(parseInt(e.target.value), prev.maxKeywords) }))}
+                            className="modern-slider slider-emerald"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[7px] font-bold text-muted-foreground w-5">MAX</span>
+                          <input 
+                            type="range" 
+                            min="5" 
+                            max="50" 
+                            value={settings.maxKeywords}
+                            onChange={(e) => setSettings(prev => ({ ...prev, maxKeywords: Math.max(parseInt(e.target.value), prev.minKeywords) }))}
+                            className="modern-slider slider-emerald"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">BATCH CONCURRENCY</label>
+                      <span className="text-[10px] font-black text-blue-400 bg-blue-500/10 px-1.5 rounded uppercase border border-blue-500/20">{settings.concurrency} FILES</span>
+                    </div>
+                    <div className="space-y-4 px-1 py-2 bg-muted/20 rounded-md border border-border/30">
+                      <input 
+                        type="range" 
+                        min="1" 
+                        max="10" 
+                        step="1"
+                        value={settings.concurrency}
+                        onChange={(e) => setSettings(prev => ({ ...prev, concurrency: parseInt(e.target.value) }))}
+                        className="modern-slider slider-blue"
+                      />
+                      <div className="flex justify-between text-[7px] font-black text-muted-foreground/40 uppercase tracking-tighter">
+                        <span>1 FILE</span>
+                        <span>3 FILES</span>
+                        <span>6 FILES</span>
+                        <span>10 FILES</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className={cn("space-y-4 transition-all duration-300", !settings.customPromptEnabled && "opacity-30 pointer-events-none grayscale")}>
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">CUSTOM GLOBAL INSTRUCTIONS</label>
+                <textarea 
+                  value={settings.customPrompt}
+                  onChange={(e) => setSettings(prev => ({ ...prev, customPrompt: e.target.value }))}
+                  placeholder="ADD EXTRA INSTRUCTIONS..."
+                  className="w-full bg-secondary border border-border text-[11px] p-4 rounded-sm h-24 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 outline-none transition-all text-foreground uppercase placeholder:text-muted-foreground/30 resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 bg-muted border-t border-border flex justify-end">
+              <button 
+                onClick={() => setIsSettingsOpen(false)}
+                className="bg-blue-500 hover:bg-blue-400 text-white text-[10px] font-black px-8 py-2 rounded-md transition-all shadow-xl shadow-blue-500/20 uppercase tracking-widest active:scale-95"
+              >
+                SAVE & CLOSE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* History Modal (Windows Style) */}
+      {isHistoryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-2xl bg-background border border-border rounded-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="p-3 border-b border-border flex items-center justify-between bg-muted">
+              <div className="flex items-center gap-2">
+                <HistoryIcon size={16} className="text-muted-foreground" />
+                <h3 className="font-bold text-[11px] uppercase tracking-widest text-foreground">Batch History</h3>
+              </div>
+              <button onClick={() => setIsHistoryOpen(false)} className="p-1 hover:bg-red-500 hover:text-white rounded text-muted-foreground transition-all">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto custom-scrollbar space-y-3 bg-background">
+              {history.length === 0 ? (
+                <div className="py-20 flex flex-col items-center justify-center text-muted-foreground/30 space-y-4">
+                  <Clock size={48} strokeWidth={1} className="opacity-10" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest">NO HISTORY FOUND</p>
+                </div>
+              ) : (
+                history.map(item => (
+                  <div key={item.id} className="p-4 bg-muted border border-border rounded-sm flex items-center justify-between hover:bg-blue-500/5 hover:border-blue-500/20 transition-all group">
+                    <div>
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase">{new Date(item.timestamp).toLocaleString()}</div>
+                      <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest mt-1">{item.files.length} ASSETS PROCESSED</div>
+                    </div>
+                    <button 
+                      onClick={() => { setFiles(item.files); setIsHistoryOpen(false); }}
+                      className="text-[10px] font-black bg-blue-500 hover:bg-blue-400 text-white px-4 py-2 rounded-md transition-all shadow-lg shadow-blue-500/20 uppercase tracking-widest active:scale-95"
+                    >
+                      RESTORE BATCH
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="p-4 bg-muted border-t border-border flex justify-end">
+              <button 
+                onClick={() => { setHistory([]); localStorage.removeItem(HISTORY_KEY); }}
+                className="text-[10px] font-black text-red-400 hover:text-red-300 uppercase tracking-widest"
+              >
+                CLEAR ALL HISTORY
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Modal */}
+      {errorModal.isOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-background border border-red-500/30 rounded-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="p-3 border-b border-red-500/20 flex items-center justify-between bg-red-500/5">
+              <div className="flex items-center gap-2 text-red-500">
+                <AlertCircle size={16} />
+                <h3 className="font-bold text-[11px] uppercase tracking-widest">ERROR DETAILS</h3>
+              </div>
+              <button 
+                onClick={() => setErrorModal(prev => ({ ...prev, isOpen: false }))} 
+                className="p-1 hover:bg-red-500 hover:text-white rounded text-muted-foreground transition-all"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4 bg-background">
+              <div className="space-y-1">
+                <label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">FILE NAME</label>
+                <div className="text-[11px] font-bold text-foreground bg-muted p-2 rounded-sm border border-border truncate">
+                  {errorModal.filename}
+                </div>
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">ERROR MESSAGE</label>
+                <div className="text-[12px] font-bold text-red-400 bg-red-500/5 p-4 rounded-sm border border-red-500/20 leading-relaxed break-words">
+                  {errorModal.message}
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button 
+                  onClick={() => setErrorModal(prev => ({ ...prev, isOpen: false }))}
+                  className="w-full py-2 bg-red-500 hover:bg-red-400 text-white text-[10px] font-black uppercase tracking-widest rounded-sm transition-all shadow-lg shadow-red-500/20 active:scale-[0.98]"
+                >
+                  CLOSE WINDOW
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <input 
+        type="file" 
+        id="file-upload" 
+        multiple 
+        className="hidden" 
+        onChange={(e) => {
+          if (e.target.files) {
+            handleFilesAdded(e.target.files);
+            e.target.value = ''; // Reset to allow re-uploading same file
+          }
+        }}
+        accept=".jpg,.jpeg,.png,.eps,.mp4,.mov"
+      />
+      <input 
+        type="file" 
+        id="folder-upload" 
+        {...{ webkitdirectory: "", directory: "" }}
+        multiple 
+        className="hidden" 
+        onChange={(e) => {
+          if (e.target.files) {
+            handleFilesAdded(e.target.files);
+            e.target.value = ''; // Reset to allow re-uploading same file
+          }
+        }}
+      />
+    </div>
+  );
+
+}
