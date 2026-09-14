@@ -256,42 +256,64 @@ const FileRow = React.memo(({ index, style, data }: any) => {
   );
 });
 
+// Helper to get initial storage
+const getSavedConfig = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error("Error parsing saved config:", e);
+  }
+  return null;
+};
+
+const initialSaved = getSavedConfig();
+
 export default function App() {
-  const [apiConfig, setApiConfig] = useState<ApiConfig>({
-    gemini: ['', '', '', '', ''],
-    groq: ['', '', '', '', ''],
-    mistral: ['', '', '', '', '']
+  const [apiConfig, setApiConfig] = useState<ApiConfig>(() => {
+    return initialSaved?.apiConfig || {
+      gemini: ['', '', '', '', ''],
+      groq: ['', '', '', '', ''],
+      mistral: ['', '', '', '', '']
+    };
   });
 
-  const [activeKey, setActiveKey] = useState<{provider: keyof ApiConfig, index: number}>({
-    provider: 'gemini',
-    index: 0
+  const [activeKey, setActiveKey] = useState<{provider: keyof ApiConfig, index: number}>(() => {
+    return initialSaved?.activeKey || {
+      provider: 'gemini',
+      index: 0
+    };
   });
 
-  const [settings, setSettings] = useState<GeneratorSettings>({
-    titleLength: [30, 70],
-    descriptionLength: [100, 200],
-    keywordsCount: 30,
-    autoDownload: false,
-    promptMode: 'default',
-    customPrompt: '',
-    optimizeKeywords: true,
-    minTitleWords: 5,
-    maxTitleWords: 15,
-    minDescriptionWords: 15,
-    maxDescriptionWords: 30,
-    minKeywords: 10,
-    maxKeywords: 50,
-    titleChoice: 1,
-    metadataFor: 'all',
-    singleWordKeywords: false,
-    silhouette: false,
-    transparentBackground: false,
-    prohibitedWords: false,
-    customPromptEnabled: false,
-    autoGenerateOnAdd: false,
-    savedKeywords: [],
-    concurrency: 2
+  const [settings, setSettings] = useState<GeneratorSettings>(() => {
+    const defaultSettings: GeneratorSettings = {
+      titleLength: [30, 70],
+      descriptionLength: [100, 200],
+      keywordsCount: 30,
+      autoDownload: false,
+      promptMode: 'default',
+      customPrompt: '',
+      optimizeKeywords: true,
+      minTitleWords: 5,
+      maxTitleWords: 15,
+      minDescriptionWords: 15,
+      maxDescriptionWords: 30,
+      minKeywords: 10,
+      maxKeywords: 50,
+      titleChoice: 1,
+      metadataFor: 'all',
+      singleWordKeywords: false,
+      silhouette: false,
+      transparentBackground: false,
+      prohibitedWords: false,
+      customPromptEnabled: false,
+      autoGenerateOnAdd: false,
+      savedKeywords: [],
+      concurrency: 2
+    };
+    return initialSaved?.settings ? { ...defaultSettings, ...initialSaved.settings } : defaultSettings;
   });
 
   const [files, setFiles] = useState<StockMetadata[]>([]);
@@ -1813,7 +1835,13 @@ export default function App() {
                               onChange={(e) => {
                                 const newKeys = [...apiConfig[provider]];
                                 newKeys[idx] = e.target.value.trim();
-                                setApiConfig(prev => ({ ...prev, [provider]: newKeys }));
+                                const newConfig = { ...apiConfig, [provider]: newKeys };
+                                setApiConfig(newConfig);
+                                try {
+                                  localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiConfig: newConfig, settings, activeKey }));
+                                } catch (err) {
+                                  console.error("Auto-save failed:", err);
+                                }
                               }}
                               placeholder={`ENTER ${provider.toUpperCase()} KEY ${idx + 1}...`}
                               className="flex-1 bg-secondary border border-border text-[11px] h-7 rounded-sm px-2.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/30 font-mono"
@@ -1836,7 +1864,13 @@ export default function App() {
                               onClick={() => {
                                 const newKeys = [...apiConfig[provider]];
                                 newKeys[idx] = '';
-                                setApiConfig(prev => ({ ...prev, [provider]: newKeys }));
+                                const newConfig = { ...apiConfig, [provider]: newKeys };
+                                setApiConfig(newConfig);
+                                try {
+                                  localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiConfig: newConfig, settings, activeKey }));
+                                } catch (err) {
+                                  console.error("Save failed:", err);
+                                }
                                 setApiStatus(prev => {
                                   const newStatus = { ...prev };
                                   delete newStatus[`${provider}-${idx}`];
@@ -2134,7 +2168,15 @@ export default function App() {
 
             <div className="p-4 bg-muted border-t border-border flex justify-end">
               <button 
-                onClick={() => setIsSettingsOpen(false)}
+                onClick={() => {
+                  try {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiConfig, settings, activeKey }));
+                    showNotification("Settings & API Keys saved permanently!", "success");
+                  } catch (e) {
+                    console.error("Save error:", e);
+                  }
+                  setIsSettingsOpen(false);
+                }}
                 className="bg-blue-500 hover:bg-blue-400 text-white text-[10px] font-black px-8 py-2 rounded-md transition-all shadow-xl shadow-blue-500/20 uppercase tracking-widest active:scale-95"
               >
                 SAVE & CLOSE
