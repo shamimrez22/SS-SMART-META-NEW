@@ -486,6 +486,7 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
     }
 
     const result = JSON.parse(repairJson(data.choices[0].message.content));
+    result.rating = result.rating || 5;
     
     if (settings.optimizeKeywords) {
       result.keywords = optimizeKeywords(result.keywords, settings.maxKeywords || 50);
