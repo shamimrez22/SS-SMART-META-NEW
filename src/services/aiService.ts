@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import UTIF from "utif";
 
 export async function testApiConnection(provider: 'gemini' | 'groq' | 'mistral', apiKey: string): Promise<{ success: boolean; message?: string }> {
   try {
@@ -30,13 +31,10 @@ export async function testApiConnection(provider: 'gemini' | 'groq' | 'mistral',
       const ai = new GoogleGenAI({ apiKey: activeKey });
       
       const testModels = [
-        "gemini-3.5-flash-lite",
-        "gemini-flash-lite-latest",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite",
-        "gemini-3.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-3.8-flash"
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite"
       ];
       let lastErr: any = null;
       for (const model of testModels) {
@@ -143,21 +141,257 @@ const SUPPORTED_GEMINI_MIMES = [
   'application/pdf'
 ];
 
+// Fallback visual generator: Creates a crisp artboard thumbnail for EPS vectors
+function generateVectorArtboardThumbnail(filename: string, headerText: string): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 400;
+    canvas.height = 400;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return undefined;
+
+    // Elegant vector blueprint theme
+    ctx.fillStyle = '#0f172a'; // slate-900
+    ctx.fillRect(0, 0, 400, 400);
+
+    // Subtle isometric/vector grid
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1;
+    for (let x = 20; x < 400; x += 20) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 400);
+      ctx.stroke();
+    }
+    for (let y = 20; y < 400; y += 20) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(400, y);
+      ctx.stroke();
+    }
+
+    // Centered Artboard canvas frame
+    const bbMatch = headerText.match(/%%(?:HiRes)?BoundingBox:\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)/i);
+    let artW = 280;
+    let artH = 280;
+    if (bbMatch) {
+      const origW = Math.abs(parseInt(bbMatch[3], 10) - parseInt(bbMatch[1], 10)) || 280;
+      const origH = Math.abs(parseInt(bbMatch[4], 10) - parseInt(bbMatch[2], 10)) || 280;
+      const aspect = origW / origH;
+      if (aspect > 1) {
+        artW = 280;
+        artH = Math.max(120, Math.round(280 / aspect));
+      } else {
+        artH = 280;
+        artW = Math.max(120, Math.round(280 * aspect));
+      }
+    }
+
+    const artX = (400 - artW) / 2;
+    const artY = (400 - artH) / 2;
+
+    // Artboard shadow & fill
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(artX + 4, artY + 4, artW, artH);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(artX, artY, artW, artH);
+    ctx.strokeStyle = '#38bdf8'; // sky-400
+    ctx.lineWidth = 2;
+    ctx.strokeRect(artX, artY, artW, artH);
+
+    // Vector anchor points & stylized bezier curves
+    ctx.strokeStyle = '#0284c7';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(artX + artW * 0.2, artY + artH * 0.7);
+    ctx.bezierCurveTo(
+      artX + artW * 0.3, artY + artH * 0.2,
+      artX + artW * 0.7, artY + artH * 0.8,
+      artX + artW * 0.8, artY + artH * 0.3
+    );
+    ctx.stroke();
+
+    // Corner handle points
+    const points = [
+      [artX + artW * 0.2, artY + artH * 0.7],
+      [artX + artW * 0.5, artY + artH * 0.5],
+      [artX + artW * 0.8, artY + artH * 0.3]
+    ];
+    for (const [px, py] of points) {
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(px - 4, py - 4, 8, 8);
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px - 4, py - 4, 8, 8);
+    }
+
+    // Vector Format Badge
+    ctx.fillStyle = '#0284c7';
+    ctx.beginPath();
+    ctx.roundRect(artX + 10, artY + 10, 80, 22, 4);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+    ctx.fillText('EPS VECTOR', artX + 16, artY + 25);
+
+    // Title label at bottom
+    const titleMatch = headerText.match(/%%Title:\s*([^\n\r]+)/i);
+    const cleanTitle = (titleMatch ? titleMatch[1].trim() : filename).slice(0, 30);
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 10px system-ui, -apple-system, sans-serif';
+    ctx.fillText(cleanTitle, artX + 12, artY + artH - 12);
+
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } catch (err) {
+    return undefined;
+  }
+}
+
 export async function extractEpsThumbnail(file: File): Promise<string | undefined> {
   try {
-    // Read a larger chunk to find XMP (up to 512KB as XMP can be deep in complex files)
-    const buffer = await file.slice(0, 524288).arrayBuffer();
-    const text = new TextDecoder().decode(buffer);
-    
-    // Look for xmpGImg:image which contains base64 thumbnail (common in Adobe EPS)
-    const thumbMatch = text.match(/<xmpGImg:image>([\s\S]*?)<\/xmpGImg:image>/i);
+    // 1. Check for DOS EPS Header with TIFF Preview (Dominant format for Adobe Illustrator & Stock vectors)
+    if (file.size >= 30) {
+      try {
+        const headerBuf = await file.slice(0, 30).arrayBuffer();
+        const headerBytes = new Uint8Array(headerBuf);
+        // DOS EPS magic bytes: 0xC5, 0xD0, 0xD3, 0xC6
+        if (headerBytes[0] === 0xC5 && headerBytes[1] === 0xD0 && headerBytes[2] === 0xD3 && headerBytes[3] === 0xC6) {
+          const view = new DataView(headerBuf);
+          const tiffOffset = view.getUint32(20, true);
+          const tiffLength = view.getUint32(24, true);
+
+          if (tiffOffset > 0 && tiffLength > 0 && tiffOffset + tiffLength <= file.size + 1000) {
+            const tiffBuf = await file.slice(tiffOffset, tiffOffset + tiffLength).arrayBuffer();
+            const ifds = UTIF.decode(tiffBuf);
+            if (ifds && ifds.length > 0) {
+              UTIF.decodeImage(tiffBuf, ifds[0]);
+              const rgba = UTIF.toRGBA8(ifds[0]);
+              const width = ifds[0].width;
+              const height = ifds[0].height;
+              if (width > 0 && height > 0) {
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  const imgData = new ImageData(new Uint8ClampedArray(rgba), width, height);
+                  ctx.putImageData(imgData, 0, 0);
+                  return canvas.toDataURL('image/jpeg', 0.88);
+                }
+              }
+            }
+          }
+        }
+      } catch (tiffErr) {
+        console.warn("TIFF preview extraction fallback:", tiffErr);
+      }
+    }
+
+    // 2. Look for xmpGImg:image base64 thumbnail in XMP (Check both start and end of file)
+    const headSlice = await file.slice(0, Math.min(1048576, file.size)).arrayBuffer();
+    const headText = new TextDecoder('latin1').decode(headSlice);
+
+    let thumbMatch = headText.match(/<xmpGImg:image>([\s\S]*?)<\/xmpGImg:image>/i);
+    if (!thumbMatch && file.size > 1048576) {
+      try {
+        const tailSlice = await file.slice(Math.max(0, file.size - 524288)).arrayBuffer();
+        const tailText = new TextDecoder('latin1').decode(tailSlice);
+        thumbMatch = tailText.match(/<xmpGImg:image>([\s\S]*?)<\/xmpGImg:image>/i);
+      } catch {}
+    }
+
     if (thumbMatch) {
       const base64 = thumbMatch[1].replace(/\s/g, '');
-      return `data:image/jpeg;base64,${base64}`;
+      if (base64.length > 50) {
+        return `data:image/jpeg;base64,${base64}`;
+      }
     }
-    
-    return undefined;
+
+    // 3. Look for PostScript %%BeginPreview: hex raster
+    const previewMatch = headText.match(/%%BeginPreview:\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)([\s\S]*?)%%EndPreview/i);
+    if (previewMatch) {
+      try {
+        const width = parseInt(previewMatch[1], 10);
+        const height = parseInt(previewMatch[2], 10);
+        const depth = parseInt(previewMatch[3], 10);
+        const hexData = previewMatch[5].replace(/^[ \t]*%[ \t]*/gm, '').replace(/[^0-9a-fA-F]/g, '');
+        if (width > 0 && height > 0 && hexData.length > 0) {
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            const imgData = ctx.createImageData(width, height);
+            const data = imgData.data;
+            if (depth === 1) {
+              const bytesPerRow = Math.ceil(width / 8);
+              for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                  const byteIdx = y * bytesPerRow + Math.floor(x / 8);
+                  const hexByte = hexData.substr(byteIdx * 2, 2);
+                  const byteVal = parseInt(hexByte, 16) || 0;
+                  const bit = (byteVal >> (7 - (x % 8))) & 1;
+                  const pixelIdx = (y * width + x) * 4;
+                  const val = bit ? 0 : 255;
+                  data[pixelIdx] = val;
+                  data[pixelIdx + 1] = val;
+                  data[pixelIdx + 2] = val;
+                  data[pixelIdx + 3] = 255;
+                }
+              }
+            } else if (depth === 8) {
+              for (let i = 0; i < width * height; i++) {
+                const byteVal = parseInt(hexData.substr(i * 2, 2), 16) || 255;
+                data[i * 4] = byteVal;
+                data[i * 4 + 1] = byteVal;
+                data[i * 4 + 2] = byteVal;
+                data[i * 4 + 3] = 255;
+              }
+            }
+            ctx.putImageData(imgData, 0, 0);
+            return canvas.toDataURL('image/jpeg', 0.88);
+          }
+        }
+      } catch (hexErr) {
+        console.warn("Hex preview extraction fallback:", hexErr);
+      }
+    }
+
+    // 4. Server-Side Vector Rendering via Ghostscript / ImageMagick (/api/render-eps)
+    if (typeof window !== 'undefined' && file.size <= 30 * 1024 * 1024) {
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const res = reader.result as string;
+            resolve(res.includes(',') ? res.split(',')[1] : res);
+          };
+          reader.onerror = () => reject(new Error("Failed to read file"));
+          reader.readAsDataURL(file);
+        });
+
+        const res = await fetch('/api/render-eps', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ base64 })
+        });
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.preview) {
+            return resData.preview;
+          }
+        }
+      } catch (apiErr) {
+        console.warn("Server EPS rendering fallback:", apiErr);
+      }
+    }
+
+    // 5. Canvas Artboard Fallback (Guaranteed to render a preview for any EPS)
+    return generateVectorArtboardThumbnail(file.name, headText);
   } catch (e) {
+    console.error("EPS preview error:", e);
     return undefined;
   }
 }
@@ -368,15 +602,12 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
 
   console.log("Starting Gemini generation for:", file?.name);
   
-  // Base list of fast models
+  // Base list of fast valid models
   const baseModels = [
-    "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
+    "gemini-3.8-flash",
     "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-3.6-flash",
-    "gemini-3.8-flash"
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite"
   ];
 
   // Put cached successful model first to prevent wasted attempts

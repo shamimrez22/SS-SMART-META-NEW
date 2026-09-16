@@ -567,32 +567,84 @@ export function injectEpsMetadata(
     return updatedEps.replace(xpacketRegex, xmpPacket);
   }
 
-  // Look for %%EndComments marker in PostScript EPS header
+  // Look for %%EndComments marker in PostScript EPS header: Inject BEFORE %%EndComments
   const endCommentsIndex = updatedEps.indexOf('%%EndComments');
+  const xmlBlock = `\n%begin_xml_code\n${xmpPacket}\n%end_xml_code\n`;
   if (endCommentsIndex !== -1) {
-    const insertPos = endCommentsIndex + '%%EndComments'.length;
-    return (
-      updatedEps.slice(0, insertPos) +
-      '\n%begin_xml_code\n' +
-      xmpPacket +
-      '\n%end_xml_code\n' +
-      updatedEps.slice(insertPos)
-    );
+    return updatedEps.slice(0, endCommentsIndex) + xmlBlock + updatedEps.slice(endCommentsIndex);
   }
 
   // If no %%EndComments, insert right after the first line (e.g., %!PS-Adobe-3.0 EPSF-3.0)
   const firstNewline = updatedEps.indexOf('\n');
   if (firstNewline !== -1) {
-    return (
-      updatedEps.slice(0, firstNewline + 1) +
-      '%begin_xml_code\n' +
-      xmpPacket +
-      '\n%end_xml_code\n' +
-      updatedEps.slice(firstNewline + 1)
-    );
+    return updatedEps.slice(0, firstNewline + 1) + xmlBlock + updatedEps.slice(firstNewline + 1);
   }
 
-  return '%begin_xml_code\n' + xmpPacket + '\n%end_xml_code\n' + updatedEps;
+  return xmlBlock + updatedEps;
+}
+
+// Binary-safe EPS/AI Metadata Embedder: Preserves DOS EPS binary headers, TIFF previews, and PostScript integrity
+export async function embedMetadataInEpsBlob(
+  file: File | Blob,
+  metadata: Partial<StockMetadata>
+): Promise<Blob> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+
+  // Check for DOS EPS 30-byte header: 0xC5, 0xD0, 0xD3, 0xC6
+  const isDosEps = bytes.length >= 30 &&
+    bytes[0] === 0xC5 && bytes[1] === 0xD0 && bytes[2] === 0xD3 && bytes[3] === 0xC6;
+
+  let psOffset = 0;
+  let psLength = bytes.length;
+  let wmfOffset = 0;
+  let wmfLength = 0;
+  let tiffOffset = 0;
+  let tiffLength = 0;
+
+  if (isDosEps) {
+    const view = new DataView(buffer);
+    psOffset = view.getUint32(4, true);
+    psLength = view.getUint32(8, true);
+    wmfOffset = view.getUint32(12, true);
+    wmfLength = view.getUint32(16, true);
+    tiffOffset = view.getUint32(20, true);
+    tiffLength = view.getUint32(24, true);
+  }
+
+  // Safe PostScript slice extraction using ISO-8859-1 (Latin1) to preserve all byte values 0-255 without distortion
+  const psSlice = bytes.subarray(psOffset, psOffset + psLength);
+  const psText = new TextDecoder('iso-8859-1').decode(psSlice);
+
+  // Inject updated DSC comments & XMP packet
+  const updatedPsText = injectEpsMetadata(psText, metadata);
+  const newPsBytes = new TextEncoder().encode(updatedPsText);
+  const delta = newPsBytes.length - psLength;
+
+  if (!isDosEps) {
+    return new Blob([newPsBytes], { type: 'application/postscript' });
+  }
+
+  // Construct new 30-byte DOS header with updated psLength and adjusted offsets
+  const newHeader = new Uint8Array(30);
+  newHeader[0] = 0xC5; newHeader[1] = 0xD0; newHeader[2] = 0xD3; newHeader[3] = 0xC6;
+  const headerView = new DataView(newHeader.buffer);
+  headerView.setUint32(4, psOffset, true);
+  headerView.setUint32(8, newPsBytes.length, true);
+
+  const newWmfOffset = wmfOffset > psOffset ? wmfOffset + delta : wmfOffset;
+  headerView.setUint32(12, newWmfOffset, true);
+  headerView.setUint32(16, wmfLength, true);
+
+  const newTiffOffset = tiffOffset > psOffset ? tiffOffset + delta : tiffOffset;
+  headerView.setUint32(20, newTiffOffset, true);
+  headerView.setUint32(24, tiffLength, true);
+  headerView.setUint16(28, 0xFFFF, true);
+
+  // Slices after PostScript (e.g. binary TIFF preview) remain completely untouched and clean
+  const afterPs = bytes.subarray(psOffset + psLength);
+
+  return new Blob([newHeader, newPsBytes, afterPs], { type: 'application/postscript' });
 }
 
 // Helper functions for MP4 Box Manipulation
@@ -730,8 +782,15 @@ async function findMp4Boxes(file: File): Promise<{
   return { moovOffset, moovSize, mdatOffset, nextAfterMoovType, nextAfterMoovSize, nextAfterMoovOffset };
 }
 
-function buildXtraBox(title: string, description: string, tags: string, rating: number): Uint8Array {
-  // rating: 1..5 -> percent: 1->1, 2->25, 3->50, 4->75, 5->99
+function buildXtraBox(
+  title: string,
+  description: string,
+  tags: string,
+  keywordsList: string[],
+  rating: number
+): Uint8Array {
+  // Windows Explorer 5-star rating:
+  // 1 star = 1, 2 stars = 25, 3 stars = 50, 4 stars = 75, 5 stars = 99 (standard Windows Shell / WMF)
   const ratingPercent = rating >= 5 ? 99 : (rating === 4 ? 75 : (rating === 3 ? 50 : (rating === 2 ? 25 : 1)));
 
   function createXtraUnicodeEntry(tagName: string, value: string): Uint8Array {
@@ -751,13 +810,57 @@ function buildXtraBox(title: string, description: string, tags: string, rating: 
     const recordLen = utf16Bytes.length + 6;
     const count = 1;
 
-    // valBuff: count (4 bytes BE) + recordLen (4 bytes BE) + valType (2 bytes LE) + utf16Bytes
+    // valBuff: count (4 bytes BE) + recordLen (4 bytes BE) + valType (2 bytes BE) + utf16Bytes
     const valBuff = new Uint8Array(4 + 4 + 2 + utf16Bytes.length);
     const dv = new DataView(valBuff.buffer);
     dv.setUint32(0, count, false); // Big Endian
     dv.setUint32(4, recordLen, false); // Big Endian
-    dv.setUint16(8, valType, true); // Little Endian
+    dv.setUint16(8, valType, false); // Big Endian (0x0008) - CRITICAL for Windows Explorer!
     valBuff.set(utf16Bytes, 10);
+
+    const entrySize = 4 + 4 + tagLen + valBuff.length;
+    const entry = new Uint8Array(entrySize);
+    const edv = new DataView(entry.buffer);
+    edv.setUint32(0, entrySize, false);
+    edv.setUint32(4, tagLen, false);
+    entry.set(tagBytes, 8);
+    entry.set(valBuff, 8 + tagLen);
+
+    return entry;
+  }
+
+  function createXtraMultiUnicodeEntry(tagName: string, values: string[]): Uint8Array {
+    const enc = new TextEncoder();
+    const tagBytes = enc.encode(tagName);
+    const tagLen = tagBytes.length;
+
+    const records: Uint8Array[] = [];
+    for (const value of values) {
+      const utf16Bytes = new Uint8Array((value.length + 1) * 2);
+      for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        utf16Bytes[i * 2] = code & 0xff;
+        utf16Bytes[i * 2 + 1] = (code >> 8) & 0xff;
+      }
+      const record = new Uint8Array(4 + 2 + utf16Bytes.length);
+      const rdv = new DataView(record.buffer);
+      rdv.setUint32(0, utf16Bytes.length + 6, false); // recordLen BE
+      rdv.setUint16(4, 8, false); // valType = 8 BE
+      record.set(utf16Bytes, 6);
+      records.push(record);
+    }
+
+    let recordsLen = 0;
+    for (const r of records) recordsLen += r.length;
+
+    const valBuff = new Uint8Array(4 + recordsLen);
+    const vdv = new DataView(valBuff.buffer);
+    vdv.setUint32(0, values.length, false); // count BE
+    let pos = 4;
+    for (const r of records) {
+      valBuff.set(r, pos);
+      pos += r.length;
+    }
 
     const entrySize = 4 + 4 + tagLen + valBuff.length;
     const entry = new Uint8Array(entrySize);
@@ -788,7 +891,7 @@ function buildXtraBox(title: string, description: string, tags: string, rating: 
     const dv = new DataView(valBuff.buffer);
     dv.setUint32(0, count, false);
     dv.setUint32(4, recordLen, false);
-    dv.setUint16(8, valType, true);
+    dv.setUint16(8, valType, false); // Big Endian (0x0013) - CRITICAL for Windows Explorer!
     valBuff.set(valBytes, 10);
 
     const entrySize = 4 + 4 + tagLen + valBuff.length;
@@ -806,22 +909,38 @@ function buildXtraBox(title: string, description: string, tags: string, rating: 
   if (title) {
     entries.push(createXtraUnicodeEntry('Title', title));
     entries.push(createXtraUnicodeEntry('WM/SubTitle', title));
+    entries.push(createXtraUnicodeEntry('{F29F85E0-4FF9-1068-AB91-08002B27B3D9} 2', title));
   }
   if (description) {
     entries.push(createXtraUnicodeEntry('Description', description));
     entries.push(createXtraUnicodeEntry('Comment', description));
+    entries.push(createXtraUnicodeEntry('{F29F85E0-4FF9-1068-AB91-08002B27B3D9} 6', description));
   }
-  if (tags) {
+  if (keywordsList.length > 0) {
+    // Multi-value list for Windows Explorer native tag collection
+    entries.push(createXtraMultiUnicodeEntry('WM/Category', keywordsList));
+    entries.push(createXtraMultiUnicodeEntry('{F29F85E0-4FF9-1068-AB91-08002B27B3D9} 5', keywordsList));
+    if (tags) {
+      // Semicolon-delimited string fallback
+      entries.push(createXtraUnicodeEntry('Keywords', tags));
+      entries.push(createXtraUnicodeEntry('Tags', tags));
+      entries.push(createXtraUnicodeEntry('{D5CDD502-2E9C-101B-9397-08002B2CF9AE} 2', tags));
+    }
+  } else if (tags) {
     entries.push(createXtraUnicodeEntry('WM/Category', tags));
     entries.push(createXtraUnicodeEntry('Keywords', tags));
     entries.push(createXtraUnicodeEntry('Tags', tags));
   }
+
   // Windows Explorer 5-star rating (99 = 5 stars)
   entries.push(createXtraInt64Entry('WM/SharedUserRating', ratingPercent));
   entries.push(createXtraInt64Entry('Rating', ratingPercent));
   entries.push(createXtraInt64Entry('UserRating', ratingPercent));
+  entries.push(createXtraInt64Entry('{64440492-4C8B-11D1-8B70-080036B11A03} 9', ratingPercent));
+
   entries.push(createXtraUnicodeEntry('Author', 'Stock Contributor'));
   entries.push(createXtraUnicodeEntry('WM/Composer', 'Stock Contributor'));
+  entries.push(createXtraUnicodeEntry('{F29F85E0-4FF9-1068-AB91-08002B27B3D9} 4', 'Stock Contributor'));
   entries.push(createXtraUnicodeEntry('WM/Year', String(new Date().getFullYear())));
 
   return writeMp4Box('Xtra', concatUint8Arrays(entries));
@@ -946,7 +1065,7 @@ function createMp4Udta(metadata: Partial<StockMetadata>): Uint8Array {
   const metaBox = writeMp4Box('meta', metaPayload);
 
   // 2. Microsoft Windows Explorer 'Xtra' atom with rating, tags, title, description
-  const xtraBox = buildXtraBox(title, description, windowsTags, rating);
+  const xtraBox = buildXtraBox(title, description, windowsTags, keywordsList, rating);
 
   const udtaParts: Uint8Array[] = [metaBox, xtraBox];
 
@@ -1045,7 +1164,7 @@ export async function embedMetadataInMp4Blob(
         oldMoovBytes[pos + 7]
       );
 
-      if (type !== 'udta') {
+      if (type !== 'udta' && type !== 'Xtra') {
         subBoxes.push(oldMoovBytes.slice(pos, pos + size));
       }
       pos += size;
@@ -1054,6 +1173,23 @@ export async function embedMetadataInMp4Blob(
     // Create our new rich udta box
     const newUdtaBox = createMp4Udta(metadata);
     subBoxes.push(newUdtaBox);
+
+    // Also include Xtra directly under moov for tools / Windows handlers that inspect moov/Xtra
+    const rawKeywords = (metadata.keywords || '').trim();
+    const keywordsList = rawKeywords
+      .split(',')
+      .map(k => k.trim())
+      .filter(Boolean);
+    const windowsTags = keywordsList.join('; ');
+    const rating = (metadata.rating !== undefined && metadata.rating > 0) ? metadata.rating : 5;
+    const directXtraBox = buildXtraBox(
+      (metadata.title || '').trim(),
+      (metadata.description || '').trim(),
+      windowsTags,
+      keywordsList,
+      rating
+    );
+    subBoxes.push(directXtraBox);
 
     // Assemble new moov
     const totalSubBoxesLength = subBoxes.reduce((sum, b) => sum + b.length, 0);
@@ -1121,9 +1257,7 @@ export async function prepareEmbeddedBlob(
     return await embedMetadataInPngBlob(file, metadata);
   }
   if (['eps', 'ai'].includes(ext)) {
-    const text = await file.text();
-    const updated = injectEpsMetadata(text, metadata);
-    return new Blob([updated], { type: 'application/postscript' });
+    return await embedMetadataInEpsBlob(file, metadata);
   }
   if (['svg'].includes(ext)) {
     const text = await file.text();

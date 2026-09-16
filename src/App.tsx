@@ -44,7 +44,8 @@ import {
   FileCode,
   ExternalLink,
   Save,
-  Edit3
+  Edit3,
+  Maximize2
 } from 'lucide-react';
 import Papa from 'papaparse';
 import * as piexif from "piexifjs";
@@ -60,12 +61,13 @@ import {
 } from './services/embedService';
 import { StockMetadata, ApiConfig, GeneratorSettings, ApiStatus, HistoryItem } from './types';
 import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail } from './services/aiService';
+import { AssetInspector } from './components/AssetInspector';
 import { cn } from './lib/utils';
 
 const STORAGE_KEY = 'ai-metadata-pro-config';
 const HISTORY_KEY = 'ai-metadata-pro-history';
 
-// Optimized Copyable Cell Component
+// Optimized Copyable Cell Component with readable typography
 const CopyableCell = React.memo(({ value, onChange, placeholder, colorClass, isGenerating, onCopy }: any) => {
   const [copied, setCopied] = useState(false);
 
@@ -80,10 +82,10 @@ const CopyableCell = React.memo(({ value, onChange, placeholder, colorClass, isG
   return (
     <div className="w-full h-full relative group/cell p-0.5">
       <textarea 
-        value={value}
+        value={value || ''}
         onChange={(e) => onChange(e.target.value)}
         className={cn(
-          "w-full h-full bg-secondary text-foreground border border-border rounded-sm p-1 text-[9px] resize-none focus:ring-1 focus:ring-primary focus:border-foreground/50 outline-none custom-scrollbar leading-none placeholder:text-muted-foreground/40 uppercase font-bold transition-all",
+          "w-full h-full bg-secondary/80 hover:bg-secondary text-foreground border border-border/70 rounded-sm p-1 text-[10px] resize-none focus:ring-1 focus:ring-primary focus:border-primary outline-none custom-scrollbar leading-tight placeholder:text-muted-foreground/40 font-medium transition-all",
           colorClass,
           isGenerating && "opacity-50 blur-[1px]"
         )}
@@ -97,12 +99,12 @@ const CopyableCell = React.memo(({ value, onChange, placeholder, colorClass, isG
       <button 
         onClick={handleCopy}
         className={cn(
-          "absolute top-1 right-2 p-0.5 bg-muted text-foreground border border-border rounded-sm opacity-0 group-hover/cell:opacity-100 transition-all hover:bg-accent shadow-sm",
+          "absolute top-1 right-2 p-0.5 bg-muted text-foreground border border-border rounded-sm opacity-0 group-hover/cell:opacity-100 transition-all hover:bg-accent shadow-sm cursor-pointer",
           copied && "opacity-100 bg-emerald-500/20 text-emerald-500 border-emerald-500/50"
         )}
-        title="COPY"
+        title="Copy Content"
       >
-        {copied ? <Check size={8} className="text-emerald-500" /> : <Copy size={8} className="text-foreground" />}
+        {copied ? <Check size={9} className="text-emerald-500" /> : <Copy size={9} className="text-foreground" />}
       </button>
     </div>
   );
@@ -110,9 +112,11 @@ const CopyableCell = React.memo(({ value, onChange, placeholder, colorClass, isG
 
 // Optimized Row Component for Virtualization
 const FileRow = React.memo(({ index, style, data }: any) => {
-  const { files, updateFile, regenerateSingleFile, downloadWithMetadata, deleteFile, isGenerating, openErrorModal } = data;
+  const { files, updateFile, regenerateSingleFile, downloadWithMetadata, deleteFile, isGenerating, openErrorModal, openPreviewModal, selectedFileId, setSelectedFileId } = data;
   const file = files[index];
   if (!file) return null;
+
+  const isSelected = selectedFileId === file.id;
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -122,28 +126,45 @@ const FileRow = React.memo(({ index, style, data }: any) => {
   return (
     <div 
       style={style}
+      onClick={() => {
+        if (setSelectedFileId) setSelectedFileId(file.id);
+      }}
+      onDoubleClick={() => {
+        if (openPreviewModal) openPreviewModal(file);
+      }}
       className={cn(
-        "flex flex-row w-full hover:bg-blue-500/5 transition-colors group items-center border-b border-border bg-background",
+        "flex flex-row w-full hover:bg-primary/5 transition-colors group items-center border-b border-border bg-background cursor-pointer",
+        isSelected && "bg-primary/10 border-l-4 border-l-primary ring-1 ring-inset ring-primary/20",
         file.status === 'generating' && "bg-blue-500/5"
       )}
     >
-      <div className="w-[12%] px-1 py-0.5 border-r border-border flex items-center gap-1.5 overflow-hidden shrink-0 h-full">
-        <div className="w-6 h-6 bg-secondary rounded-sm border border-border flex-shrink-0 overflow-hidden relative shadow-sm">
+      <div className="w-[12%] px-1.5 py-0.5 border-r border-border flex items-center gap-2 overflow-hidden shrink-0 h-full">
+        <div 
+          onClick={(e) => {
+            e.stopPropagation();
+            if (openPreviewModal) openPreviewModal(file);
+            if (setSelectedFileId) setSelectedFileId(file.id);
+          }}
+          className="w-9 h-9 bg-secondary rounded border border-border flex-shrink-0 overflow-hidden relative shadow-xs cursor-pointer hover:border-primary hover:scale-105 transition-all group/thumb"
+          title="Click to view full preview & metadata (প্রিভিউ দেখতে ক্লিক করুন)"
+        >
           {file.previewUrl ? (
             <img src={file.previewUrl} alt="" className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-foreground">
-              <FileText size={12} />
+            <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground bg-muted/40">
+              <FileText size={15} />
+              <span className="text-[6px] font-bold uppercase mt-0.5 opacity-80">{file.fileType || 'FILE'}</span>
             </div>
           )}
+          {/* Status corner badges that never obstruct the preview image */}
           {(file.status === 'completed' || file.status === 'saved') && (
-            <div className="absolute inset-0 bg-emerald-500/20 flex items-center justify-center">
-              <CheckCircle2 size={12} className="text-emerald-600 dark:text-emerald-400" />
+            <div className="absolute bottom-0.5 right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-background flex items-center justify-center shadow-xs" title="Processed">
+              <CheckCircle2 size={8} className="text-white" />
             </div>
           )}
           {(file.status === 'generating' || file.status === 'retrying') && (
-            <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
-              <RefreshCw size={12} className="animate-spin text-blue-600 dark:text-blue-400" />
+            <div className="absolute inset-0 bg-blue-500/30 flex items-center justify-center backdrop-blur-[1px]">
+              <RefreshCw size={12} className="animate-spin text-white" />
             </div>
           )}
         </div>
@@ -152,7 +173,8 @@ const FileRow = React.memo(({ index, style, data }: any) => {
             type="text"
             value={file.filename}
             onChange={(e) => updateFile(file.id, { filename: e.target.value })}
-            className="text-[9px] font-black text-foreground truncate leading-none uppercase tracking-tighter bg-transparent hover:bg-muted/40 focus:bg-background focus:ring-1 focus:ring-primary rounded px-0.5 py-0.5 w-full outline-none transition-all cursor-text border border-transparent hover:border-border"
+            onClick={(e) => e.stopPropagation()}
+            className="text-[9px] font-bold text-foreground truncate leading-none uppercase tracking-tighter bg-transparent hover:bg-muted/40 focus:bg-background focus:ring-1 focus:ring-primary rounded px-0.5 py-0.5 w-full outline-none transition-all cursor-text border border-transparent hover:border-border"
             title={`File: ${file.filename} (Click to edit filename)`}
           />
           <div className="flex items-center gap-1 mt-0.5">
@@ -475,7 +497,17 @@ export default function App() {
   const openErrorModal = useCallback((message: string, filename: string) => {
     setErrorModal({ isOpen: true, message, filename });
   }, []);
+
+  const [previewModalFileId, setPreviewModalFileId] = useState<string | null>(null);
+  const previewModalFile = useMemo(() => {
+    if (!previewModalFileId) return null;
+    return files.find(f => f.id === previewModalFileId) || null;
+  }, [previewModalFileId, files]);
+  const openPreviewModal = useCallback((file: StockMetadata) => {
+    setPreviewModalFileId(file.id);
+  }, []);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [selectedExportSite, setSelectedExportSite] = useState('adobe');
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [directoryHandle, setDirectoryHandle] = useState<any>(null);
@@ -638,6 +670,8 @@ export default function App() {
           if (['png', 'eps', 'mp4', 'mov', 'jpg', 'jpeg', 'ai', 'svg', 'webp', 'avi'].includes(ext)) {
             const id = Math.random().toString(36).substr(2, 9);
             newFileObjects[id] = file;
+            const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif'];
+            const isImage = imageExtensions.includes(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
             newItems.push({
               id,
               filename: file.name,
@@ -648,7 +682,7 @@ export default function App() {
               rating: 5,
               status: 'pending',
               fileType: ext,
-              previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+              previewUrl: isImage ? URL.createObjectURL(file) : undefined,
               handle: entry
             });
           }
@@ -662,6 +696,9 @@ export default function App() {
 
       setFileObjects(prev => ({ ...prev, ...newFileObjects }));
       setFiles(prev => [...newItems, ...prev]);
+      if (newItems.length > 0) {
+        setSelectedFileId(prev => prev || newItems[0].id);
+      }
 
       // Async extract EPS & Video thumbnails
       for (let i = 0; i < newItems.length; i++) {
@@ -669,7 +706,7 @@ export default function App() {
         const file = newFileObjects[item.id];
         if (!file) continue;
         const ext = item.fileType.toLowerCase();
-        if (ext === 'eps') {
+        if (ext === 'eps' || ext === 'ai') {
           extractEpsThumbnail(file).then(thumb => {
             if (thumb) {
               setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
@@ -731,6 +768,8 @@ export default function App() {
         const id = Math.random().toString(36).substr(2, 9);
         
         newFileObjects[id] = file;
+        const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif'];
+        const isImage = imageExtensions.includes(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
         newItems.push({
           id,
           filename: file.name,
@@ -741,12 +780,15 @@ export default function App() {
           rating: 5,
           status: 'pending',
           fileType: ext,
-          previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+          previewUrl: isImage ? URL.createObjectURL(file) : undefined,
           handle: handle
         });
       }
       setFileObjects(prev => ({ ...prev, ...newFileObjects }));
       setFiles(prev => [...newItems, ...prev]);
+      if (newItems.length > 0) {
+        setSelectedFileId(prev => prev || newItems[0].id);
+      }
 
       // Async extract EPS & Video thumbnails
       for (let i = 0; i < newItems.length; i++) {
@@ -754,7 +796,7 @@ export default function App() {
         const file = newFileObjects[item.id];
         if (!file) continue;
         const ext = item.fileType.toLowerCase();
-        if (ext === 'eps') {
+        if (ext === 'eps' || ext === 'ai') {
           extractEpsThumbnail(file).then(thumb => {
             if (thumb) {
               setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
@@ -1337,10 +1379,19 @@ export default function App() {
     }
   };
 
-  const handleExport = (format: string) => {
-    const completedFiles = files.filter(f => f.status === 'completed');
-    if (completedFiles.length === 0) {
-      showNotification("No completed files to export! Please process assets first.", 'info');
+  const handleExport = (format: string, exportAll: boolean = false) => {
+    let targetFiles: StockMetadata[] = [];
+    if (exportAll || format === 'all_files' || format === 'master_all') {
+      targetFiles = files;
+    } else {
+      targetFiles = files.filter(f => f.status === 'completed' || f.status === 'saved' || f.title || f.keywords);
+      if (targetFiles.length === 0) {
+        targetFiles = files; // fallback to all files if none marked completed yet
+      }
+    }
+
+    if (targetFiles.length === 0) {
+      showNotification("No files to export! Please add assets to the workspace first.", 'info');
       return;
     }
 
@@ -1350,11 +1401,11 @@ export default function App() {
     let filenamePrefix = format;
 
     if (format === 'json') {
-      content = JSON.stringify(completedFiles, null, 2);
+      content = JSON.stringify(targetFiles, null, 2);
       mimeType = 'application/json;charset=utf-8;';
       extension = 'json';
     } else if (format === 'txt') {
-      content = completedFiles.map(f => 
+      content = targetFiles.map(f => 
         `FILE: ${f.filename}\nTITLE: ${f.title}\nDESC: ${f.description}\nKEYWORDS: ${f.keywords}\n\n`
       ).join('---\n');
       mimeType = 'text/plain;charset=utf-8;';
@@ -1365,10 +1416,31 @@ export default function App() {
       filenamePrefix = `${format}_metadata`;
 
       switch (format) {
+        case 'all_files':
+        case 'master_all':
+          // Comprehensive All Files Master CSV with all fields
+          filenamePrefix = 'all_files_metadata';
+          data = targetFiles.map(f => ({
+            'Filename': f.filename,
+            'Original Filename': f.originalFilename || f.filename,
+            'Title': f.title || '',
+            'Description': f.description || '',
+            'Keywords': (f.keywords || '')
+              .split(',')
+              .map(k => k.trim())
+              .filter(Boolean)
+              .join(','),
+            'Category': f.category || 'Technology',
+            'Rating': f.rating || 5,
+            'File Type': (f.fileType || '').toUpperCase(),
+            'Status': f.status || 'pending'
+          }));
+          break;
+
         case 'adobe':
           // Adobe Stock official contributor template
           // Headers: Filename, Title, Keywords, Category
-          data = completedFiles.map(f => ({
+          data = targetFiles.map(f => ({
             'Filename': f.filename,
             'Title': f.title || f.filename.replace(/\.[^/.]+$/, ""),
             'Keywords': (f.keywords || '')
@@ -1383,7 +1455,7 @@ export default function App() {
         case 'shutterstock':
           // Shutterstock official contributor template
           // Headers: Filename, Description, Keywords, Categories
-          data = completedFiles.map(f => ({
+          data = targetFiles.map(f => ({
             'Filename': f.filename,
             'Description': f.description || f.title || '',
             'Keywords': (f.keywords || '')
@@ -1400,7 +1472,7 @@ export default function App() {
         case 'getty':
           // Getty Images / iStock ESP contributor template
           // Headers: file_name, title, description, keywords
-          data = completedFiles.map(f => ({
+          data = targetFiles.map(f => ({
             'file_name': f.filename,
             'title': f.title || '',
             'description': f.description || f.title || '',
@@ -1415,7 +1487,7 @@ export default function App() {
         case 'freepik':
           // Freepik Contributor CSV template
           // Headers: File name, Title, Tags
-          data = completedFiles.map(f => ({
+          data = targetFiles.map(f => ({
             'File name': f.filename,
             'Title': f.title || '',
             'Tags': (f.keywords || '')
@@ -1429,7 +1501,7 @@ export default function App() {
         case 'vecteezy':
           // Vecteezy Contributor CSV template
           // Headers: Filename, Title, Description, Keywords
-          data = completedFiles.map(f => ({
+          data = targetFiles.map(f => ({
             'Filename': f.filename,
             'Title': f.title || '',
             'Description': f.description || f.title || '',
@@ -1443,7 +1515,7 @@ export default function App() {
 
         case 'alamy':
           // Alamy Contributor template
-          data = completedFiles.map(f => ({
+          data = targetFiles.map(f => ({
             'Filename': f.filename,
             'Title': f.title || '',
             'Caption': f.description || f.title || '',
@@ -1457,7 +1529,7 @@ export default function App() {
 
         case 'pond5':
           // Pond5 Contributor template
-          data = completedFiles.map(f => ({
+          data = targetFiles.map(f => ({
             'Filename': f.filename,
             'Title': f.title || '',
             'Description': f.description || '',
@@ -1472,7 +1544,7 @@ export default function App() {
 
         case 'dreamstime':
           // Dreamstime Contributor template
-          data = completedFiles.map(f => ({
+          data = targetFiles.map(f => ({
             'Filename': f.filename,
             'Title': f.title || '',
             'Description': f.description || '',
@@ -1488,7 +1560,7 @@ export default function App() {
         case 'csv':
         default:
           // Complete Standard Multi-Platform CSV
-          data = completedFiles.map(f => ({
+          data = targetFiles.map(f => ({
             'Filename': f.filename,
             'Title': f.title || '',
             'Description': f.description || '',
@@ -1524,7 +1596,7 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showNotification(`Exported ${completedFiles.length} records in standard ${format.toUpperCase()} format!`, 'success');
+    showNotification(`Exported ${targetFiles.length} records in standard ${format.toUpperCase()} format!`, 'success');
   };
 
   const handleEmbed = async (type: 'image' | 'video' | 'eps' | 'all') => {
@@ -1582,6 +1654,27 @@ export default function App() {
       return true;
     });
   }, [files, settings.metadataFor]);
+
+  const activeSelectedFile = useMemo(() => {
+    if (selectedFileId) {
+      const found = files.find(f => f.id === selectedFileId);
+      if (found) return found;
+    }
+    return filteredFiles[0] || null;
+  }, [selectedFileId, files, filteredFiles]);
+
+  const handleModalNavigate = useCallback((direction: 'next' | 'prev') => {
+    if (!previewModalFileId || filteredFiles.length <= 1) return;
+    const currentIndex = filteredFiles.findIndex(f => f.id === previewModalFileId);
+    if (currentIndex === -1) return;
+    if (direction === 'next') {
+      const nextIndex = (currentIndex + 1) % filteredFiles.length;
+      setPreviewModalFileId(filteredFiles[nextIndex].id);
+    } else {
+      const prevIndex = (currentIndex - 1 + filteredFiles.length) % filteredFiles.length;
+      setPreviewModalFileId(filteredFiles[prevIndex].id);
+    }
+  }, [previewModalFileId, filteredFiles]);
 
   const clearAll = () => {
     if (isGenerating) {
@@ -1679,7 +1772,8 @@ export default function App() {
       const id = Math.random().toString(36).substr(2, 9);
       newFileObjects[id] = file;
       
-      const isImage = file.type.startsWith('image/') && ext !== 'eps';
+      const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif'];
+      const isImage = imageExtensions.includes(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
       
       newItems.push({
         id,
@@ -1697,6 +1791,9 @@ export default function App() {
 
     setFileObjects(prev => ({ ...prev, ...newFileObjects }));
     setFiles(prev => [...newItems, ...prev]);
+    if (newItems.length > 0) {
+      setSelectedFileId(prev => prev || newItems[0].id);
+    }
 
     // Async extraction of EPS & Video thumbnails
     for (let i = 0; i < newItems.length; i++) {
@@ -1704,7 +1801,7 @@ export default function App() {
       const file = newFileObjects[item.id];
       if (!file) continue;
       const ext = item.fileType.toLowerCase();
-      if (ext === 'eps') {
+      if (ext === 'eps' || ext === 'ai') {
         extractEpsThumbnail(file).then(thumb => {
           if (thumb) {
             setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
@@ -2028,14 +2125,24 @@ export default function App() {
                 <span className="text-[9px] font-black text-foreground uppercase tracking-widest border border-border px-1 bg-background/90">EXPORT :*</span>
               </div>
               <button 
-                onClick={() => handleExport(selectedExportSite)}
+                onClick={() => handleExport(selectedExportSite, false)}
                 className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-cyan-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-cyan-600 shadow-sm bg-secondary"
-                title={`Export in ${selectedExportSite.toUpperCase()} format`}
+                title={`Export ${selectedExportSite.toUpperCase()} CSV for processed files`}
               >
                 <div className="p-0 text-cyan-600 dark:text-cyan-400 group-hover:scale-110 transition-all">
                   <FileSpreadsheet size={16} strokeWidth={3} />
                 </div>
                 <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Export CSV</span>
+              </button>
+              <button 
+                onClick={() => handleExport('all_files', true)}
+                className="flex flex-col items-center justify-center min-w-[55px] h-10 hover:bg-emerald-500/10 rounded-sm transition-all group cursor-pointer border border-emerald-500/30 hover:border-emerald-600 shadow-sm bg-secondary"
+                title="Export complete master CSV for ALL files in current batch (সব ফাইলের CSV)"
+              >
+                <div className="p-0 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-all">
+                  <Download size={16} strokeWidth={3} />
+                </div>
+                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">All Files CSV</span>
               </button>
             </div>
 
@@ -2194,6 +2301,7 @@ export default function App() {
                 onChange={(e) => setSelectedExportSite(e.target.value)}
                 className="bg-secondary border border-border text-foreground text-[10px] font-bold px-2 py-1 rounded-sm focus:outline-primary outline-none cursor-pointer"
               >
+                <option value="all_files">Master CSV (All Files & All Columns)</option>
                 <option value="adobe">Adobe Stock</option>
                 <option value="shutterstock">Shutterstock</option>
                 <option value="getty">Getty/iStock</option>
@@ -2207,11 +2315,35 @@ export default function App() {
             </div>
 
             <button 
-              onClick={() => handleExport(selectedExportSite)}
+              onClick={() => handleExport(selectedExportSite, false)}
               className="px-3 py-1 rounded-sm bg-secondary text-foreground border border-border text-[10px] font-black uppercase tracking-widest hover:bg-accent active:scale-95 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+              title="Download CSV for processed files"
+            >
+              <FileSpreadsheet size={12} strokeWidth={3} />
+              Download CSV
+            </button>
+
+            <button 
+              onClick={() => handleExport('all_files', true)}
+              className="px-3 py-1 rounded-sm bg-emerald-600/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40 text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600/25 active:scale-95 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+              title="Download complete master CSV for ALL files in workspace (সব ফাইলের CSV)"
             >
               <Download size={12} strokeWidth={3} />
-              Download CSV
+              Download All Files CSV
+            </button>
+
+            <button 
+              onClick={() => setIsInspectorOpen(prev => !prev)}
+              className={cn(
+                "px-3 py-1 rounded-sm border text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 shadow-sm cursor-pointer",
+                isInspectorOpen
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-secondary text-foreground border-border hover:bg-accent"
+              )}
+              title="Toggle Asset Preview & Metadata Inspector Panel"
+            >
+              <Eye size={12} strokeWidth={2.5} />
+              <span>{isInspectorOpen ? "Hide Inspector" : "Inspector"}</span>
             </button>
 
             <div className="flex-1" />
@@ -2256,8 +2388,8 @@ export default function App() {
         )}
       </header>
 
-      {/* Main Content Area - Windows Explorer Style Table */}
-      <div className="flex-1 overflow-hidden flex flex-col bg-background relative">
+      {/* Main Content Area - Table + Inspector Split Layout */}
+      <div className="flex-1 overflow-hidden flex flex-row bg-background relative">
         {/* Loading Overlay for File Selection */}
         {isLoadingFiles && (
           <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-[100] flex flex-col items-center justify-center gap-4">
@@ -2273,67 +2405,91 @@ export default function App() {
             </div>
           </div>
         )}
-        {/* Windows Style Table Header */}
-        <div className="flex flex-row w-full border-b border-border bg-muted text-[9px] font-black uppercase tracking-widest text-foreground">
-          <div className="w-[12%] px-2 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-            FILENAME :* <ChevronRight size={9} className="rotate-90 opacity-50" />
+
+        {/* Left/Center Area: Virtualized Windows Table */}
+        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+          {/* Windows Style Table Header */}
+          <div className="flex flex-row w-full border-b border-border bg-muted text-[9px] font-black uppercase tracking-widest text-foreground shrink-0">
+            <div className="w-[12%] px-2 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
+              FILENAME :* <ChevronRight size={9} className="rotate-90 opacity-50" />
+            </div>
+            <div className="w-[15%] px-2 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
+              TITLE :* <ChevronRight size={9} className="rotate-90 opacity-50" />
+            </div>
+            <div className="w-[25%] px-2 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
+              KEYWORDS :* <ChevronRight size={10} className="rotate-90 opacity-50" />
+            </div>
+            <div className="w-[20%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
+              DESCRIPTION :* <ChevronRight size={10} className="rotate-90 opacity-50" />
+            </div>
+            <div className="w-[10%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
+              CATEGORY :* <ChevronRight size={10} className="rotate-90 opacity-50" />
+            </div>
+            <div className="w-[8%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
+              KW COUNT : <ChevronRight size={10} className="rotate-90 opacity-50" />
+            </div>
+            <div className="w-[10%] px-3 py-1.5 text-center shrink-0 hover:bg-background/50 cursor-pointer">
+              RATING :
+            </div>
           </div>
-          <div className="w-[15%] px-2 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-            TITLE :* <ChevronRight size={9} className="rotate-90 opacity-50" />
-          </div>
-          <div className="w-[25%] px-2 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-            KEYWORDS :* <ChevronRight size={10} className="rotate-90 opacity-50" />
-          </div>
-          <div className="w-[20%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-            DESCRIPTION :* <ChevronRight size={10} className="rotate-90 opacity-50" />
-          </div>
-          <div className="w-[10%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-            CATEGORY :* <ChevronRight size={10} className="rotate-90 opacity-50" />
-          </div>
-          <div className="w-[8%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-            KW COUNT : <ChevronRight size={10} className="rotate-90 opacity-50" />
-          </div>
-          <div className="w-[10%] px-3 py-1.5 text-center shrink-0 hover:bg-background/50 cursor-pointer">
-            RATING :
+
+          {/* Table Body */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar bg-background">
+            {filteredFiles.length === 0 ? (
+              <div 
+                className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-6 transition-all"
+              >
+                <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center border border-border">
+                  <Upload size={48} strokeWidth={1} className="opacity-10" />
+                </div>
+                <div className="text-center">
+                  <p className="text-lg font-bold text-muted-foreground uppercase">NO {settings.metadataFor.toUpperCase()} FILES LOADED</p>
+                </div>
+              </div>
+            ) : (
+              <div className="h-full w-full border-t border-border">
+                <FixedSizeList
+                  height={window.innerHeight - 200}
+                  itemCount={filteredFiles.length}
+                  itemSize={52}
+                  width="100%"
+                  itemData={{
+                    files: filteredFiles,
+                    updateFile,
+                    regenerateSingleFile,
+                    downloadWithMetadata,
+                    deleteFile,
+                    isGenerating,
+                    openErrorModal,
+                    openPreviewModal,
+                    selectedFileId: activeSelectedFile?.id,
+                    setSelectedFileId
+                  }}
+                  className="custom-scrollbar"
+                >
+                  {FileRow}
+                </FixedSizeList>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Table Body */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar bg-background">
-          {filteredFiles.length === 0 ? (
-            <div 
-              className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-6 transition-all"
-            >
-              <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center border border-border">
-                <Upload size={48} strokeWidth={1} className="opacity-10" />
-              </div>
-              <div className="text-center">
-                <p className="text-lg font-bold text-muted-foreground uppercase">NO {settings.metadataFor.toUpperCase()} FILES LOADED</p>
-              </div>
-            </div>
-          ) : (
-            <div className="h-full w-full border-t border-border">
-              <FixedSizeList
-                height={window.innerHeight - 200}
-                itemCount={filteredFiles.length}
-                itemSize={42}
-                width="100%"
-                itemData={{
-                  files: filteredFiles,
-                  updateFile,
-                  regenerateSingleFile,
-                  downloadWithMetadata,
-                  deleteFile,
-                  isGenerating,
-                  openErrorModal
-                }}
-                className="custom-scrollbar"
-              >
-                {FileRow}
-              </FixedSizeList>
-            </div>
-          )}
-        </div>
+        {/* Right Area: Asset Inspector Panel */}
+        {isInspectorOpen && (
+          <div className="w-[360px] xl:w-[420px] shrink-0 border-l border-border bg-card flex flex-col h-full overflow-hidden shadow-xl z-10">
+            <AssetInspector
+              file={activeSelectedFile}
+              actualFile={activeSelectedFile ? fileObjects[activeSelectedFile.id] : undefined}
+              updateFile={updateFile}
+              regenerateSingleFile={regenerateSingleFile}
+              downloadWithMetadata={downloadWithMetadata}
+              deleteFile={deleteFile}
+              openPreviewModal={openPreviewModal}
+              isGenerating={isGenerating}
+              onClose={() => setIsInspectorOpen(false)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Windows Style Footer */}
@@ -3037,6 +3193,219 @@ export default function App() {
                   className="w-full py-2 bg-red-500 hover:bg-red-400 text-white text-[10px] font-black uppercase tracking-widest rounded-sm transition-all shadow-lg shadow-red-500/20 active:scale-[0.98]"
                 >
                   CLOSE WINDOW
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* High-Resolution EPS Vector & Asset Preview Modal */}
+      {previewModalFile && (
+        <div 
+          className="fixed inset-0 z-[210] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setPreviewModalFileId(null)}
+        >
+          <div 
+            className="w-full max-w-4xl max-h-[92vh] bg-background border border-border rounded-lg overflow-hidden shadow-2xl flex flex-col animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-3 border-b border-border flex items-center justify-between bg-muted/40">
+              <div className="flex items-center gap-2 min-w-0">
+                <Eye size={16} className="text-primary shrink-0" />
+                <h3 className="font-bold text-xs uppercase tracking-widest text-foreground truncate max-w-md">
+                  {previewModalFile.filename}
+                </h3>
+                <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 shrink-0">
+                  {previewModalFile.fileType.toUpperCase()}
+                </span>
+                {previewModalFile.rating && (
+                  <span className="text-[11px] font-bold text-amber-500 flex items-center gap-0.5 shrink-0">
+                    ★ {previewModalFile.rating}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button 
+                  onClick={() => handleModalNavigate('prev')}
+                  className="p-1.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-all cursor-pointer border border-border/50"
+                  title="Previous Asset (পূর্ববর্তী ফাইল)"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button 
+                  onClick={() => handleModalNavigate('next')}
+                  className="p-1.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-all cursor-pointer border border-border/50"
+                  title="Next Asset (পরবর্তী ফাইল)"
+                >
+                  <ChevronRight size={16} />
+                </button>
+                <div className="w-px h-4 bg-border mx-1" />
+                <button 
+                  onClick={() => setPreviewModalFileId(null)} 
+                  className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                  title="Close"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
+              {/* Media Preview Stage */}
+              <div className="w-full bg-slate-950/90 rounded-md border border-border/80 flex items-center justify-center p-4 min-h-[280px] max-h-[460px] overflow-hidden relative">
+                {previewModalFile.previewUrl ? (
+                  ['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(previewModalFile.fileType.toLowerCase()) ? (
+                    <video 
+                      src={fileObjects[previewModalFile.id] ? URL.createObjectURL(fileObjects[previewModalFile.id]) : previewModalFile.previewUrl} 
+                      controls 
+                      className="max-h-[400px] max-w-full rounded shadow-md object-contain"
+                    />
+                  ) : (
+                    <img 
+                      src={previewModalFile.previewUrl} 
+                      alt={previewModalFile.filename} 
+                      className="max-h-[400px] max-w-full rounded shadow-md object-contain"
+                      referrerPolicy="no-referrer"
+                    />
+                  )
+                ) : (
+                  <div className="flex flex-col items-center justify-center text-muted-foreground gap-3 p-8">
+                    <FileText size={56} className="stroke-1 text-muted-foreground/60" />
+                    <span className="text-xs uppercase tracking-widest font-bold">No visual preview available</span>
+                    <span className="text-[10px] text-muted-foreground">EPS preview can be extracted if Ghostscript is enabled on server or an embedded thumbnail exists</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Metadata Details Grid - Editable */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5 md:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                      <FileText size={12} className="text-primary" />
+                      TITLE :*
+                    </label>
+                    {previewModalFile.title && (
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(previewModalFile.title);
+                          showNotification("Title copied to clipboard!", "success");
+                        }}
+                        className="text-[9px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Copy size={10} /> Copy Title
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={previewModalFile.title || ''}
+                    onChange={(e) => updateFile(previewModalFile.id, { title: e.target.value })}
+                    placeholder="Enter stock title..."
+                    className="w-full text-xs font-semibold text-foreground bg-muted/60 px-3 py-2 rounded border border-border focus:border-primary focus:outline-hidden"
+                  />
+                </div>
+
+                <div className="space-y-1.5 md:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                      DESCRIPTION :*
+                    </label>
+                    {previewModalFile.description && (
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(previewModalFile.description);
+                          showNotification("Description copied to clipboard!", "success");
+                        }}
+                        className="text-[9px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Copy size={10} /> Copy
+                      </button>
+                    )}
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={previewModalFile.description || ''}
+                    onChange={(e) => updateFile(previewModalFile.id, { description: e.target.value })}
+                    placeholder="Enter description..."
+                    className="w-full text-xs text-foreground bg-muted/60 p-2.5 rounded border border-border focus:border-primary focus:outline-hidden leading-relaxed resize-none"
+                  />
+                </div>
+
+                <div className="space-y-1.5 md:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                        <Tag size={12} className="text-primary" />
+                        KEYWORDS :*
+                      </label>
+                      <span className="text-[10px] font-bold text-muted-foreground">
+                        ({(previewModalFile.keywords || '').split(',').filter(Boolean).length} tags)
+                      </span>
+                    </div>
+                    {previewModalFile.keywords && (
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(previewModalFile.keywords);
+                          showNotification("Keywords copied to clipboard!", "success");
+                        }}
+                        className="text-[9px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Copy size={10} /> Copy Keywords
+                      </button>
+                    )}
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={previewModalFile.keywords || ''}
+                    onChange={(e) => updateFile(previewModalFile.id, { keywords: e.target.value })}
+                    placeholder="tag1, tag2, tag3..."
+                    className="w-full text-xs text-foreground bg-muted/60 p-2.5 rounded border border-border focus:border-primary focus:outline-hidden leading-relaxed font-mono resize-none"
+                  />
+                  {previewModalFile.keywords && (
+                    <div className="flex flex-wrap gap-1 pt-1 max-h-24 overflow-y-auto">
+                      {(previewModalFile.keywords || '').split(',').map((k, i) => k.trim()).filter(Boolean).map((kw, i) => (
+                        <span key={i} className="text-[10px] px-2 py-0.5 bg-background border border-border rounded text-foreground font-medium">
+                          {kw}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="p-3 bg-muted/40 border-t border-border flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-[10px] font-medium text-muted-foreground">
+                Live metadata editing active. Changes are instantly saved.
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => regenerateSingleFile(previewModalFile.id)}
+                  disabled={isGenerating || previewModalFile.status === 'generating'}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-wider rounded transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <Sparkles size={13} />
+                  <span>{previewModalFile.title ? 'Regenerate AI' : 'Generate AI'}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    downloadWithMetadata(previewModalFile.id);
+                  }}
+                  className="px-3 py-1.5 bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider rounded transition-all hover:bg-primary/90 flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <Download size={13} />
+                  Download File
+                </button>
+                <button 
+                  onClick={() => setPreviewModalFileId(null)} 
+                  className="px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground text-xs font-bold uppercase tracking-wider rounded transition-all border border-border cursor-pointer"
+                >
+                  Close
                 </button>
               </div>
             </div>
