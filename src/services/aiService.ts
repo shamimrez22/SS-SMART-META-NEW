@@ -141,6 +141,15 @@ const SUPPORTED_GEMINI_MIMES = [
   'application/pdf'
 ];
 
+function cleanBase64(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/&#x[0-9a-fA-F]+;/g, '')
+    .replace(/&#\d+;/g, '')
+    .replace(/&[a-zA-Z]+;/g, '')
+    .replace(/[\r\n\t\s]+/g, '');
+}
+
 // Fallback visual generator: Creates a crisp artboard thumbnail for EPS vectors
 function generateVectorArtboardThumbnail(filename: string, headerText: string): string | undefined {
   if (typeof document === 'undefined') return undefined;
@@ -229,7 +238,11 @@ function generateVectorArtboardThumbnail(filename: string, headerText: string): 
     // Vector Format Badge
     ctx.fillStyle = '#0284c7';
     ctx.beginPath();
-    ctx.roundRect(artX + 10, artY + 10, 80, 22, 4);
+    if (typeof (ctx as any).roundRect === 'function') {
+      (ctx as any).roundRect(artX + 10, artY + 10, 80, 22, 4);
+    } else {
+      ctx.rect(artX + 10, artY + 10, 80, 22);
+    }
     ctx.fill();
 
     ctx.fillStyle = '#ffffff';
@@ -286,7 +299,7 @@ function isBarcodeOrCorrupted(rgba: Uint8ClampedArray | Uint8Array, width: numbe
   if (totalSamples > 0) {
     const horizRatio = horizontalFlips / totalSamples;
     const vertRatio = verticalFlips / totalSamples;
-    if (horizRatio > 0.32 && vertRatio < 0.08) {
+    if (horizRatio > 0.45 && vertRatio < 0.05) {
       return true;
     }
   }
@@ -304,28 +317,46 @@ function isBarcodeOrCorrupted(rgba: Uint8ClampedArray | Uint8Array, width: numbe
 }
 
 /**
- * Searches for high-res true-color JPEG thumbnails embedded in Adobe Illustrator XMP blocks
+ * Searches for high-res true-color JPEG/PNG thumbnails embedded in Adobe Illustrator XMP blocks
  */
-function findXmpJpegThumbnail(text: string): string | null {
-  // 1. Standard tag format: <xmpGImg:image>... or <xapGImg:image>...
-  let match = text.match(/<(?:xmpGImg|xapGImg):image>([\s\S]*?)<\/(?:xmpGImg|xapGImg):image>/i);
-  if (match) {
-    const b64 = match[1].replace(/\s/g, '');
-    if (b64.length > 80) return b64;
+function findXmpJpegThumbnail(text: string): { dataUrl: string; mime: string } | null {
+  // 1. Any tag ending in :image> or <image>
+  const imageTagMatches = text.matchAll(/<([a-zA-Z0-9_]+:)?image\b[^>]*>([\s\S]*?)<\/\1?image>/gi);
+  for (const m of imageTagMatches) {
+    const b64 = cleanBase64(m[2]);
+    if (b64.length > 80) {
+      const mime = b64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
+      return { dataUrl: `data:${mime};base64,${b64}`, mime };
+    }
   }
 
   // 2. Alt / Thumbnails container: <xmp:Thumbnails>...<image>...
-  match = text.match(/<xmp:Thumbnails>[\s\S]*?<image>([\s\S]*?)<\/image>/i);
-  if (match) {
-    const b64 = match[1].replace(/\s/g, '');
-    if (b64.length > 80) return b64;
+  const thumbMatch = text.match(/<xmp:Thumbnails>[\s\S]*?<image>([\s\S]*?)<\/image>/i);
+  if (thumbMatch) {
+    const b64 = cleanBase64(thumbMatch[1]);
+    if (b64.length > 80) {
+      const mime = b64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
+      return { dataUrl: `data:${mime};base64,${b64}`, mime };
+    }
   }
 
-  // 3. Attribute format: xmpGImg:image="..."
-  match = text.match(/(?:xmpGImg|xapGImg):image="([^"]+)"/i);
-  if (match) {
-    const b64 = match[1].replace(/\s/g, '');
-    if (b64.length > 80) return b64;
+  // 3. Attribute format: image="..." or :image="..."
+  const attrMatches = text.matchAll(/(?:[a-zA-Z0-9_]+:)?image="([^"]+)"/gi);
+  for (const m of attrMatches) {
+    const b64 = cleanBase64(m[1]);
+    if (b64.length > 80) {
+      const mime = b64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
+      return { dataUrl: `data:${mime};base64,${b64}`, mime };
+    }
+  }
+
+  // 4. Raw base64 JPEG sequence starting with /9j/ inside XMP
+  const directJpeg = text.match(/\/9j\/[a-zA-Z0-9+/=&#;\s]{120,}/);
+  if (directJpeg) {
+    const b64 = cleanBase64(directJpeg[0]);
+    if (b64.length > 80) {
+      return { dataUrl: `data:image/jpeg;base64,${b64}`, mime: 'image/jpeg' };
+    }
   }
 
   return null;
@@ -342,19 +373,22 @@ function findEmbeddedBinaryJpeg(buf: ArrayBuffer): string | null {
     if (u8[i] === 0xFF && u8[i + 1] === 0xD8 && u8[i + 2] === 0xFF) {
       // Find JPEG EOI (FF D9)
       const maxScan = Math.min(len - 1, i + 8 * 1024 * 1024);
+      let foundEnd = -1;
       for (let j = i + 200; j < maxScan; j++) {
         if (u8[j] === 0xFF && u8[j + 1] === 0xD9) {
-          const jpegBytes = u8.subarray(i, j + 2);
-          if (jpegBytes.length >= 1024) {
-            let binary = '';
-            const chunk = 8192;
-            for (let c = 0; c < jpegBytes.length; c += chunk) {
-              const sub = jpegBytes.subarray(c, Math.min(c + chunk, jpegBytes.length));
-              binary += String.fromCharCode.apply(null, sub as unknown as number[]);
-            }
-            return `data:image/jpeg;base64,${btoa(binary)}`;
-          }
+          foundEnd = j + 2;
+          if (foundEnd - i >= 4096) break;
         }
+      }
+      if (foundEnd > i + 1024) {
+        const jpegBytes = u8.subarray(i, foundEnd);
+        let binary = '';
+        const chunk = 8192;
+        for (let c = 0; c < jpegBytes.length; c += chunk) {
+          const sub = jpegBytes.subarray(c, Math.min(c + chunk, jpegBytes.length));
+          binary += String.fromCharCode.apply(null, sub as unknown as number[]);
+        }
+        return `data:image/jpeg;base64,${btoa(binary)}`;
       }
     }
   }
@@ -363,23 +397,23 @@ function findEmbeddedBinaryJpeg(buf: ArrayBuffer): string | null {
 
 export async function extractEpsThumbnail(file: File, forAi: boolean = false): Promise<string | undefined> {
   try {
-    // 1. High-Resolution True-Color XMP JPEG Thumbnail (Best Quality, Universal)
-    // Adobe Illustrator, Freepik, Adobe Stock, Shutterstock, and Vecteezy embed a 300-800px full-color JPEG
+    // 1. High-Resolution True-Color XMP JPEG/PNG Thumbnail (Best Quality, Universal)
+    // Adobe Illustrator, Freepik, Adobe Stock, Shutterstock, and Vecteezy embed a 300-800px full-color preview in XMP
     try {
-      const headSlice = await file.slice(0, Math.min(4194304, file.size)).arrayBuffer();
+      const headSlice = await file.slice(0, Math.min(6291456, file.size)).arrayBuffer();
       const headText = new TextDecoder('latin1').decode(headSlice);
 
-      let base64Img = findXmpJpegThumbnail(headText);
-      if (!base64Img && file.size > 4194304) {
+      let xmpResult = findXmpJpegThumbnail(headText);
+      if (!xmpResult && file.size > 6291456) {
         try {
-          const tailSlice = await file.slice(Math.max(0, file.size - 2097152)).arrayBuffer();
+          const tailSlice = await file.slice(Math.max(0, file.size - 4194304)).arrayBuffer();
           const tailText = new TextDecoder('latin1').decode(tailSlice);
-          base64Img = findXmpJpegThumbnail(tailText);
+          xmpResult = findXmpJpegThumbnail(tailText);
         } catch {}
       }
 
-      if (base64Img && base64Img.length > 80) {
-        return `data:image/jpeg;base64,${base64Img}`;
+      if (xmpResult && xmpResult.dataUrl) {
+        return xmpResult.dataUrl;
       }
     } catch (xmpErr) {
       console.warn("XMP thumbnail extraction attempt:", xmpErr);
@@ -387,7 +421,7 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
 
     // 2. Embedded Binary JFIF/JPEG Stream in EPS File
     try {
-      const scanLen = Math.min(6 * 1024 * 1024, file.size);
+      const scanLen = Math.min(8 * 1024 * 1024, file.size);
       const scanBuf = await file.slice(0, scanLen).arrayBuffer();
       const jpegDataUrl = findEmbeddedBinaryJpeg(scanBuf);
       if (jpegDataUrl) {
@@ -399,24 +433,16 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
 
     // 3. Server-Side Ghostscript Vector Rendering (/api/render-eps)
     // When running in full-stack container, Ghostscript renders PostScript paths at 150 DPI
-    if (typeof window !== 'undefined' && file.size <= 35 * 1024 * 1024) {
+    if (typeof window !== 'undefined' && file.size <= 45 * 1024 * 1024) {
       try {
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const res = reader.result as string;
-            resolve(res.includes(',') ? res.split(',')[1] : res);
-          };
-          reader.onerror = () => reject(new Error("Failed to read file"));
-          reader.readAsDataURL(file);
-        });
-
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+        // Stream raw file directly to server for maximum speed and zero memory overhead
         const res = await fetch('/api/render-eps', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ base64 }),
+          headers: { 'Content-Type': 'application/postscript' },
+          body: file,
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -775,14 +801,18 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
     }
   } else if (isEps) {
     // Try to extract thumbnail for EPS so Gemini can "see" it
-    const thumbnail = await extractEpsThumbnail(file);
-    if (thumbnail) {
-      parts.push({
-        inlineData: {
-          data: thumbnail.split(',')[1],
-          mimeType: 'image/jpeg'
-        }
-      });
+    const thumbnail = await extractEpsThumbnail(file, true);
+    if (thumbnail && thumbnail.startsWith('data:')) {
+      const mime = thumbnail.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+      const cleanB64 = cleanBase64(thumbnail.split(',')[1] || '');
+      if (cleanB64 && cleanB64.length > 80) {
+        parts.push({
+          inlineData: {
+            data: cleanB64,
+            mimeType: mime
+          }
+        });
+      }
     }
   } else if (isVideo) {
     // Extract actual visual keyframe from video so Gemini can analyze real subject matter
@@ -806,7 +836,8 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
 
   if (isEps) {
     const epsInfo = await extractEpsMetadata(file);
-    parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: EPS Vector Illustration\n${epsInfo}\nNote: ${parts.length > 1 ? "A visual thumbnail has been provided for analysis." : "Visual preview unavailable for this EPS file. Use the filename and metadata hints to generate accurate stock metadata."}`;
+    const hasVisualThumb = parts.length > 1;
+    parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: EPS Vector Illustration\nFilename: ${file.name}\n${epsInfo}\nNote: ${hasVisualThumb ? "A visual thumbnail extracted from this EPS illustration has been provided above for visual analysis." : "Visual preview was not embedded in this EPS file. Analyze the vector filename, embedded layer names, artboard bounds, typography text, and color palette above to generate accurate, high-ranking commercial stock title, description, and keywords."}`;
   } else if (isVideo) {
     parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: Video Footage (${file.name})\nNote: ${parts.length > 1 ? "An actual visual frame captured directly from this video has been provided above. Analyze this frame carefully to identify the exact real-world subject matter, action, environment, objects, and setting." : "Visual preview unavailable. Generate metadata based on filename: " + file.name}`;
   } else if (!isSupportedImage) {
@@ -817,10 +848,10 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
   
   // Base list of fast valid models
   const baseModels = [
-    "gemini-3.8-flash",
-    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite"
+    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash"
   ];
 
   // Put cached successful model first to prevent wasted attempts
@@ -972,7 +1003,7 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
       }
     }
   } else if (isEps) {
-    imageData = await extractEpsThumbnail(file);
+    imageData = await extractEpsThumbnail(file, true);
   } else if (isVideo) {
     try {
       imageData = await extractVideoThumbnail(file);
@@ -988,12 +1019,16 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
   }
 
   // Use vision models if image is available
-  // Groq: llama-3.2-90b-vision is the current stable vision model
+  // Groq: llama-3.2-11b-vision-preview for vision, llama-3.3-70b-versatile for text
   const model = provider === 'groq' 
-    ? (imageData ? "llama-3.2-90b-vision" : "llama-3.3-70b-versatile")
+    ? (imageData ? "llama-3.2-11b-vision-preview" : "llama-3.3-70b-versatile")
     : (imageData ? "pixtral-12b-2409" : "mistral-small-latest");
 
-  const prompt = getPrompt(settings, file?.name || "unnamed_file", isVideo);
+  let prompt = getPrompt(settings, file?.name || "unnamed_file", isVideo);
+  if (isEps) {
+    const epsInfo = await extractEpsMetadata(file);
+    prompt += `\n\n[FILE CONTEXT]\nType: EPS Vector Illustration\nFilename: ${file.name}\n${epsInfo}`;
+  }
   const systemInstruction = "You are a stock metadata expert. You MUST return a valid JSON object. Do not include any other text or markdown formatting outside the JSON.";
   
   // Groq/Mistral: Use string for text-only, array for vision

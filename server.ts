@@ -15,13 +15,25 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '50mb' }));
+  app.use(express.raw({ type: ['application/postscript', 'application/octet-stream', 'image/x-eps', 'image/eps'], limit: '60mb' }));
+  app.use(express.json({ limit: '60mb' }));
+
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok" });
+  });
 
   // High-performance EPS vector preview rendering endpoint
   app.post("/api/render-eps", async (req, res) => {
-    const { base64 } = req.body;
-    if (!base64) {
-      return res.status(400).json({ error: { message: "Missing EPS base64 data" } });
+    let buffer: Buffer | null = null;
+
+    if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+      buffer = req.body;
+    } else if (req.body && req.body.base64) {
+      buffer = Buffer.from(req.body.base64, "base64");
+    }
+
+    if (!buffer || buffer.length === 0) {
+      return res.status(400).json({ error: { message: "Missing EPS data" } });
     }
 
     const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -29,8 +41,18 @@ async function startServer() {
     const tempJpgPath = path.join(os.tmpdir(), `preview_${uniqueId}.jpg`);
 
     try {
-      const buffer = Buffer.from(base64, "base64");
-      await fs.promises.writeFile(tempEpsPath, buffer);
+      // Check if file has a DOS EPS binary header (0xC5D0D3C6)
+      // If so, slice out only the clean PostScript segment so Ghostscript parses it without header errors
+      let dataToWrite = buffer;
+      if (buffer.length >= 30 && buffer[0] === 0xC5 && buffer[1] === 0xD0 && buffer[2] === 0xD3 && buffer[3] === 0xC6) {
+        const psOffset = buffer.readUInt32LE(4);
+        const psLength = buffer.readUInt32LE(8);
+        if (psOffset > 0 && psLength > 0 && psOffset + psLength <= buffer.length) {
+          dataToWrite = buffer.subarray(psOffset, psOffset + psLength);
+        }
+      }
+
+      await fs.promises.writeFile(tempEpsPath, dataToWrite);
 
       // 1. Try Ghostscript with -dEPSCrop for vector EPS rendering
       let rendered = false;
@@ -41,11 +63,11 @@ async function startServer() {
           "-dNOPAUSE",
           "-dEPSCrop",
           "-sDEVICE=jpeg",
-          "-dJPEGQ=90",
+          "-dJPEGQ=92",
           "-r150",
           `-sOutputFile=${tempJpgPath}`,
           tempEpsPath
-        ], { timeout: 8000 });
+        ], { timeout: 10000 });
         if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
           rendered = true;
         }
@@ -62,11 +84,11 @@ async function startServer() {
             "-dNOPAUSE",
             "-dFitPage",
             "-sDEVICE=jpeg",
-            "-dJPEGQ=90",
+            "-dJPEGQ=92",
             "-r150",
             `-sOutputFile=${tempJpgPath}`,
             tempEpsPath
-          ], { timeout: 8000 });
+          ], { timeout: 10000 });
           if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
             rendered = true;
           }
@@ -83,7 +105,7 @@ async function startServer() {
             `${tempEpsPath}[0]`,
             "-quality", "90",
             tempJpgPath
-          ], { timeout: 8000 });
+          ], { timeout: 10000 });
           if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
             rendered = true;
           }
