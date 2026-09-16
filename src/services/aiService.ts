@@ -104,9 +104,16 @@ export async function generateMetadata(
   let provider = activeProvider ? providers.find(p => p.name === activeProvider) : null;
 
   // If no specific provider or requested provider not found in available list, 
-  // use the first available or prioritize Gemini for images
+  // use the first available or prioritize Gemini for images/videos
+  const ext = file?.name?.split('.').pop()?.toLowerCase() || '';
+  const isVisualMedia = file && (
+    file.type.startsWith('image/') || 
+    file.type.startsWith('video/') || 
+    ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov', 'avi', 'm4v', 'webm', 'eps'].includes(ext)
+  );
+
   if (!provider) {
-    provider = (file && file.type.startsWith('image/')) 
+    provider = isVisualMedia 
       ? (providers.find(p => p.name === 'gemini') || providers[0] || { name: 'gemini', key: geminiKey })
       : (providers[0] || { name: 'gemini', key: geminiKey });
   }
@@ -155,6 +162,101 @@ export async function extractEpsThumbnail(file: File): Promise<string | undefine
   }
 }
 
+export async function extractVideoThumbnail(file: File): Promise<string | undefined> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return undefined;
+  }
+  return new Promise((resolve) => {
+    let resolved = false;
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+
+    const blobUrl = URL.createObjectURL(file);
+    video.src = blobUrl;
+
+    const cleanup = () => {
+      try {
+        URL.revokeObjectURL(blobUrl);
+        video.removeAttribute('src');
+        video.load();
+      } catch (e) {}
+    };
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        resolve(undefined);
+      }
+    }, 7000);
+
+    video.onloadedmetadata = () => {
+      try {
+        // Seek into video (e.g. 20% or 1s) to avoid black first frames
+        const duration = video.duration || 2;
+        const seekTime = Math.min(Math.max(duration * 0.25, 0.5), duration > 1 ? duration - 0.2 : 0);
+        video.currentTime = seekTime;
+      } catch (e) {
+        capture();
+      }
+    };
+
+    video.onseeked = () => {
+      capture();
+    };
+
+    video.onerror = () => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        cleanup();
+        resolve(undefined);
+      }
+    };
+
+    function capture() {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      try {
+        const canvas = document.createElement('canvas');
+        const maxDim = 480;
+        let w = video.videoWidth || 640;
+        let h = video.videoHeight || 360;
+
+        if (w > h) {
+          if (w > maxDim) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          }
+        } else {
+          if (h > maxDim) {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+          cleanup();
+          resolve(dataUrl);
+          return;
+        }
+      } catch (e) {
+        console.warn('Canvas video capture warning:', e);
+      }
+      cleanup();
+      resolve(undefined);
+    }
+  });
+}
+
 async function extractEpsMetadata(file: File): Promise<string> {
   try {
     // Read a larger chunk to find more metadata (64KB)
@@ -196,6 +298,7 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
   const ext = file?.name.split('.').pop()?.toLowerCase() || '';
   const isSupportedImage = file && (SUPPORTED_GEMINI_MIMES.includes(file.type) || ['jpg', 'jpeg', 'png', 'webp'].includes(ext));
   const isEps = file && (ext === 'eps' || file.type === 'application/postscript' || file.type === 'image/x-eps');
+  const isVideo = file && (file.type.startsWith('video/') || ['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext));
 
   const parts: any[] = [];
 
@@ -234,14 +337,31 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
         }
       });
     }
+  } else if (isVideo) {
+    // Extract actual visual keyframe from video so Gemini can analyze real subject matter
+    try {
+      const videoThumb = await extractVideoThumbnail(file);
+      if (videoThumb) {
+        parts.push({
+          inlineData: {
+            data: videoThumb.split(',')[1],
+            mimeType: 'image/jpeg'
+          }
+        });
+      }
+    } catch (vErr) {
+      console.warn("Could not extract video keyframe:", vErr);
+    }
   }
 
   // Add prompt after image for better context
-  parts.push({ text: getPrompt(settings, file?.name || "unnamed_file") });
+  parts.push({ text: getPrompt(settings, file?.name || "unnamed_file", isVideo) });
 
   if (isEps) {
     const epsInfo = await extractEpsMetadata(file);
     parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: EPS Vector Illustration\n${epsInfo}\nNote: ${parts.length > 1 ? "A visual thumbnail has been provided for analysis." : "Visual preview unavailable for this EPS file. Use the filename and metadata hints to generate accurate stock metadata."}`;
+  } else if (isVideo) {
+    parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: Video Footage (${file.name})\nNote: ${parts.length > 1 ? "An actual visual frame captured directly from this video has been provided above. Analyze this frame carefully to identify the exact real-world subject matter, action, environment, objects, and setting." : "Visual preview unavailable. Generate metadata based on filename: " + file.name}`;
   } else if (!isSupportedImage) {
     parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: ${file.type || 'Unknown'}\nNote: Visual preview unavailable. Generate metadata based on filename: "${file.name}".`;
   }
@@ -392,6 +512,7 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
   const ext = file?.name.split('.').pop()?.toLowerCase() || '';
   const isSupportedImage = file && (SUPPORTED_GEMINI_MIMES.includes(file.type) || ['jpg', 'jpeg', 'png', 'webp'].includes(ext));
   const isEps = file && (ext === 'eps' || file.type === 'application/postscript' || file.type === 'image/x-eps');
+  const isVideo = file && (file.type.startsWith('video/') || ['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext));
 
   let imageData: string | undefined;
   if (isSupportedImage) {
@@ -408,6 +529,12 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
     }
   } else if (isEps) {
     imageData = await extractEpsThumbnail(file);
+  } else if (isVideo) {
+    try {
+      imageData = await extractVideoThumbnail(file);
+    } catch (vErr) {
+      console.warn("Video thumbnail extraction warning:", vErr);
+    }
   }
 
   // Prevent sending massive payloads that will definitely fail
@@ -422,7 +549,7 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
     ? (imageData ? "llama-3.2-90b-vision" : "llama-3.3-70b-versatile")
     : (imageData ? "pixtral-12b-2409" : "mistral-small-latest");
 
-  const prompt = getPrompt(settings, file?.name || "unnamed_file");
+  const prompt = getPrompt(settings, file?.name || "unnamed_file", isVideo);
   const systemInstruction = "You are a stock metadata expert. You MUST return a valid JSON object. Do not include any other text or markdown formatting outside the JSON.";
   
   // Groq/Mistral: Use string for text-only, array for vision
@@ -562,7 +689,7 @@ async function resizeImage(file: File, maxWidth: number, maxHeight: number, qual
   });
 }
 
-function getPrompt(settings: any, filename: string) {
+function getPrompt(settings: any, filename: string, isVideo: boolean = false) {
   const { 
     metadataFor, 
     titleChoice, 
@@ -579,21 +706,35 @@ function getPrompt(settings: any, filename: string) {
     customPrompt,
     savedKeywords
   } = settings;
+
+  const roleDesc = isVideo
+    ? "Act as a World-Class Stock Video & Footage SEO Expert. Analyze the provided visual footage frame and generate literal, high-converting stock video metadata strictly based on the exact subject matter, actions, objects, scene, and environment shown in the video."
+    : "Act as a World-Class Stock Photography SEO Expert. Analyze the image and generate literal, high-converting stock metadata.";
+
+  const titleDesc = isVideo
+    ? `literal, descriptive stock video title describing the exact subject, action, and setting in the footage`
+    : `literal, descriptive stock title`;
+
+  const descriptionDesc = isVideo
+    ? `detailed description of the video clip: exact subject, movement/action, camera angle (e.g. aerial, close-up, wide, panning), lighting, and setting`
+    : `detailed description of subject, lighting, context`;
   
-  return `Act as a World-Class Stock Photography SEO Expert. Analyze the image and generate literal, high-converting stock metadata.
+  return `${roleDesc}
 
 OUTPUT FORMAT: Return a JSON object with:
 {
-  "title": "${minTitleWords}-${maxTitleWords} words literal, descriptive stock title",
-  "description": "${minDescriptionWords}-${maxDescriptionWords} words detailed description of subject, lighting, context",
+  "title": "${minTitleWords}-${maxTitleWords} words ${titleDesc}",
+  "description": "${minDescriptionWords}-${maxDescriptionWords} words ${descriptionDesc}",
   "keywords": "comma-separated list of exactly ${maxKeywords || 50} specific, relevant keywords ordered from most important to general",
-  "category": "Adobe Stock category (e.g. Landscapes, Technology, Business, Animals)",
+  "category": "Adobe Stock category (e.g. Landscapes, Technology, Business, Animals, People, Food, Architecture)",
   "rating": 5
 }
 
 RULES:
-- Title must be direct and literal, no filler words.
+- Subject Accuracy: You MUST describe the actual visual subject matter and scene present in the footage/image. Do not generate generic, unrelated filler.
+- Title must be direct and literal, describing what is visually happening.
 - Keywords: Exactly ${maxKeywords || 50} items. ${singleWordKeywords ? "Use strictly single words." : "Mix specific single words and 2-word phrases."}
+${isVideo ? "- For video: Include footage-specific terms where appropriate (e.g. 4k, slow motion, drone, b-roll, cinematic, camera motion, action verbs)." : ""}
 ${silhouette ? "- Asset is a silhouette, emphasize shape and outline." : ""}
 ${transparentBackground ? "- Isolated on transparent/white background. Include: isolated, cutout, transparent." : ""}
 ${prohibitedWords ? "- Do NOT use: AI, generated, fake, mockup, template, download." : ""}

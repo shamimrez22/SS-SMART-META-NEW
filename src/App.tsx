@@ -59,7 +59,7 @@ import {
   generateIllustratorScript 
 } from './services/embedService';
 import { StockMetadata, ApiConfig, GeneratorSettings, ApiStatus, HistoryItem } from './types';
-import { generateMetadata, testApiConnection, extractEpsThumbnail } from './services/aiService';
+import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail } from './services/aiService';
 import { cn } from './lib/utils';
 
 const STORAGE_KEY = 'ai-metadata-pro-config';
@@ -663,12 +663,20 @@ export default function App() {
       setFileObjects(prev => ({ ...prev, ...newFileObjects }));
       setFiles(prev => [...newItems, ...prev]);
 
-      // Async extract EPS thumbnails
+      // Async extract EPS & Video thumbnails
       for (let i = 0; i < newItems.length; i++) {
         const item = newItems[i];
-        if (item.fileType === 'eps') {
-          const file = newFileObjects[item.id];
+        const file = newFileObjects[item.id];
+        if (!file) continue;
+        const ext = item.fileType.toLowerCase();
+        if (ext === 'eps') {
           extractEpsThumbnail(file).then(thumb => {
+            if (thumb) {
+              setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
+            }
+          });
+        } else if (['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext)) {
+          extractVideoThumbnail(file).then(thumb => {
             if (thumb) {
               setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
             }
@@ -740,12 +748,20 @@ export default function App() {
       setFileObjects(prev => ({ ...prev, ...newFileObjects }));
       setFiles(prev => [...newItems, ...prev]);
 
-      // Async extract EPS thumbnails
+      // Async extract EPS & Video thumbnails
       for (let i = 0; i < newItems.length; i++) {
         const item = newItems[i];
-        if (item.fileType === 'eps') {
-          const file = newFileObjects[item.id];
+        const file = newFileObjects[item.id];
+        if (!file) continue;
+        const ext = item.fileType.toLowerCase();
+        if (ext === 'eps') {
           extractEpsThumbnail(file).then(thumb => {
+            if (thumb) {
+              setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
+            }
+          });
+        } else if (['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext)) {
+          extractVideoThumbnail(file).then(thumb => {
             if (thumb) {
               setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
             }
@@ -851,18 +867,12 @@ export default function App() {
         await writable.write(outputBlob);
         await writable.close();
 
-        // 2. Write companion Adobe-standard .xmp sidecar in the same folder
+        // Remove any redundant .xmp sidecar files so only the actual image file remains
         try {
-          const xmpPacket = createXmpPacket({ ...fileMetadata, ...metadata });
-          const xmpHandle = await activeDir.getFileHandle(`${targetFilename}.xmp`, { create: true });
-          const xmpWritable = await xmpHandle.createWritable();
-          await xmpWritable.write(xmpPacket);
-          await xmpWritable.close();
-        } catch (xmpErr) {
-          console.warn("Could not write XMP sidecar:", xmpErr);
-        }
+          await activeDir.removeEntry(`${targetFilename}.xmp`);
+        } catch (e) {}
 
-        // 3. Delete old unrenamed file from folder if filename changed
+        // 2. Delete old unrenamed file from folder if filename changed
         if (originalFilename && originalFilename !== targetFilename) {
           try {
             await activeDir.removeEntry(originalFilename);
@@ -1014,11 +1024,6 @@ export default function App() {
       try {
         const embeddedBlob = await prepareEmbeddedBlob(file, item);
         zip.file(targetFilename, embeddedBlob);
-
-        // Companion Adobe-standard XMP sidecar for 100% stock & Lightroom/Bridge support
-        const mimeType = ['jpg', 'jpeg'].includes(ext) ? 'image/jpeg' : ext === 'png' ? 'image/png' : ext === 'svg' ? 'image/svg+xml' : 'application/postscript';
-        const xmpString = createXmpPacket(item, mimeType);
-        zip.file(`${targetFilename}.xmp`, xmpString);
       } catch (e) {
         console.warn(`Error bundling ${targetFilename}:`, e);
         zip.file(targetFilename, file);
@@ -1531,7 +1536,7 @@ export default function App() {
     const candidateFiles = files.filter(f => {
       const ext = f.fileType.toLowerCase();
       if (type === 'image') return ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
-      if (type === 'video') return ['mp4', 'mov', 'avi'].includes(ext);
+      if (type === 'video') return ['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext);
       if (type === 'eps') return ['eps', 'ai', 'svg'].includes(ext);
       return true;
     }).filter(f => f.status === 'completed' || f.status === 'saved' || f.title || f.keywords);
@@ -1571,9 +1576,9 @@ export default function App() {
     if (settings.metadataFor === 'all') return files;
     return files.filter(f => {
       const ext = f.fileType.toLowerCase();
-      if (settings.metadataFor === 'image') return ['jpg', 'jpeg', 'png'].includes(ext);
-      if (settings.metadataFor === 'video') return ['mp4', 'mov'].includes(ext);
-      if (settings.metadataFor === 'eps') return ['eps'].includes(ext);
+      if (settings.metadataFor === 'image') return ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
+      if (settings.metadataFor === 'video') return ['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext);
+      if (settings.metadataFor === 'eps') return ['eps', 'ai', 'svg'].includes(ext);
       return true;
     });
   }, [files, settings.metadataFor]);
@@ -1632,17 +1637,27 @@ export default function App() {
       }
     }
 
-    // If no directory handle is connected
-    if (window.self !== window.top) {
-      setIsIframeNoticeOpen(true);
-    } else {
-      showNotification("সরাসরি ফোল্ডারে রিনেম ও মেটাডাটা সেভ করতে অনুগ্রহ করে আপনার ফোল্ডারটি সিলেক্ট করুন।", 'info');
+    // Fallback: download directly with 5-star & metadata embedded
+    try {
+      const outputBlob = await prepareEmbeddedBlob(actualFile, fileMetadata);
+      const url = URL.createObjectURL(outputBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileMetadata.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved' } : f));
+      showNotification(`✓ ডাউনলোড সম্পন্ন: "${fileMetadata.filename}" (৫-স্টার ও মেটাডাটা সহ)!`, 'success');
+    } catch (downErr: any) {
+      showNotification(`ডাউনলোড ব্যর্থ: ${downErr.message}`, 'error');
     }
   };
 
   const handleFilesAdded = (fileList: FileList | File[]) => {
     const filesArray = Array.from(fileList);
-    const allowedExtensions = ['jpg', 'jpeg', 'png', 'eps', 'mp4', 'mov', 'ai', 'svg'];
+    const allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'eps', 'mp4', 'mov', 'avi', 'm4v', 'ai', 'svg'];
     
     // Pre-filter files to avoid unnecessary processing
     const validFiles = filesArray.filter(file => {
@@ -1683,12 +1698,20 @@ export default function App() {
     setFileObjects(prev => ({ ...prev, ...newFileObjects }));
     setFiles(prev => [...newItems, ...prev]);
 
-    // Async extraction of EPS thumbnails
+    // Async extraction of EPS & Video thumbnails
     for (let i = 0; i < newItems.length; i++) {
       const item = newItems[i];
-      if (item.fileType === 'eps') {
-        const file = newFileObjects[item.id];
+      const file = newFileObjects[item.id];
+      if (!file) continue;
+      const ext = item.fileType.toLowerCase();
+      if (ext === 'eps') {
         extractEpsThumbnail(file).then(thumb => {
+          if (thumb) {
+            setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
+          }
+        });
+      } else if (['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext)) {
+        extractVideoThumbnail(file).then(thumb => {
           if (thumb) {
             setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
           }
@@ -2069,7 +2092,7 @@ export default function App() {
                 onClick={() => handleEmbed('video')}
                 disabled={files.length === 0 || isGenerating}
                 className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-rose-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-rose-600 shadow-sm bg-secondary disabled:opacity-30"
-                title="Directly renames MP4/MOV videos and writes companion .xmp sidecars in your folder"
+                title="Directly renames MP4/MOV videos in your folder without extra files"
               >
                 <div className="p-0 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-all">
                   <Video size={16} strokeWidth={3} />
@@ -2931,7 +2954,7 @@ export default function App() {
                     <FolderCheck size={16} className="text-emerald-500" /> Direct In-Place Disk Renaming & Embed
                   </div>
                   <div className="text-[11px] text-muted-foreground">
-                    Directly saves embedded EXIF/IPTC/XMP into your local files with the new title name and writes .xmp companion files.
+                    Directly saves embedded EXIF/IPTC/XMP directly inside your local image files with the new title name (no extra files).
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -2952,7 +2975,7 @@ export default function App() {
                     <Download size={16} className="text-primary" /> Download Complete Bundle (.ZIP)
                   </div>
                   <div className="text-[11px] text-muted-foreground">
-                    Packages all files renamed with your Titles, embedded metadata, .xmp sidecars, and both Adobe .jsx scripts in one clean zip file.
+                    Packages all files renamed with your Titles, embedded 5-star metadata directly inside, and Adobe .jsx scripts in one clean zip file.
                   </div>
                 </div>
                 <button 
