@@ -648,12 +648,16 @@ export default function App() {
     root.classList.remove('dark', 'blue', 'light', 'classic');
     if (theme === 'dark') {
       root.classList.add('dark');
+      root.style.colorScheme = 'dark';
     } else if (theme === 'blue') {
       root.classList.add('blue');
+      root.style.colorScheme = 'dark';
     } else if (theme === 'light') {
       root.classList.add('light');
+      root.style.colorScheme = 'light';
     } else {
       root.classList.add('classic');
+      root.style.colorScheme = 'light';
     }
     try {
       localStorage.setItem('app-theme', theme);
@@ -2174,9 +2178,9 @@ export default function App() {
                 }}
                 className="bg-transparent text-foreground text-xs font-bold focus:outline-none cursor-pointer uppercase"
               >
-                <option value="gemini" className="bg-popover text-foreground">Gemini {apiConfig.gemini.some(k => k) ? '✓' : ''}</option>
-                <option value="groq" className="bg-popover text-foreground">Groq {apiConfig.groq.some(k => k) ? '✓' : ''}</option>
-                <option value="mistral" className="bg-popover text-foreground">Mistral {apiConfig.mistral.some(k => k) ? '✓' : ''}</option>
+                <option value="gemini">Gemini {apiConfig.gemini.some(k => k) ? '✓' : ''}</option>
+                <option value="groq">Groq {apiConfig.groq.some(k => k) ? '✓' : ''}</option>
+                <option value="mistral">Mistral {apiConfig.mistral.some(k => k) ? '✓' : ''}</option>
               </select>
             </div>
 
@@ -2187,10 +2191,10 @@ export default function App() {
                 onChange={(e) => setTheme(e.target.value as any)}
                 className="bg-transparent text-foreground text-xs font-bold focus:outline-none cursor-pointer uppercase"
               >
-                <option value="dark" className="bg-popover text-foreground">Dark</option>
-                <option value="classic" className="bg-popover text-foreground">Classic</option>
-                <option value="light" className="bg-popover text-foreground">Light</option>
-                <option value="blue" className="bg-popover text-foreground">Blue</option>
+                <option value="dark">Dark</option>
+                <option value="classic">Classic</option>
+                <option value="light">Light</option>
+                <option value="blue">Blue</option>
               </select>
             </div>
 
@@ -2296,16 +2300,16 @@ export default function App() {
                 onChange={(e) => setSelectedExportSite(e.target.value)}
                 className="bg-transparent text-foreground text-xs font-semibold focus:outline-none cursor-pointer"
               >
-                <option value="all_files" className="bg-popover text-foreground">Master CSV (All Columns)</option>
-                <option value="adobe" className="bg-popover text-foreground">Adobe Stock</option>
-                <option value="shutterstock" className="bg-popover text-foreground">Shutterstock</option>
-                <option value="getty" className="bg-popover text-foreground">Getty / iStock</option>
-                <option value="alamy" className="bg-popover text-foreground">Alamy</option>
-                <option value="pond5" className="bg-popover text-foreground">Pond5</option>
-                <option value="freepik" className="bg-popover text-foreground">Freepik</option>
-                <option value="vecteezy" className="bg-popover text-foreground">Vecteezy</option>
-                <option value="dreamstime" className="bg-popover text-foreground">Dreamstime</option>
-                <option value="csv" className="bg-popover text-foreground">General CSV</option>
+                <option value="all_files">Master CSV (All Columns)</option>
+                <option value="adobe">Adobe Stock</option>
+                <option value="shutterstock">Shutterstock</option>
+                <option value="getty">Getty / iStock</option>
+                <option value="alamy">Alamy</option>
+                <option value="pond5">Pond5</option>
+                <option value="freepik">Freepik</option>
+                <option value="vecteezy">Vecteezy</option>
+                <option value="dreamstime">Dreamstime</option>
+                <option value="csv">General CSV</option>
               </select>
             </div>
 

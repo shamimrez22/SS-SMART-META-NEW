@@ -6,6 +6,10 @@
   
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
   --color-muted: hsl(var(--muted));
   --color-muted-foreground: hsl(var(--muted-foreground));
   --color-border: hsl(var(--border));
@@ -16,6 +20,7 @@
 }
 
 :root, .classic {
+  color-scheme: light;
   /* Soft, gentle, pleasing light warm cream/peach (not oversaturated or harsh) */
   --background: 24 35% 94%;
   --foreground: 0 0% 12%;
@@ -39,6 +44,7 @@
 }
 
 .light {
+  color-scheme: light;
   --background: 0 0% 100%;
   --foreground: 0 0% 0%;
   --card: 0 0% 100%;
@@ -61,6 +67,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: 222 47% 7%;
   --foreground: 210 40% 98%;
   --card: 222 45% 10.5%;
@@ -83,6 +90,7 @@
 }
 
 .blue {
+  color-scheme: dark;
   --background: 222 47% 9%;
   --foreground: 210 40% 98%;
   --card: 222 45% 12%;
@@ -102,6 +110,40 @@
   --border: 222 32% 26%;
   --input: 222 35% 19%;
   --ring: 224.3 76.3% 48%;
+}
+
+/* Bulletproof Dropdown (select & option) styling across all browsers and operating systems */
+html.dark, html.blue, .dark, .blue {
+  color-scheme: dark;
+}
+
+html.light, html.classic, .light, .classic {
+  color-scheme: light;
+}
+
+select {
+  color-scheme: inherit;
+}
+
+/* Ensure options have high-contrast, fully visible background and text */
+.dark option,
+.blue option,
+html.dark option,
+html.blue option,
+.dark select option,
+.blue select option {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+}
+
+.light option,
+.classic option,
+html.light option,
+html.classic option,
+.light select option,
+.classic select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
 }
 
 body {
