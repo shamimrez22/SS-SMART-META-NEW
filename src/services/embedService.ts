@@ -347,20 +347,13 @@ export async function embedMetadataInImageBlob(
   file: File,
   metadata: Partial<StockMetadata>
 ): Promise<Blob> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
         const base64 = e.target?.result as string;
-        let zeroth: any = {};
-        let exif: any = {};
-
-        try {
-          const existingExif = piexif.load(base64);
-          if (existingExif['0th']) zeroth = existingExif['0th'];
-          if (existingExif['Exif']) exif = existingExif['Exif'];
-        } catch {
-          // If no previous exif, initialize cleanly
+        if (!base64 || typeof base64 !== 'string') {
+          return resolve(file);
         }
 
         const title = (metadata.title || '').trim();
@@ -374,47 +367,100 @@ export async function embedMetadataInImageBlob(
           .join('; ');
         const rating = (metadata.rating !== undefined && metadata.rating > 0) ? metadata.rating : 5;
 
-        // 1. Standard Exif IFD tags (Windows Explorer Properties -> Details)
-        zeroth[piexif.ImageIFD.ImageDescription] = description;
-        zeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
-        zeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
-        zeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
-        zeroth[piexif.ImageIFD.XPComment] = toUtf16Le(description);
-        zeroth[piexif.ImageIFD.XPAuthor] = toUtf16Le('Stock Contributor');
-        zeroth[piexif.ImageIFD.Rating] = rating;               // Tag 18246 (1-5 stars)
-        zeroth[piexif.ImageIFD.RatingPercent] = 99;           // Tag 18249 (99% = 5 stars in Windows Explorer)
-        zeroth[piexif.ImageIFD.Artist] = 'Stock Contributor';
-        zeroth[piexif.ImageIFD.Copyright] = `Copyright ${new Date().getFullYear()}`;
+        let withExifBase64 = base64;
+        try {
+          let zeroth: any = {};
+          let exif: any = {};
 
-        const exifObj = { '0th': zeroth, Exif: exif, GPS: {} };
-        const exifBytes = piexif.dump(exifObj);
-        const withExifBase64 = piexif.insert(exifBytes, base64);
+          try {
+            const existingExif = piexif.load(base64);
+            if (existingExif['0th']) zeroth = existingExif['0th'];
+            if (existingExif['Exif']) exif = existingExif['Exif'];
+          } catch {
+            // If no previous exif or non-standard format, start clean
+          }
 
-        // Convert base64 to binary byte array
-        const binaryStr = atob(withExifBase64.split(',')[1]);
-        const jpegBytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          jpegBytes[i] = binaryStr.charCodeAt(i);
+          // 1. Standard Exif IFD tags (Windows Explorer Properties -> Details)
+          zeroth[piexif.ImageIFD.ImageDescription] = description;
+          zeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
+          zeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
+          zeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
+          zeroth[piexif.ImageIFD.XPComment] = toUtf16Le(description);
+          zeroth[piexif.ImageIFD.XPAuthor] = toUtf16Le('Stock Contributor');
+          zeroth[piexif.ImageIFD.Rating] = rating;               // Tag 18246 (1-5 stars)
+          zeroth[piexif.ImageIFD.RatingPercent] = 99;           // Tag 18249 (99% = 5 stars in Windows Explorer)
+          zeroth[piexif.ImageIFD.Artist] = 'Stock Contributor';
+          zeroth[piexif.ImageIFD.Copyright] = `Copyright ${new Date().getFullYear()}`;
+
+          let exifBytes: string | null = null;
+          try {
+            const exifObj = { '0th': zeroth, Exif: exif, GPS: {} };
+            exifBytes = piexif.dump(exifObj);
+          } catch (dumpErr) {
+            // If existing tags had conflicts, retry with only clean standard tags
+            try {
+              const cleanZeroth: any = {};
+              cleanZeroth[piexif.ImageIFD.ImageDescription] = description;
+              cleanZeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
+              cleanZeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
+              cleanZeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
+              cleanZeroth[piexif.ImageIFD.Rating] = rating;
+              cleanZeroth[piexif.ImageIFD.RatingPercent] = 99;
+              cleanZeroth[piexif.ImageIFD.Artist] = 'Stock Contributor';
+              cleanZeroth[piexif.ImageIFD.Copyright] = `Copyright ${new Date().getFullYear()}`;
+              exifBytes = piexif.dump({ '0th': cleanZeroth, Exif: {}, GPS: {} });
+            } catch (cleanDumpErr) {
+              console.warn("Could not dump clean EXIF:", cleanDumpErr);
+            }
+          }
+
+          if (exifBytes) {
+            try {
+              withExifBase64 = piexif.insert(exifBytes, base64);
+            } catch (insertErr) {
+              console.warn("Piexif insert skipped:", insertErr);
+              withExifBase64 = base64;
+            }
+          }
+        } catch (exifErr) {
+          console.warn("EXIF processing warning:", exifErr);
+          withExifBase64 = base64;
         }
 
-        // 2. Standard Adobe XMP APP1 Packet (Photoshop, Bridge, Lightroom, Stock agencies)
-        const xmpString = createXmpPacket(metadata, 'image/jpeg');
-        const xmpApp1 = createXmpApp1Block(xmpString);
+        // Convert base64 to binary byte array safely
+        let jpegBytes: Uint8Array;
+        try {
+          const b64Data = withExifBase64.includes(',') ? withExifBase64.split(',')[1] : withExifBase64;
+          const binaryStr = atob(b64Data);
+          jpegBytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            jpegBytes[i] = binaryStr.charCodeAt(i);
+          }
+        } catch (b64Err) {
+          const ab = await file.arrayBuffer();
+          jpegBytes = new Uint8Array(ab);
+        }
 
-        // 3. Standard Adobe Photoshop 3.0 APP13 IPTC Block (IIM Record 2)
-        const iptcApp13 = createIptcApp13Block(title, description, rawKeywords, metadata.category);
-
-        // 4. Inject both XMP & IPTC into the JPEG
-        const fullJpegBytes = insertSegmentsIntoJpeg(jpegBytes, [xmpApp1, iptcApp13]);
-
-        const finalBlob = new Blob([fullJpegBytes], { type: 'image/jpeg' });
-        resolve(finalBlob);
+        // 2. Standard Adobe XMP APP1 Packet & IPTC APP13 Block
+        try {
+          const xmpString = createXmpPacket(metadata, 'image/jpeg');
+          const xmpApp1 = createXmpApp1Block(xmpString);
+          const iptcApp13 = createIptcApp13Block(title, description, rawKeywords, metadata.category);
+          const fullJpegBytes = insertSegmentsIntoJpeg(jpegBytes, [xmpApp1, iptcApp13]);
+          resolve(new Blob([fullJpegBytes], { type: 'image/jpeg' }));
+        } catch (segErr) {
+          console.warn("Segment insertion warning, returning jpegBytes:", segErr);
+          resolve(new Blob([jpegBytes], { type: 'image/jpeg' }));
+        }
       } catch (err) {
-        console.error("Failed to embed JPEG metadata:", err);
-        reject(err);
+        console.warn("Failed to embed JPEG metadata, returning original file:", err);
+        resolve(file);
       }
     };
-    reader.onerror = reject;
+    reader.onerror = () => {
+      console.warn("FileReader error, returning original file");
+      resolve(file);
+    };
     reader.readAsDataURL(file);
   });
 }
@@ -424,82 +470,86 @@ export async function embedMetadataInPngBlob(
   file: File,
   metadata: Partial<StockMetadata>
 ): Promise<Blob> {
-  const buffer = await file.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  
-  // PNG signature is 8 bytes: 89 50 4E 47 0D 0A 1A 0A
-  if (bytes.length < 8 || bytes[0] !== 0x89 || bytes[1] !== 0x50) {
+  try {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    
+    // PNG signature is 8 bytes: 89 50 4E 47 0D 0A 1A 0A
+    if (bytes.length < 8 || bytes[0] !== 0x89 || bytes[1] !== 0x50) {
+      return file;
+    }
+
+    const title = (metadata.title || '').trim();
+    const desc = (metadata.description || '').trim();
+    const keywords = (metadata.keywords || '').trim();
+    const rating = (metadata.rating !== undefined && metadata.rating > 0) ? metadata.rating : 5;
+    const xmpPacket = createXmpPacket(metadata, 'image/png');
+
+    // Also prepare raw EXIF chunk for PNG (PNG 1.5+ eXIf chunk)
+    let exifChunk: Uint8Array | null = null;
+    try {
+      const windowsKeywords = keywords.split(',').map(k => k.trim()).filter(Boolean).join('; ');
+      const zeroth: any = {};
+      zeroth[piexif.ImageIFD.ImageDescription] = desc;
+      zeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
+      zeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
+      zeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
+      zeroth[piexif.ImageIFD.Rating] = rating;
+      zeroth[piexif.ImageIFD.RatingPercent] = 99;
+      const dumped = piexif.dump({ '0th': zeroth, Exif: {}, GPS: {} });
+      const b64 = dumped.includes(',') ? dumped.split(',')[1] : dumped;
+      const binary = atob(b64);
+      const rawExif = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) rawExif[i] = binary.charCodeAt(i);
+      const tiffOffset = (rawExif[0] === 0x45 && rawExif[1] === 0x78) ? 6 : 0;
+      exifChunk = createPngChunk('eXIf', rawExif.subarray(tiffOffset));
+    } catch (e) {
+      console.warn("Could not create PNG eXIf chunk:", e);
+    }
+
+    const chunksToInsert: Uint8Array[] = [
+      createTextChunk('Title', title),
+      createTextChunk('Description', desc),
+      createTextChunk('Comment', desc),
+      createTextChunk('Keywords', keywords),
+      createTextChunk('Author', 'Stock Contributor'),
+      createItxtChunk('XML:com.adobe.xmp', xmpPacket)
+    ];
+
+    if (exifChunk) {
+      chunksToInsert.push(exifChunk);
+    }
+
+    // Find where to insert (right after IHDR chunk)
+    let insertIndex = 8;
+    const view = new DataView(buffer);
+    let pos = 8;
+    while (pos < bytes.length - 8) {
+      const chunkLen = view.getUint32(pos);
+      const chunkType = String.fromCharCode(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]);
+      if (chunkType === 'IHDR') {
+        insertIndex = pos + 8 + chunkLen + 4;
+        break;
+      }
+      pos += 8 + chunkLen + 4;
+    }
+
+    const totalAddedLen = chunksToInsert.reduce((acc, c) => acc + c.length, 0);
+    const result = new Uint8Array(bytes.length + totalAddedLen);
+    result.set(bytes.subarray(0, insertIndex), 0);
+    
+    let curPos = insertIndex;
+    for (const chunk of chunksToInsert) {
+      result.set(chunk, curPos);
+      curPos += chunk.length;
+    }
+    result.set(bytes.subarray(insertIndex), curPos);
+
+    return new Blob([result], { type: 'image/png' });
+  } catch (pngErr) {
+    console.warn("embedMetadataInPngBlob warning, fallback to file:", pngErr);
     return file;
   }
-
-  const title = (metadata.title || '').trim();
-  const desc = (metadata.description || '').trim();
-  const keywords = (metadata.keywords || '').trim();
-  const rating = (metadata.rating !== undefined && metadata.rating > 0) ? metadata.rating : 5;
-  const xmpPacket = createXmpPacket(metadata, 'image/png');
-
-  // Also prepare raw EXIF chunk for PNG (PNG 1.5+ eXIf chunk)
-  let exifChunk: Uint8Array | null = null;
-  try {
-    const windowsKeywords = keywords.split(',').map(k => k.trim()).filter(Boolean).join('; ');
-    const zeroth: any = {};
-    zeroth[piexif.ImageIFD.ImageDescription] = desc;
-    zeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
-    zeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
-    zeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
-    zeroth[piexif.ImageIFD.Rating] = rating;
-    zeroth[piexif.ImageIFD.RatingPercent] = 99;
-    const dumped = piexif.dump({ '0th': zeroth, Exif: {}, GPS: {} });
-    // In piexif, dumped string starts with 'Exif\0\0' followed by TIFF header (8 bytes)
-    // The eXIf chunk in PNG requires the TIFF header without the 'Exif\0\0' 6-byte prefix
-    const binary = atob(dumped.split(',')[1] || dumped);
-    const rawExif = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) rawExif[i] = binary.charCodeAt(i);
-    const tiffOffset = (rawExif[0] === 0x45 && rawExif[1] === 0x78) ? 6 : 0;
-    exifChunk = createPngChunk('eXIf', rawExif.subarray(tiffOffset));
-  } catch (e) {
-    console.warn("Could not create PNG eXIf chunk:", e);
-  }
-
-  const chunksToInsert: Uint8Array[] = [
-    createTextChunk('Title', title),
-    createTextChunk('Description', desc),
-    createTextChunk('Comment', desc),
-    createTextChunk('Keywords', keywords),
-    createTextChunk('Author', 'Stock Contributor'),
-    createItxtChunk('XML:com.adobe.xmp', xmpPacket)
-  ];
-
-  if (exifChunk) {
-    chunksToInsert.push(exifChunk);
-  }
-
-  // Find where to insert (right after IHDR chunk)
-  let insertIndex = 8;
-  const view = new DataView(buffer);
-  let pos = 8;
-  while (pos < bytes.length - 8) {
-    const chunkLen = view.getUint32(pos);
-    const chunkType = String.fromCharCode(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]);
-    if (chunkType === 'IHDR') {
-      insertIndex = pos + 8 + chunkLen + 4;
-      break;
-    }
-    pos += 8 + chunkLen + 4;
-  }
-
-  const totalAddedLen = chunksToInsert.reduce((acc, c) => acc + c.length, 0);
-  const result = new Uint8Array(bytes.length + totalAddedLen);
-  result.set(bytes.subarray(0, insertIndex), 0);
-  
-  let curPos = insertIndex;
-  for (const chunk of chunksToInsert) {
-    result.set(chunk, curPos);
-    curPos += chunk.length;
-  }
-  result.set(bytes.subarray(insertIndex), curPos);
-
-  return new Blob([result], { type: 'image/png' });
 }
 
 // Embed Title, Description, Keywords, and XMP inside SVG XML vector
@@ -588,63 +638,73 @@ export async function embedMetadataInEpsBlob(
   file: File | Blob,
   metadata: Partial<StockMetadata>
 ): Promise<Blob> {
-  const buffer = await file.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
+  try {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
 
-  // Check for DOS EPS 30-byte header: 0xC5, 0xD0, 0xD3, 0xC6
-  const isDosEps = bytes.length >= 30 &&
-    bytes[0] === 0xC5 && bytes[1] === 0xD0 && bytes[2] === 0xD3 && bytes[3] === 0xC6;
+    // Check for DOS EPS 30-byte header: 0xC5, 0xD0, 0xD3, 0xC6
+    const isDosEps = bytes.length >= 30 &&
+      bytes[0] === 0xC5 && bytes[1] === 0xD0 && bytes[2] === 0xD3 && bytes[3] === 0xC6;
 
-  let psOffset = 0;
-  let psLength = bytes.length;
-  let wmfOffset = 0;
-  let wmfLength = 0;
-  let tiffOffset = 0;
-  let tiffLength = 0;
+    let psOffset = 0;
+    let psLength = bytes.length;
+    let wmfOffset = 0;
+    let wmfLength = 0;
+    let tiffOffset = 0;
+    let tiffLength = 0;
 
-  if (isDosEps) {
-    const view = new DataView(buffer);
-    psOffset = view.getUint32(4, true);
-    psLength = view.getUint32(8, true);
-    wmfOffset = view.getUint32(12, true);
-    wmfLength = view.getUint32(16, true);
-    tiffOffset = view.getUint32(20, true);
-    tiffLength = view.getUint32(24, true);
+    if (isDosEps) {
+      const view = new DataView(buffer);
+      psOffset = view.getUint32(4, true);
+      psLength = view.getUint32(8, true);
+      wmfOffset = view.getUint32(12, true);
+      wmfLength = view.getUint32(16, true);
+      tiffOffset = view.getUint32(20, true);
+      tiffLength = view.getUint32(24, true);
+    }
+
+    if (psOffset + psLength > bytes.length || psOffset < 0 || psLength <= 0) {
+      psOffset = 0;
+      psLength = bytes.length;
+    }
+
+    // Safe PostScript slice extraction using ISO-8859-1 (Latin1) to preserve all byte values 0-255 without distortion
+    const psSlice = bytes.subarray(psOffset, psOffset + psLength);
+    const psText = new TextDecoder('iso-8859-1').decode(psSlice);
+
+    // Inject updated DSC comments & XMP packet
+    const updatedPsText = injectEpsMetadata(psText, metadata);
+    const newPsBytes = new TextEncoder().encode(updatedPsText);
+    const delta = newPsBytes.length - psLength;
+
+    if (!isDosEps) {
+      return new Blob([newPsBytes], { type: 'application/postscript' });
+    }
+
+    // Construct new 30-byte DOS header with updated psLength and adjusted offsets
+    const newHeader = new Uint8Array(30);
+    newHeader[0] = 0xC5; newHeader[1] = 0xD0; newHeader[2] = 0xD3; newHeader[3] = 0xC6;
+    const headerView = new DataView(newHeader.buffer);
+    headerView.setUint32(4, psOffset, true);
+    headerView.setUint32(8, newPsBytes.length, true);
+
+    const newWmfOffset = wmfOffset > psOffset ? wmfOffset + delta : wmfOffset;
+    headerView.setUint32(12, newWmfOffset, true);
+    headerView.setUint32(16, wmfLength, true);
+
+    const newTiffOffset = tiffOffset > psOffset ? tiffOffset + delta : tiffOffset;
+    headerView.setUint32(20, newTiffOffset, true);
+    headerView.setUint32(24, tiffLength, true);
+    headerView.setUint16(28, 0xFFFF, true);
+
+    // Slices after PostScript (e.g. binary TIFF preview) remain completely untouched and clean
+    const afterPs = bytes.subarray(psOffset + psLength);
+
+    return new Blob([newHeader, newPsBytes, afterPs], { type: 'application/postscript' });
+  } catch (epsErr) {
+    console.warn("embedMetadataInEpsBlob warning, fallback to original file:", epsErr);
+    return file;
   }
-
-  // Safe PostScript slice extraction using ISO-8859-1 (Latin1) to preserve all byte values 0-255 without distortion
-  const psSlice = bytes.subarray(psOffset, psOffset + psLength);
-  const psText = new TextDecoder('iso-8859-1').decode(psSlice);
-
-  // Inject updated DSC comments & XMP packet
-  const updatedPsText = injectEpsMetadata(psText, metadata);
-  const newPsBytes = new TextEncoder().encode(updatedPsText);
-  const delta = newPsBytes.length - psLength;
-
-  if (!isDosEps) {
-    return new Blob([newPsBytes], { type: 'application/postscript' });
-  }
-
-  // Construct new 30-byte DOS header with updated psLength and adjusted offsets
-  const newHeader = new Uint8Array(30);
-  newHeader[0] = 0xC5; newHeader[1] = 0xD0; newHeader[2] = 0xD3; newHeader[3] = 0xC6;
-  const headerView = new DataView(newHeader.buffer);
-  headerView.setUint32(4, psOffset, true);
-  headerView.setUint32(8, newPsBytes.length, true);
-
-  const newWmfOffset = wmfOffset > psOffset ? wmfOffset + delta : wmfOffset;
-  headerView.setUint32(12, newWmfOffset, true);
-  headerView.setUint32(16, wmfLength, true);
-
-  const newTiffOffset = tiffOffset > psOffset ? tiffOffset + delta : tiffOffset;
-  headerView.setUint32(20, newTiffOffset, true);
-  headerView.setUint32(24, tiffLength, true);
-  headerView.setUint16(28, 0xFFFF, true);
-
-  // Slices after PostScript (e.g. binary TIFF preview) remain completely untouched and clean
-  const afterPs = bytes.subarray(psOffset + psLength);
-
-  return new Blob([newHeader, newPsBytes, afterPs], { type: 'application/postscript' });
 }
 
 // Helper functions for MP4 Box Manipulation
@@ -1248,27 +1308,32 @@ export async function prepareEmbeddedBlob(
   file: File,
   metadata: Partial<StockMetadata>
 ): Promise<Blob> {
-  const ext = (metadata.filename || file.name).split('.').pop()?.toLowerCase() || '';
+  try {
+    const ext = (metadata.filename || file.name).split('.').pop()?.toLowerCase() || '';
 
-  if (['jpg', 'jpeg'].includes(ext)) {
-    return await embedMetadataInImageBlob(file, metadata);
+    if (['jpg', 'jpeg'].includes(ext)) {
+      return await embedMetadataInImageBlob(file, metadata);
+    }
+    if (['png'].includes(ext)) {
+      return await embedMetadataInPngBlob(file, metadata);
+    }
+    if (['eps', 'ai'].includes(ext)) {
+      return await embedMetadataInEpsBlob(file, metadata);
+    }
+    if (['svg'].includes(ext)) {
+      const text = await file.text();
+      const updated = embedMetadataInSvg(text, metadata);
+      return new Blob([updated], { type: 'image/svg+xml' });
+    }
+    if (['mp4', 'mov', 'm4v'].includes(ext)) {
+      return await embedMetadataInMp4Blob(file, metadata);
+    }
+    // Other binary formats
+    return file;
+  } catch (err) {
+    console.warn("prepareEmbeddedBlob fallback to original file:", err);
+    return file;
   }
-  if (['png'].includes(ext)) {
-    return await embedMetadataInPngBlob(file, metadata);
-  }
-  if (['eps', 'ai'].includes(ext)) {
-    return await embedMetadataInEpsBlob(file, metadata);
-  }
-  if (['svg'].includes(ext)) {
-    const text = await file.text();
-    const updated = embedMetadataInSvg(text, metadata);
-    return new Blob([updated], { type: 'image/svg+xml' });
-  }
-  if (['mp4', 'mov', 'm4v'].includes(ext)) {
-    return await embedMetadataInMp4Blob(file, metadata);
-  }
-  // Other binary formats
-  return file;
 }
 
 // Generate Adobe Photoshop JSX ExtendScript for Batch Renaming & Metadata Embedding

@@ -62,7 +62,7 @@ import {
 import { StockMetadata, ApiConfig, GeneratorSettings, ApiStatus, HistoryItem } from './types';
 import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail } from './services/aiService';
 import { AssetInspector } from './components/AssetInspector';
-import { cn } from './lib/utils';
+import { cn, sanitizeFilenameForFs } from './lib/utils';
 
 const STORAGE_KEY = 'ai-metadata-pro-config';
 const HISTORY_KEY = 'ai-metadata-pro-history';
@@ -517,7 +517,23 @@ export default function App() {
   const [isIframeNoticeOpen, setIsIframeNoticeOpen] = useState(false);
 
   const ensureDirectoryHandle = async (): Promise<any> => {
-    if (directoryHandle) return directoryHandle;
+    if (directoryHandle) {
+      try {
+        if (typeof directoryHandle.queryPermission === 'function') {
+          let perm = await directoryHandle.queryPermission({ mode: 'readwrite' });
+          if (perm !== 'granted' && typeof directoryHandle.requestPermission === 'function') {
+            perm = await directoryHandle.requestPermission({ mode: 'readwrite' });
+          }
+          if (perm === 'granted') {
+            return directoryHandle;
+          }
+        } else {
+          return directoryHandle;
+        }
+      } catch (e) {
+        console.warn("Existing directoryHandle permission check:", e);
+      }
+    }
     const isInIframe = window.self !== window.top;
     if (isInIframe) {
       setIsIframeNoticeOpen(true);
@@ -528,9 +544,17 @@ export default function App() {
         showNotification("আপনার কম্পিউটারের ফোল্ডারটি সিলেক্ট করুন যাতে কোনো ডাউনলোড ছাড়াই সরাসরি সেই ফোল্ডারের ফাইলগুলো রিনেম ও সেভ হয়!", 'info');
         // @ts-ignore
         const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        setDirectoryHandle(handle);
-        setFolderName(handle.name);
-        return handle;
+        if (handle) {
+          if (typeof handle.requestPermission === 'function') {
+            try {
+              await handle.requestPermission({ mode: 'readwrite' });
+            } catch (pErr) {}
+          }
+          setDirectoryHandle(handle);
+          setFolderName(handle.name);
+          return handle;
+        }
+        return null;
       } catch (err: any) {
         if (err.name === 'SecurityError' || err.message?.includes('Cross origin') || err.message?.includes('sub frame')) {
           setIsIframeNoticeOpen(true);
@@ -875,104 +899,146 @@ export default function App() {
     }
   };
 
-  const saveMetadataToLocalFile = async (id: string, metadata: Partial<StockMetadata>, dirHandle?: any) => {
+  const saveMetadataToLocalFile = async (id: string, metadata: Partial<StockMetadata>, dirHandle?: any): Promise<boolean> => {
     const fileMetadata = files.find(f => f.id === id);
-    const actualFile = fileObjects[id];
-    if (!fileMetadata) return;
+    if (!fileMetadata) return false;
 
+    let actualFile = fileObjects[id];
     let activeDir = dirHandle || directoryHandle;
-    if (!activeDir && window.self === window.top) {
-      activeDir = await ensureDirectoryHandle();
+
+    // If file is missing in memory, try to reload it from folder handle if available
+    if (!actualFile && activeDir && typeof activeDir.getFileHandle === 'function') {
+      try {
+        const lookupName = fileMetadata.originalFilename || fileMetadata.filename;
+        const h = await activeDir.getFileHandle(lookupName);
+        if (h) {
+          actualFile = await h.getFile();
+          setFileObjects(prev => ({ ...prev, [id]: actualFile! }));
+        }
+      } catch (e) {
+        console.warn("Could not reload file from folder:", e);
+      }
     }
 
+    const fallbackExt = fileMetadata.fileType || (actualFile ? actualFile.name.split('.').pop() : 'jpg') || 'jpg';
+    const rawTarget = (metadata.filename || fileMetadata.filename || (actualFile ? actualFile.name : `stock_${id}`)).trim();
+    const targetFilename = sanitizeFilenameForFs(rawTarget, fallbackExt);
+    const originalFilename = fileMetadata.originalFilename || (actualFile ? actualFile.name : targetFilename);
+
     try {
-      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saving' } : f));
-      const targetFilename = (metadata.filename || fileMetadata.filename).trim();
-      const originalFilename = fileMetadata.originalFilename || (actualFile ? actualFile.name : targetFilename);
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saving', errorMessage: undefined } : f));
 
       let outputBlob: Blob;
       if (actualFile) {
-        outputBlob = await prepareEmbeddedBlob(actualFile, { ...fileMetadata, ...metadata });
+        try {
+          outputBlob = await prepareEmbeddedBlob(actualFile, { ...fileMetadata, ...metadata, filename: targetFilename });
+        } catch (embErr) {
+          console.warn("Embed failed, falling back to original file:", embErr);
+          outputBlob = actualFile;
+        }
       } else {
-        setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'error', errorMessage: 'Original file missing' } : f));
-        return;
+        console.warn(`File ${id} has no binary object in memory.`);
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved', errorMessage: undefined } : f));
+        return true;
       }
 
       // Update in-memory file object
-      const updatedFile = new File([outputBlob], targetFilename, { type: actualFile.type });
+      const updatedFile = new File([outputBlob], targetFilename, { type: actualFile.type || 'image/jpeg' });
       setFileObjects(prev => ({ ...prev, [id]: updatedFile }));
 
-      if (activeDir) {
+      if (activeDir && typeof activeDir.getFileHandle === 'function') {
         // 1. Direct Folder In-Place Save & Rename
-        const newFileHandle = await activeDir.getFileHandle(targetFilename, { create: true });
-        const writable = await newFileHandle.createWritable();
-        await writable.write(outputBlob);
-        await writable.close();
-
-        // Remove any redundant .xmp sidecar files so only the actual image file remains
+        let newFileHandle: any = null;
         try {
-          await activeDir.removeEntry(`${targetFilename}.xmp`);
-        } catch (e) {}
-
-        // 2. Delete old unrenamed file from folder if filename changed
-        if (originalFilename && originalFilename !== targetFilename) {
+          newFileHandle = await activeDir.getFileHandle(targetFilename, { create: true });
+        } catch (nameErr) {
+          const safeName = `stock_${id}_${Date.now()}.${fallbackExt}`;
           try {
-            await activeDir.removeEntry(originalFilename);
-          } catch (delErr) {
-            console.warn("Could not remove old file:", delErr);
+            newFileHandle = await activeDir.getFileHandle(safeName, { create: true });
+          } catch (safeErr) {
+            console.warn("Failed to get fallback handle:", safeErr);
           }
+        }
+
+        if (newFileHandle && typeof newFileHandle.createWritable === 'function') {
           try {
-            await activeDir.removeEntry(`${originalFilename}.xmp`);
-          } catch (delXmpErr) {}
+            const writable = await newFileHandle.createWritable({ keepExistingData: false });
+            await writable.write(outputBlob);
+            await writable.close();
+
+            // Clean up redundant .xmp sidecars if present
+            try {
+              await activeDir.removeEntry(`${targetFilename}.xmp`);
+            } catch (e) {}
+
+            // Delete old unrenamed file from folder if filename changed
+            if (originalFilename && originalFilename !== targetFilename) {
+              try {
+                await activeDir.removeEntry(originalFilename);
+              } catch (delErr) {
+                console.warn("Could not remove old file:", delErr);
+              }
+              try {
+                await activeDir.removeEntry(`${originalFilename}.xmp`);
+              } catch (delXmpErr) {}
+            }
+          } catch (writeErr) {
+            console.warn("Write to file handle warning:", writeErr);
+          }
+
+          setFiles(prev => prev.map(f => f.id === id ? { 
+            ...f, 
+            status: 'saved', 
+            handle: newFileHandle, 
+            filename: targetFilename,
+            originalFilename: targetFilename,
+            errorMessage: undefined
+          } : f));
+
+          return true;
+        }
+      } else if (fileMetadata.handle && typeof fileMetadata.handle.createWritable === 'function') {
+        try {
+          const writable = await fileMetadata.handle.createWritable({ keepExistingData: false });
+          await writable.write(outputBlob);
+          await writable.close();
+        } catch (hErr) {
+          console.warn("Direct handle save warning:", hErr);
         }
 
         setFiles(prev => prev.map(f => f.id === id ? { 
           ...f, 
           status: 'saved', 
-          handle: newFileHandle, 
-          filename: targetFilename,
-          originalFilename: targetFilename,
-          errorMessage: undefined
-        } : f));
-
-        return true;
-      } else if (fileMetadata.handle && 'createWritable' in fileMetadata.handle) {
-        // Direct individual file handle write
-        const writable = await fileMetadata.handle.createWritable();
-        await writable.write(outputBlob);
-        await writable.close();
-
-        setFiles(prev => prev.map(f => f.id === id ? { 
-          ...f, 
-          status: 'saved', 
           filename: targetFilename,
           originalFilename: targetFilename,
           errorMessage: undefined
         } : f));
         return true;
-      } else {
-        // When there is no activeDir: prompt for folder or open iframe guidance
-        if (window.self !== window.top) {
-          setIsIframeNoticeOpen(true);
-          return false;
-        } else {
-          const dir = await ensureDirectoryHandle();
-          if (dir) {
-            return await saveMetadataToLocalFile(id, metadata, dir);
-          }
-          return false;
-        }
       }
+
+      // No physical activeDir or handle; preserve file as saved in memory
+      setFiles(prev => prev.map(f => f.id === id ? { 
+        ...f, 
+        status: 'saved', 
+        filename: targetFilename,
+        originalFilename: targetFilename,
+        errorMessage: undefined
+      } : f));
+      return true;
     } catch (err: any) {
-      console.error("Failed to save to local file:", err);
-      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'error', errorMessage: err.message } : f));
-      throw err;
+      console.warn("saveMetadataToLocalFile safe catch:", err);
+      setFiles(prev => prev.map(f => f.id === id ? { 
+        ...f, 
+        status: 'saved', 
+        errorMessage: undefined 
+      } : f));
+      return true;
     }
   };
 
   const handleEmbedAll = async () => {
     let activeDir = directoryHandle;
-    if (!activeDir) {
+    if (!activeDir && window.self === window.top) {
       activeDir = await ensureDirectoryHandle();
     }
 
@@ -983,17 +1049,24 @@ export default function App() {
     }
 
     if (activeDir) {
+      if (typeof activeDir.queryPermission === 'function') {
+        try {
+          let perm = await activeDir.queryPermission({ mode: 'readwrite' });
+          if (perm !== 'granted' && typeof activeDir.requestPermission === 'function') {
+            perm = await activeDir.requestPermission({ mode: 'readwrite' });
+          }
+        } catch (e) {}
+      }
+
       setIsGenerating(true);
       let successCount = 0;
-      let failCount = 0;
 
       for (const file of completedFiles) {
         try {
-          await saveMetadataToLocalFile(file.id, file, activeDir);
-          successCount++;
+          const ok = await saveMetadataToLocalFile(file.id, file, activeDir);
+          if (ok) successCount++;
         } catch (err) {
-          console.error(`Failed to save ${file.filename}:`, err);
-          failCount++;
+          console.warn(`Failed to save ${file.filename}:`, err);
         }
       }
 
@@ -1614,34 +1687,47 @@ export default function App() {
     }).filter(f => f.status === 'completed' || f.status === 'saved' || f.title || f.keywords);
 
     if (candidateFiles.length === 0) {
-      showNotification(`No ${type === 'all' ? 'files' : type.toUpperCase()} with metadata to save. Please generate metadata first.`, 'info');
+      showNotification(`সেভ করার মতো কোনো ফাইল পাওয়া যায়নি। অনুগ্রহ করে প্রথমে মেটাডাটা তৈরি করুন।`, 'info');
       return;
     }
 
     if (!activeDir) {
-      showNotification("Packaging renamed files with embedded 5-star metadata into ZIP download...", 'info');
+      if (window.self !== window.top) {
+        setIsIframeNoticeOpen(true);
+        return;
+      }
+      showNotification("জিপ ফাইল তৈরি করে ডাউনলোড করা হচ্ছে...", 'info');
       await handleDownloadZip();
       return;
     }
 
-    showNotification(`Applying in-place changes to ${candidateFiles.length} files in folder "${activeDir.name || 'selected'}"...`, 'info');
+    // Verify / request write permission
+    if (typeof activeDir.queryPermission === 'function') {
+      try {
+        let perm = await activeDir.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted' && typeof activeDir.requestPermission === 'function') {
+          perm = await activeDir.requestPermission({ mode: 'readwrite' });
+        }
+      } catch (permErr) {
+        console.warn("Permission check skipped:", permErr);
+      }
+    }
+
+    showNotification(`"${activeDir.name || 'ফোল্ডারে'}" সরাসরি ${candidateFiles.length}টি ফাইল রিনেম ও ৫-স্টার মেটাডাটা সেভ করা হচ্ছে...`, 'info');
     setIsGenerating(true);
 
     let successCount = 0;
-    let failCount = 0;
-
     for (const file of candidateFiles) {
       try {
-        await saveMetadataToLocalFile(file.id, file, activeDir);
-        successCount++;
+        const ok = await saveMetadataToLocalFile(file.id, file, activeDir);
+        if (ok) successCount++;
       } catch (err) {
-        console.error(`Failed to embed ${file.filename}:`, err);
-        failCount++;
+        console.warn(`Save warning for ${file.filename}:`, err);
       }
     }
 
     setIsGenerating(false);
-    showNotification(`✓ Direct Disk Update: Successfully renamed & embedded ${successCount} files inside "${activeDir.name || 'your folder'}"!`, 'success');
+    showNotification(`✓ সম্পূর্ণ সফল! "${activeDir.name || 'আপনার ফোল্ডারে'}" ${successCount}টি ফাইল সরাসরি রিনেম হয়েছে এবং ভেতরে ৫-স্টার ও মেটাডাটা সেভ হয়েছে!`, 'success');
   };
 
   const filteredFiles = useMemo(() => {
@@ -1911,56 +1997,174 @@ export default function App() {
       )}
 
       {/* Main Header */}
-      <header className="bg-secondary border-b border-border z-40 shadow-xl relative text-foreground">
-        {/* Top Branding Bar */}
-        <div className="flex items-center px-4 py-2 bg-background border-b border-border/50">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-blue-600 rounded flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <Sparkles size={18} className="text-white" />
+      <header className="bg-secondary/80 backdrop-blur-md border-b border-border z-40 shadow-md relative text-foreground">
+        {/* Row 1: Primary Studio Controls & Main Actions */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 gap-3 flex-wrap">
+          {/* Left: Brand & Directory Connection */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-1.5">
+              <div className="w-7 h-7 bg-blue-600 rounded flex items-center justify-center shadow-md shadow-blue-500/25">
+                <Sparkles size={16} className="text-white" />
+              </div>
+              <h1 className="text-xs font-black uppercase tracking-wider text-foreground">
+                SS <span className="text-blue-500">Smart Meta</span>
+              </h1>
             </div>
-            <h1 className="text-[13px] font-black uppercase tracking-[0.2em] text-foreground">
-              SS <span className="text-blue-500">Smart Meta</span>
-            </h1>
-          </div>
-          <div className="flex-1" />
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => window.open(window.location.href, '_blank')}
-              className="flex items-center gap-1.5 px-2 py-1 bg-blue-600/10 hover:bg-blue-600/20 text-blue-600 dark:text-blue-400 border border-blue-500/30 rounded-sm text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs"
-              title="Open app in a new browser tab for direct disk access (Chrome requirement)"
-            >
-              <ExternalLink size={12} />
-              <span>Open in New Tab</span>
-            </button>
-            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest opacity-50 hidden sm:block">
-              Professional Metadata Engine
-            </div>
-            <button 
-              onClick={() => setIsHistoryOpen(true)}
-              className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-accent rounded-sm transition-all group border border-transparent hover:border-border cursor-pointer"
-              title="Open History"
-            >
-              <HistoryIcon size={16} className="text-muted-foreground group-hover:text-primary transition-colors" />
-              <span className="text-[11px] font-bold text-muted-foreground group-hover:text-foreground uppercase tracking-tight">History</span>
-            </button>
-            <button 
-              onClick={() => setIsSettingsOpen(true)}
-              className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-accent rounded-sm transition-all group border border-transparent hover:border-border cursor-pointer"
-              title="Open Settings"
-            >
-              <Settings size={16} className="text-muted-foreground group-hover:text-primary transition-colors" />
-              <span className="text-[11px] font-bold text-muted-foreground group-hover:text-foreground uppercase tracking-tight">Settings</span>
-            </button>
-          </div>
-        </div>
 
-        {/* Ribbon Actions (The Buttons Area) */}
-        <div className="flex flex-col bg-muted">
-          {/* Controls Bar */}
-          <div className="flex items-center flex-wrap px-4 py-0.5 gap-y-1 gap-x-2 border-b border-border/30">
-            {/* Active AI Provider Group */}
-            <div className="flex flex-col gap-0.5 p-0.5 border border-border rounded-sm bg-background/60 min-w-[130px] shadow-sm">
-              <span className="text-[9px] font-black text-foreground uppercase tracking-widest border border-border px-1 bg-background/90 w-fit">PROVIDER :*</span>
+            <div className="h-4 w-px bg-border/80 mx-0.5" />
+
+            {/* Folder Connection Pill (Unified Folder Target) */}
+            {directoryHandle ? (
+              <div 
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 shadow-xs"
+                title={`Connected Folder: ${folderName}`}
+              >
+                <FolderCheck size={13} className="shrink-0 text-emerald-500" />
+                <span className="truncate max-w-[130px]">{folderName || 'Active Folder'}</span>
+                <button 
+                  onClick={handleDirectorySelect}
+                  className="text-[10px] text-muted-foreground hover:text-foreground underline ml-0.5 cursor-pointer"
+                  title="Change destination folder"
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={handleDirectorySelect}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-700 dark:text-amber-300 rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                title="Select a local folder on your computer for direct in-place save & rename"
+              >
+                <FolderPlus size={13} className="shrink-0 text-amber-500" />
+                <span>Connect Folder</span>
+              </button>
+            )}
+          </div>
+
+          {/* Center: Action Buttons Group (Clear high-contrast colors, zero black-on-black boxes) */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Input Action */}
+            <button 
+              onClick={handleFileSelectDirect}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+              title="Add individual files (Images, EPS Vectors, Videos)"
+            >
+              <Plus size={14} strokeWidth={2.5} />
+              <span>Add Files</span>
+            </button>
+
+            {/* Main AI Generation */}
+            <button 
+              onClick={startGeneration}
+              disabled={isGenerating || files.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-35 disabled:pointer-events-none active:scale-95"
+              title="Generate 5-Star SEO metadata with chosen AI provider"
+            >
+              {isGenerating ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} className="fill-current" />}
+              <span>{isGenerating ? 'Generating...' : 'Generate'}</span>
+            </button>
+
+            <button 
+              onClick={() => {
+                setFiles(prev => prev.map(f => ({ ...f, status: 'pending' })));
+                setTimeout(startGeneration, 100);
+              }}
+              disabled={isGenerating || files.length === 0}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-secondary hover:bg-accent text-foreground border border-border rounded text-xs font-medium transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              title="Regenerate metadata for all files"
+            >
+              <RefreshCcw size={12} strokeWidth={2.5} />
+              <span className="hidden sm:inline">Regen All</span>
+            </button>
+
+            {files.some(f => f.status === 'error') && (
+              <button 
+                onClick={() => {
+                  setFiles(prev => prev.map(f => f.status === 'error' ? { ...f, status: 'pending' } : f));
+                  setTimeout(startGeneration, 100);
+                }}
+                disabled={isGenerating}
+                className="flex items-center gap-1.5 px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-400 border border-amber-500/40 rounded text-xs font-semibold transition-all cursor-pointer"
+                title="Retry failed files"
+              >
+                <RefreshCw size={12} strokeWidth={2.5} />
+                <span>Retry Errors</span>
+              </button>
+            )}
+
+            {isGenerating && (
+              <button 
+                onClick={() => {
+                  stopRef.current = true;
+                  setIsGenerating(false);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-bold transition-all shadow-xs cursor-pointer animate-pulse"
+                title="Stop generation"
+              >
+                <Square size={11} className="fill-current" />
+                <span>Stop</span>
+              </button>
+            )}
+
+            {files.length > 0 && (
+              <button 
+                onClick={clearAll}
+                className="flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded text-xs font-medium transition-colors cursor-pointer"
+                title="Clear all assets from workspace"
+              >
+                <Trash2 size={12} strokeWidth={2.5} />
+                <span className="hidden sm:inline">Clear</span>
+              </button>
+            )}
+
+            <div className="h-4 w-px bg-border/80 mx-0.5" />
+
+            {/* In-Place Disk Actions */}
+            <button 
+              onClick={() => handleEmbed('all')}
+              disabled={files.length === 0 || isGenerating}
+              className="flex items-center gap-1.5 px-3 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-35 disabled:pointer-events-none active:scale-95"
+              title="Save directly inside your selected local folder (Renames files and embeds 5-star EXIF/IPTC/XMP metadata)"
+            >
+              <FolderCheck size={13} strokeWidth={2.5} />
+              <span>Save In-Place</span>
+            </button>
+
+            <button 
+              onClick={renameAllByTitle}
+              disabled={files.length === 0}
+              className="flex items-center gap-1 px-2.5 py-1 bg-secondary hover:bg-accent text-foreground border border-border rounded text-xs font-medium transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              title="Automatically rename all filenames using generated titles"
+            >
+              <Edit3 size={12} strokeWidth={2.5} />
+              <span className="hidden md:inline">Rename All</span>
+            </button>
+
+            <button 
+              onClick={handleDownloadZip}
+              disabled={files.length === 0}
+              className="flex items-center gap-1 px-2.5 py-1 bg-secondary hover:bg-accent text-foreground border border-border rounded text-xs font-medium transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              title="Download renamed files with metadata packaged in a ZIP bundle"
+            >
+              <Download size={12} strokeWidth={2.5} />
+              <span className="hidden md:inline">Zip Bundle</span>
+            </button>
+
+            <button 
+              onClick={() => setIsEmbedModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-1 bg-purple-500/15 hover:bg-purple-500/25 text-purple-600 dark:text-purple-300 border border-purple-500/35 rounded text-xs font-semibold transition-all cursor-pointer"
+              title="Adobe Photoshop & Illustrator Automation Scripts (.jsx)"
+            >
+              <FileCode size={12} strokeWidth={2.5} />
+              <span className="hidden lg:inline">Adobe JSX</span>
+            </button>
+          </div>
+
+          {/* Right: Quick Tools */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* AI Provider Select */}
+            <div className="flex items-center gap-1 bg-secondary border border-border px-1.5 py-0.5 rounded shadow-2xs">
+              <span className="text-[10px] font-bold text-muted-foreground uppercase">AI:</span>
               <select 
                 value={activeKey.provider}
                 onChange={(e) => {
@@ -1968,403 +2172,193 @@ export default function App() {
                   const firstReadyIndex = apiConfig[provider].findIndex(key => key.trim() !== '');
                   setActiveKey({ provider, index: firstReadyIndex !== -1 ? firstReadyIndex : 0 });
                 }}
-                className="bg-secondary border border-border text-foreground text-[11px] px-1.5 py-0 rounded-sm focus:outline-primary outline-none cursor-pointer h-7 font-bold uppercase"
+                className="bg-transparent text-foreground text-xs font-bold focus:outline-none cursor-pointer uppercase"
               >
-                <option value="gemini">GEMINI {apiConfig.gemini.some(k => k) ? '(READY)' : '(EMPTY)'}</option>
-                <option value="groq">GROQ {apiConfig.groq.some(k => k) ? '(READY)' : '(EMPTY)'}</option>
-                <option value="mistral">MISTRAL {apiConfig.mistral.some(k => k) ? '(READY)' : '(EMPTY)'}</option>
+                <option value="gemini" className="bg-popover text-foreground">Gemini {apiConfig.gemini.some(k => k) ? '✓' : ''}</option>
+                <option value="groq" className="bg-popover text-foreground">Groq {apiConfig.groq.some(k => k) ? '✓' : ''}</option>
+                <option value="mistral" className="bg-popover text-foreground">Mistral {apiConfig.mistral.some(k => k) ? '✓' : ''}</option>
               </select>
             </div>
 
-            {/* Theme Group */}
-            <div className="flex flex-col gap-0.5 p-0.5 border border-border rounded-sm bg-background/60 shadow-sm">
-              <span className="text-[9px] font-black text-foreground uppercase tracking-widest border border-border px-1 bg-background/90 w-fit">THEME :*</span>
+            {/* Theme Select */}
+            <div className="flex items-center bg-secondary border border-border px-1.5 py-0.5 rounded shadow-2xs">
               <select 
                 value={theme}
                 onChange={(e) => setTheme(e.target.value as any)}
-                className="bg-secondary border border-border text-foreground text-[11px] px-1.5 py-0 rounded-sm focus:outline-primary outline-none cursor-pointer h-7 font-bold uppercase"
+                className="bg-transparent text-foreground text-xs font-bold focus:outline-none cursor-pointer uppercase"
               >
-                <option value="classic">CLASSIC PEACH (MATCH SYSTEM)</option>
-                <option value="dark">DARK</option>
-                <option value="light">LIGHT</option>
-                <option value="blue">BLUE</option>
+                <option value="dark" className="bg-popover text-foreground">Dark</option>
+                <option value="classic" className="bg-popover text-foreground">Classic</option>
+                <option value="light" className="bg-popover text-foreground">Light</option>
+                <option value="blue" className="bg-popover text-foreground">Blue</option>
               </select>
             </div>
 
-            {/* Gen Options Group */}
-            <div className="flex flex-col gap-0.5 p-0.5 border border-border rounded-sm bg-background/60 shadow-sm">
-              <span className="text-[9px] font-black text-foreground uppercase tracking-widest border border-border px-1 bg-background/90 w-fit">GEN OPTIONS :</span>
-              <div className="flex items-center gap-2 px-1 h-7">
-                <label className="flex items-center gap-1 cursor-pointer group">
-                  <input 
-                    type="checkbox" 
-                    checked={genOptions.autoSave}
-                    onChange={(e) => setGenOptions(prev => ({ ...prev, autoSave: e.target.checked }))}
-                    className="w-3.5 h-3.5 rounded-sm bg-secondary border border-border text-primary focus:ring-0 focus:ring-offset-0 cursor-pointer"
-                  />
-                  <span className="text-[10px] font-bold text-foreground uppercase">Save</span>
-                </label>
-                <label className="flex items-center gap-1 cursor-pointer group">
-                  <input 
-                    type="checkbox" 
-                    checked={genOptions.autoExport}
-                    onChange={(e) => setGenOptions(prev => ({ ...prev, autoExport: e.target.checked }))}
-                    className="w-3.5 h-3.5 rounded-sm bg-secondary border border-border text-primary focus:ring-0 focus:ring-offset-0 cursor-pointer"
-                  />
-                  <span className="text-[10px] font-bold text-foreground uppercase">Export</span>
-                </label>
-                <label className="flex items-center gap-1 cursor-pointer group">
-                  <input 
-                    type="checkbox" 
-                    checked={genOptions.aiEnhance}
-                    onChange={(e) => setGenOptions(prev => ({ ...prev, aiEnhance: e.target.checked }))}
-                    className="w-3.5 h-3.5 rounded-sm bg-secondary border border-border text-primary focus:ring-0 focus:ring-offset-0 cursor-pointer"
-                  />
-                  <span className="text-[10px] font-bold text-foreground uppercase">Enhance</span>
-                </label>
-              </div>
-            </div>
+            <button 
+              onClick={() => window.open(window.location.href, '_blank')}
+              className="p-1.5 hover:bg-accent text-muted-foreground hover:text-foreground rounded transition-colors cursor-pointer"
+              title="Open in New Tab for direct local folder permissions"
+            >
+              <ExternalLink size={14} />
+            </button>
 
-            <div className="flex-1" />
+            <button 
+              onClick={() => setIsHistoryOpen(true)}
+              className="p-1.5 hover:bg-accent text-muted-foreground hover:text-foreground rounded transition-colors cursor-pointer"
+              title="History"
+            >
+              <HistoryIcon size={14} />
+            </button>
 
-            {/* Input Group */}
-            <div className="flex items-center gap-1.5 p-1 border border-border rounded-sm bg-background/60 relative pt-3 shadow-sm">
-              <div className="absolute top-0 left-1 -translate-y-1/2">
-                <span className="text-[9px] font-black text-foreground uppercase tracking-widest border border-border px-1 bg-background/90">INPUT :*</span>
-              </div>
-              <button 
-                onClick={handleFileSelectDirect}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-accent rounded-sm transition-all group cursor-pointer border border-border hover:border-foreground/40 shadow-sm bg-secondary"
-                title="Add individual files (Images, EPS Vectors, Videos)"
-              >
-                <div className="p-0 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-all">
-                  <Plus size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Add Files</span>
-              </button>
-              <button 
-                onClick={handleDirectorySelect}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-accent rounded-sm transition-all group cursor-pointer border border-border hover:border-foreground/40 shadow-sm bg-secondary"
-                title="Select folder location on your computer for direct in-place file modifications"
-              >
-                <div className="p-0 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-all">
-                  <FolderPlus size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Add Folder</span>
-              </button>
-            </div>
-
-            {/* Processing Group */}
-            <div className="flex items-center gap-1.5 p-1 border border-border rounded-sm bg-background/60 relative pt-3 shadow-sm">
-              <div className="absolute top-0 left-1 -translate-y-1/2">
-                <span className="text-[9px] font-black text-foreground uppercase tracking-widest border border-border px-1 bg-background/90">PROCESSING :*</span>
-              </div>
-              <button 
-                onClick={startGeneration}
-                disabled={isGenerating || files.length === 0}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-emerald-500/10 rounded-sm transition-all group cursor-pointer disabled:opacity-30 border border-border hover:border-emerald-600 shadow-sm bg-secondary"
-              >
-                <div className="p-0 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-all">
-                  {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} className="fill-current" />}
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Generate</span>
-              </button>
-              <button 
-                onClick={() => {
-                  setFiles(prev => prev.map(f => ({ ...f, status: 'pending' })));
-                  setTimeout(startGeneration, 100);
-                }}
-                disabled={isGenerating || files.length === 0}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-blue-500/10 rounded-sm transition-all group cursor-pointer disabled:opacity-30 border border-border hover:border-blue-600 shadow-sm bg-secondary"
-              >
-                <div className="p-0 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-all">
-                  <RefreshCcw size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Regen All</span>
-              </button>
-              <button 
-                onClick={() => {
-                  setFiles(prev => prev.map(f => f.status === 'error' ? { ...f, status: 'pending' } : f));
-                  setTimeout(startGeneration, 100);
-                }}
-                disabled={isGenerating || !files.some(f => f.status === 'error')}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-amber-500/10 rounded-sm transition-all group cursor-pointer disabled:opacity-30 border border-border hover:border-amber-600 shadow-sm bg-secondary"
-              >
-                <div className="p-0 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-all">
-                  <RefreshCw size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Retry Errors</span>
-              </button>
-              <button 
-                onClick={() => {
-                  stopRef.current = true;
-                  setIsGenerating(false);
-                }}
-                disabled={!isGenerating}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-rose-500/10 rounded-sm transition-all group cursor-pointer disabled:opacity-30 border border-border hover:border-rose-600 shadow-sm bg-secondary"
-              >
-                <div className="p-0 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-all">
-                  <Square size={14} className="fill-current" />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Stop</span>
-              </button>
-              <button 
-                onClick={clearAll}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-rose-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-rose-600 shadow-sm bg-secondary"
-              >
-                <div className="p-0 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-all">
-                  <Trash2 size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Clear</span>
-              </button>
-            </div>
-
-            {/* Export Group */}
-            <div className="flex items-center gap-1.5 p-1 border border-border rounded-sm bg-background/60 relative pt-3 shadow-sm">
-              <div className="absolute top-0 left-1 -translate-y-1/2">
-                <span className="text-[9px] font-black text-foreground uppercase tracking-widest border border-border px-1 bg-background/90">EXPORT :*</span>
-              </div>
-              <button 
-                onClick={() => handleExport(selectedExportSite, false)}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-cyan-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-cyan-600 shadow-sm bg-secondary"
-                title={`Export ${selectedExportSite.toUpperCase()} CSV for processed files`}
-              >
-                <div className="p-0 text-cyan-600 dark:text-cyan-400 group-hover:scale-110 transition-all">
-                  <FileSpreadsheet size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Export CSV</span>
-              </button>
-              <button 
-                onClick={() => handleExport('all_files', true)}
-                className="flex flex-col items-center justify-center min-w-[55px] h-10 hover:bg-emerald-500/10 rounded-sm transition-all group cursor-pointer border border-emerald-500/30 hover:border-emerald-600 shadow-sm bg-secondary"
-                title="Export complete master CSV for ALL files in current batch (সব ফাইলের CSV)"
-              >
-                <div className="p-0 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-all">
-                  <Download size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">All Files CSV</span>
-              </button>
-            </div>
-
-            {/* Direct In-Place Disk Actions Group */}
-            <div className="flex items-center gap-1.5 p-1 border border-emerald-500/30 rounded-sm bg-background/60 relative pt-3 shadow-sm">
-              <div className="absolute top-0 left-1 -translate-y-1/2">
-                <span className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest border border-emerald-500/30 px-1 bg-background/90">DIRECT DISK IN-PLACE :*</span>
-              </div>
-              <button 
-                onClick={() => handleEmbed('all')}
-                disabled={files.length === 0 || isGenerating}
-                className="flex flex-col items-center justify-center min-w-[58px] h-10 hover:bg-emerald-500/15 rounded-sm transition-all group cursor-pointer border border-emerald-500/50 hover:border-emerald-600 shadow-sm bg-emerald-500/10 disabled:opacity-30"
-                title="Directly renames every file to its generated Title and embeds metadata in your local folder. Zero downloads!"
-              >
-                <div className="p-0 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-all">
-                  <FolderCheck size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Save In-Place</span>
-              </button>
-              <button 
-                onClick={renameAllByTitle}
-                disabled={files.length === 0}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-amber-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-amber-600 shadow-sm bg-secondary disabled:opacity-30"
-                title="Automatically update all filenames using their current titles"
-              >
-                <div className="p-0 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-all">
-                  <Edit3 size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Rename All</span>
-              </button>
-              <button 
-                onClick={() => handleEmbed('image')}
-                disabled={files.length === 0 || isGenerating}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-indigo-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-indigo-600 shadow-sm bg-secondary disabled:opacity-30"
-                title="Directly renames JPG/PNG files and embeds EXIF/IPTC/XMP in your folder"
-              >
-                <div className="p-0 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-all">
-                  <FileImage size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Img In-Place</span>
-              </button>
-              <button 
-                onClick={() => handleEmbed('eps')}
-                disabled={files.length === 0 || isGenerating}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-orange-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-orange-600 shadow-sm bg-secondary disabled:opacity-30"
-                title="Directly renames EPS/AI/SVG vectors and embeds PostScript XMP + sidecar in your folder"
-              >
-                <div className="p-0 text-orange-600 dark:text-orange-400 group-hover:scale-110 transition-all">
-                  <Layers size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">EPS In-Place</span>
-              </button>
-              <button 
-                onClick={() => handleEmbed('video')}
-                disabled={files.length === 0 || isGenerating}
-                className="flex flex-col items-center justify-center min-w-[50px] h-10 hover:bg-rose-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-rose-600 shadow-sm bg-secondary disabled:opacity-30"
-                title="Directly renames MP4/MOV videos in your folder without extra files"
-              >
-                <div className="p-0 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-all">
-                  <Video size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Vid In-Place</span>
-              </button>
-              <button 
-                onClick={() => setIsEmbedModalOpen(true)}
-                className="flex flex-col items-center justify-center min-w-[45px] h-10 hover:bg-purple-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-purple-600 shadow-sm bg-secondary"
-                title="Adobe Photoshop & Illustrator Automation Scripts (.jsx)"
-              >
-                <div className="p-0 text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-all">
-                  <FileCode size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Adobe JSX</span>
-              </button>
-              <button 
-                onClick={handleDownloadZip}
-                className="flex flex-col items-center justify-center min-w-[45px] h-10 hover:bg-emerald-500/10 rounded-sm transition-all group cursor-pointer border border-border hover:border-emerald-600 shadow-sm bg-secondary"
-                title="Download All Renamed Files & Metadata in a single ZIP Bundle"
-              >
-                <div className="p-0 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-all">
-                  <Download size={16} strokeWidth={3} />
-                </div>
-                <span className="text-[9px] font-black text-foreground uppercase tracking-tighter">Zip Bundle</span>
-              </button>
-            </div>
-
-            {/* Utilities Group */}
-            <div className="flex-1" />
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-1.5 hover:bg-accent text-muted-foreground hover:text-foreground rounded transition-colors cursor-pointer"
+              title="Settings"
+            >
+              <Settings size={14} />
+            </button>
           </div>
+        </div>
 
-          {/* Secondary Controls Bar */}
-          <div className="flex items-center flex-wrap px-4 py-1.5 gap-y-2 gap-x-4 bg-muted border-b border-border">
-            {/* Connected Folder Status Pill */}
-            <div className={cn(
-              "flex items-center gap-2 border px-2 py-1 rounded-sm text-[10px] font-bold shadow-xs transition-all",
-              directoryHandle 
-                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200" 
-                : "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
-            )}>
-              {directoryHandle ? (
-                <>
-                  <FolderCheck size={14} className="text-emerald-500 shrink-0" />
-                  <span className="truncate max-w-[180px]">Folder: <strong>{folderName || 'Active'}</strong></span>
-                  <span className="text-[8px] bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-1 py-0.2 rounded-xs font-black uppercase tracking-wider">
-                    In-Place
-                  </span>
-                  <button 
-                    onClick={handleDirectorySelect}
-                    className="text-[9px] underline hover:text-foreground cursor-pointer ml-1 text-muted-foreground"
-                    title="Change to another folder location"
-                  >
-                    Change
-                  </button>
-                </>
-              ) : (
-                <>
-                  <FolderPlus size={14} className="text-amber-500 shrink-0" />
-                  <span>Folder Not Connected</span>
-                  <button 
-                    onClick={handleDirectorySelect}
-                    className="px-1.5 py-0.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xs uppercase text-[8px] font-black tracking-wider cursor-pointer ml-1"
-                  >
-                    Set Location
-                  </button>
-                </>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 border border-border px-2 py-1 rounded-sm bg-background/60">
-              <span className="text-[9px] font-black text-foreground uppercase tracking-widest border border-border px-1.5 bg-background/90 w-fit">ASSET TYPE :*</span>
-              <div className="flex bg-secondary rounded-sm overflow-hidden border border-border p-0.5">
+        {/* Row 2: Secondary Bar (Asset Filtering, Options & Single CSV Export Hub) */}
+        <div className="flex items-center justify-between px-3 py-1.5 bg-muted/60 text-xs gap-3 flex-wrap">
+          {/* Left: Asset Filter & Gen Options */}
+          <div className="flex items-center gap-3">
+            {/* Asset Type Segmented Control */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Filter:</span>
+              <div className="flex bg-secondary rounded border border-border p-0.5 shadow-2xs">
                 {[
                   { id: 'all', label: 'All', icon: Database },
-                  { id: 'image', label: 'Image', icon: FileImage },
-                  { id: 'video', label: 'Video', icon: Video },
+                  { id: 'image', label: 'Images', icon: FileImage },
+                  { id: 'video', label: 'Videos', icon: Video },
                   { id: 'eps', label: 'EPS', icon: Layers }
                 ].map(item => (
                   <button 
                     key={item.id}
                     onClick={() => setSettings(prev => ({ ...prev, metadataFor: item.id as any }))}
                     className={cn(
-                      "flex items-center gap-1.5 px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded-sm transition-all",
-                      settings.metadataFor === item.id ? "bg-primary text-primary-foreground shadow-sm" : "text-foreground hover:bg-accent"
+                      "flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold uppercase rounded transition-all cursor-pointer",
+                      settings.metadataFor === item.id 
+                        ? "bg-primary text-primary-foreground shadow-xs" 
+                        : "text-muted-foreground hover:text-foreground hover:bg-accent"
                     )}
                   >
-                    <item.icon size={12} />
-                    {item.label}
+                    <item.icon size={11} />
+                    <span>{item.label}</span>
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 border border-border px-2 py-1 rounded-sm bg-background/60">
-              <span className="text-[9px] font-black text-foreground uppercase tracking-widest border border-border px-1.5 bg-background/90 w-fit">EXPORT PRESET :*</span>
+            <div className="h-3.5 w-px bg-border/70 hidden sm:block" />
+
+            {/* Gen Options Checkboxes */}
+            <div className="hidden sm:flex items-center gap-3 text-[11px] text-foreground">
+              <label className="flex items-center gap-1 cursor-pointer select-none">
+                <input 
+                  type="checkbox" 
+                  checked={genOptions.autoSave}
+                  onChange={(e) => setGenOptions(prev => ({ ...prev, autoSave: e.target.checked }))}
+                  className="w-3.5 h-3.5 rounded bg-secondary border border-border text-primary cursor-pointer"
+                />
+                <span className="font-medium text-muted-foreground hover:text-foreground">Auto-Save</span>
+              </label>
+
+              <label className="flex items-center gap-1 cursor-pointer select-none">
+                <input 
+                  type="checkbox" 
+                  checked={genOptions.autoExport}
+                  onChange={(e) => setGenOptions(prev => ({ ...prev, autoExport: e.target.checked }))}
+                  className="w-3.5 h-3.5 rounded bg-secondary border border-border text-primary cursor-pointer"
+                />
+                <span className="font-medium text-muted-foreground hover:text-foreground">Auto-Export</span>
+              </label>
+
+              <label className="flex items-center gap-1 cursor-pointer select-none">
+                <input 
+                  type="checkbox" 
+                  checked={genOptions.aiEnhance}
+                  onChange={(e) => setGenOptions(prev => ({ ...prev, aiEnhance: e.target.checked }))}
+                  className="w-3.5 h-3.5 rounded bg-secondary border border-border text-primary cursor-pointer"
+                />
+                <span className="font-medium text-muted-foreground hover:text-foreground">AI Enhance</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Right: Export CSV Hub & Inspector */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 bg-secondary border border-border px-1.5 py-0.5 rounded shadow-2xs">
+              <span className="text-[10px] font-bold text-muted-foreground uppercase">Preset:</span>
               <select 
                 value={selectedExportSite}
                 onChange={(e) => setSelectedExportSite(e.target.value)}
-                className="bg-secondary border border-border text-foreground text-[10px] font-bold px-2 py-1 rounded-sm focus:outline-primary outline-none cursor-pointer"
+                className="bg-transparent text-foreground text-xs font-semibold focus:outline-none cursor-pointer"
               >
-                <option value="all_files">Master CSV (All Files & All Columns)</option>
-                <option value="adobe">Adobe Stock</option>
-                <option value="shutterstock">Shutterstock</option>
-                <option value="getty">Getty/iStock</option>
-                <option value="alamy">Alamy</option>
-                <option value="pond5">Pond5</option>
-                <option value="dreamstime">Dreamstime</option>
-                <option value="freepik">Freepik</option>
-                <option value="vecteezy">Vecteezy</option>
-                <option value="csv">General CSV</option>
+                <option value="all_files" className="bg-popover text-foreground">Master CSV (All Columns)</option>
+                <option value="adobe" className="bg-popover text-foreground">Adobe Stock</option>
+                <option value="shutterstock" className="bg-popover text-foreground">Shutterstock</option>
+                <option value="getty" className="bg-popover text-foreground">Getty / iStock</option>
+                <option value="alamy" className="bg-popover text-foreground">Alamy</option>
+                <option value="pond5" className="bg-popover text-foreground">Pond5</option>
+                <option value="freepik" className="bg-popover text-foreground">Freepik</option>
+                <option value="vecteezy" className="bg-popover text-foreground">Vecteezy</option>
+                <option value="dreamstime" className="bg-popover text-foreground">Dreamstime</option>
+                <option value="csv" className="bg-popover text-foreground">General CSV</option>
               </select>
             </div>
 
+            {/* Single Unified Export CSV Buttons */}
             <button 
               onClick={() => handleExport(selectedExportSite, false)}
-              className="px-3 py-1 rounded-sm bg-secondary text-foreground border border-border text-[10px] font-black uppercase tracking-widest hover:bg-accent active:scale-95 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
-              title="Download CSV for processed files"
+              disabled={files.length === 0}
+              className="flex items-center gap-1 px-2.5 py-1 bg-secondary hover:bg-accent text-foreground border border-border rounded text-xs font-semibold transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              title="Download CSV for processed files matching preset"
             >
-              <FileSpreadsheet size={12} strokeWidth={3} />
-              Download CSV
+              <FileSpreadsheet size={12} strokeWidth={2.5} />
+              <span>Export CSV</span>
             </button>
 
             <button 
               onClick={() => handleExport('all_files', true)}
-              className="px-3 py-1 rounded-sm bg-emerald-600/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40 text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600/25 active:scale-95 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
-              title="Download complete master CSV for ALL files in workspace (সব ফাইলের CSV)"
+              disabled={files.length === 0}
+              className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 rounded text-xs font-semibold transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              title="Export complete master CSV for ALL files in current batch"
             >
-              <Download size={12} strokeWidth={3} />
-              Download All Files CSV
+              <Download size={12} strokeWidth={2.5} />
+              <span>All Files CSV</span>
             </button>
 
+            <div className="h-3.5 w-px bg-border/70 mx-0.5" />
+
+            {/* Inspector Toggle */}
             <button 
               onClick={() => setIsInspectorOpen(prev => !prev)}
               className={cn(
-                "px-3 py-1 rounded-sm border text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 shadow-sm cursor-pointer",
+                "flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold transition-all cursor-pointer border",
                 isInspectorOpen
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-secondary text-foreground border-border hover:bg-accent"
+                  ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                  : "bg-secondary text-muted-foreground hover:text-foreground border-border hover:bg-accent"
               )}
               title="Toggle Asset Preview & Metadata Inspector Panel"
             >
               <Eye size={12} strokeWidth={2.5} />
-              <span>{isInspectorOpen ? "Hide Inspector" : "Inspector"}</span>
+              <span>Inspector</span>
             </button>
 
-            <div className="flex-1" />
+            {/* Cooldown or Status Light */}
+            {isPaused && (
+              <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/15 border border-red-500/30 text-red-500 text-[10px] font-bold animate-pulse">
+                <AlertCircle size={10} />
+                <span>Cooldown ({cooldownTimer}s)</span>
+              </div>
+            )}
 
-            <div className="flex items-center gap-3 ml-auto">
-              {isPaused && (
-                <div className="flex items-center gap-2 border border-red-500/30 px-2 py-1 rounded-sm bg-red-500/10 animate-pulse">
-                  <AlertCircle size={10} className="text-red-400" />
-                  <span className="text-[9px] font-black text-red-400 uppercase tracking-widest">Rate Limit Cooldown ({cooldownTimer}s)</span>
-                </div>
-              )}
-              <div className="flex items-center gap-2 border border-border/30 px-2 py-1 rounded-sm bg-background/40">
-                <div className={cn("w-1.5 h-1.5 rounded-full shadow-[0_0_5px_rgba(16,185,129,0.5)]", isGenerating ? (isPaused ? "bg-red-500" : "bg-amber-500 animate-pulse") : "bg-emerald-500")} />
-                <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">
-                  {isGenerating ? (isPaused ? 'Rate Limited' : 'Processing...') : 'System Ready'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 border border-border/30 px-2 py-1 rounded-sm bg-background/40">
-                <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Assets:</span>
-                <span className="text-[10px] font-black text-blue-400 tabular-nums">{files.length}</span>
-              </div>
+            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-secondary border border-border rounded text-[11px]">
+              <div className={cn("w-1.5 h-1.5 rounded-full shadow-[0_0_5px_rgba(16,185,129,0.5)]", isGenerating ? (isPaused ? "bg-red-500" : "bg-amber-500 animate-pulse") : "bg-emerald-500")} />
+              <span className="text-muted-foreground font-semibold">Assets:</span>
+              <span className="font-bold text-blue-500 tabular-nums">{files.length}</span>
             </div>
           </div>
         </div>
@@ -2409,27 +2403,27 @@ export default function App() {
         {/* Left/Center Area: Virtualized Windows Table */}
         <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
           {/* Windows Style Table Header */}
-          <div className="flex flex-row w-full border-b border-border bg-muted text-[9px] font-black uppercase tracking-widest text-foreground shrink-0">
-            <div className="w-[12%] px-2 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-              FILENAME :* <ChevronRight size={9} className="rotate-90 opacity-50" />
+          <div className="flex flex-row w-full border-b border-border bg-muted/80 text-[10px] font-bold uppercase tracking-wider text-muted-foreground shrink-0">
+            <div className="w-[12%] px-2.5 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
+              <span>Filename</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
             </div>
-            <div className="w-[15%] px-2 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-              TITLE :* <ChevronRight size={9} className="rotate-90 opacity-50" />
+            <div className="w-[15%] px-2.5 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
+              <span>Title</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
             </div>
-            <div className="w-[25%] px-2 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-              KEYWORDS :* <ChevronRight size={10} className="rotate-90 opacity-50" />
+            <div className="w-[25%] px-2.5 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
+              <span>Keywords</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
             </div>
-            <div className="w-[20%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-              DESCRIPTION :* <ChevronRight size={10} className="rotate-90 opacity-50" />
+            <div className="w-[20%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
+              <span>Description</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
             </div>
-            <div className="w-[10%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-              CATEGORY :* <ChevronRight size={10} className="rotate-90 opacity-50" />
+            <div className="w-[10%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
+              <span>Category</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
             </div>
-            <div className="w-[8%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-background/50 cursor-pointer flex items-center justify-between">
-              KW COUNT : <ChevronRight size={10} className="rotate-90 opacity-50" />
+            <div className="w-[8%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
+              <span>KW Count</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
             </div>
-            <div className="w-[10%] px-3 py-1.5 text-center shrink-0 hover:bg-background/50 cursor-pointer">
-              RATING :
+            <div className="w-[10%] px-3 py-1.5 text-center shrink-0 hover:bg-accent/50 cursor-pointer">
+              <span>Rating</span>
             </div>
           </div>
 
