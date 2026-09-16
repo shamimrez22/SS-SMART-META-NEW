@@ -50,7 +50,29 @@ async function startServer() {
           rendered = true;
         }
       } catch (gsErr) {
-        // Fallback to ImageMagick convert if gs fails or throws
+        // Fallback to gs with -dFitPage if -dEPSCrop fails
+      }
+
+      // 1b. Try Ghostscript with -dFitPage if EPSCrop failed (e.g. bounding box issues)
+      if (!rendered) {
+        try {
+          await execFileAsync("gs", [
+            "-dSAFER",
+            "-dBATCH",
+            "-dNOPAUSE",
+            "-dFitPage",
+            "-sDEVICE=jpeg",
+            "-dJPEGQ=90",
+            "-r150",
+            `-sOutputFile=${tempJpgPath}`,
+            tempEpsPath
+          ], { timeout: 8000 });
+          if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
+            rendered = true;
+          }
+        } catch (gsPageErr) {
+          // Fallback to ImageMagick convert
+        }
       }
 
       // 2. Fallback to ImageMagick convert

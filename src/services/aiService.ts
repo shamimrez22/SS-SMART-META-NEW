@@ -249,9 +249,190 @@ function generateVectorArtboardThumbnail(filename: string, headerText: string): 
   }
 }
 
-export async function extractEpsThumbnail(file: File): Promise<string | undefined> {
+/**
+ * Fast filter to detect corrupted stride-shift barcode / vertical zebra stripe artifacts
+ * common when decoding unaligned 1-bit / 8-bit TIFF or raw hex rasters
+ */
+function isBarcodeOrCorrupted(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number): boolean {
+  if (!rgba || width < 12 || height < 12) return true;
+  
+  const sampleW = Math.min(width, 60);
+  const sampleH = Math.min(height, 60);
+  const startX = Math.floor((width - sampleW) / 2);
+  const startY = Math.floor((height - sampleH) / 2);
+
+  let horizontalFlips = 0;
+  let verticalFlips = 0;
+  let totalSamples = 0;
+
+  for (let y = startY; y < startY + sampleH - 1; y++) {
+    for (let x = startX; x < startX + sampleW - 1; x++) {
+      const idx = (y * width + x) * 4;
+      const rightIdx = (y * width + (x + 1)) * 4;
+      const downIdx = ((y + 1) * width + x) * 4;
+
+      const lum = (rgba[idx] * 299 + rgba[idx + 1] * 587 + rgba[idx + 2] * 114) / 1000;
+      const lumRight = (rgba[rightIdx] * 299 + rgba[rightIdx + 1] * 587 + rgba[rightIdx + 2] * 114) / 1000;
+      const lumDown = (rgba[downIdx] * 299 + rgba[downIdx + 1] * 587 + rgba[downIdx + 2] * 114) / 1000;
+
+      if (Math.abs(lum - lumRight) > 60) horizontalFlips++;
+      if (Math.abs(lum - lumDown) > 60) verticalFlips++;
+      totalSamples++;
+    }
+  }
+
+  // Extreme vertical barcode / picket-fence artifact:
+  // Heavy horizontal oscillating stripes with almost 0 vertical change
+  if (totalSamples > 0) {
+    const horizRatio = horizontalFlips / totalSamples;
+    const vertRatio = verticalFlips / totalSamples;
+    if (horizRatio > 0.32 && vertRatio < 0.08) {
+      return true;
+    }
+  }
+
+  // Completely blank / single uniform color check
+  let firstR = rgba[0], firstG = rgba[1], firstB = rgba[2];
+  let isUniform = true;
+  for (let i = 0; i < rgba.length; i += 16) {
+    if (Math.abs(rgba[i] - firstR) > 8 || Math.abs(rgba[i + 1] - firstG) > 8 || Math.abs(rgba[i + 2] - firstB) > 8) {
+      isUniform = false;
+      break;
+    }
+  }
+  return isUniform;
+}
+
+/**
+ * Searches for high-res true-color JPEG thumbnails embedded in Adobe Illustrator XMP blocks
+ */
+function findXmpJpegThumbnail(text: string): string | null {
+  // 1. Standard tag format: <xmpGImg:image>... or <xapGImg:image>...
+  let match = text.match(/<(?:xmpGImg|xapGImg):image>([\s\S]*?)<\/(?:xmpGImg|xapGImg):image>/i);
+  if (match) {
+    const b64 = match[1].replace(/\s/g, '');
+    if (b64.length > 80) return b64;
+  }
+
+  // 2. Alt / Thumbnails container: <xmp:Thumbnails>...<image>...
+  match = text.match(/<xmp:Thumbnails>[\s\S]*?<image>([\s\S]*?)<\/image>/i);
+  if (match) {
+    const b64 = match[1].replace(/\s/g, '');
+    if (b64.length > 80) return b64;
+  }
+
+  // 3. Attribute format: xmpGImg:image="..."
+  match = text.match(/(?:xmpGImg|xapGImg):image="([^"]+)"/i);
+  if (match) {
+    const b64 = match[1].replace(/\s/g, '');
+    if (b64.length > 80) return b64;
+  }
+
+  return null;
+}
+
+/**
+ * Searches for embedded raw binary JFIF/JPEG streams in an EPS ArrayBuffer
+ */
+function findEmbeddedBinaryJpeg(buf: ArrayBuffer): string | null {
+  const u8 = new Uint8Array(buf);
+  const len = u8.length;
+  // Scan for JPEG SOI (FF D8 FF)
+  for (let i = 0; i < len - 100; i++) {
+    if (u8[i] === 0xFF && u8[i + 1] === 0xD8 && u8[i + 2] === 0xFF) {
+      // Find JPEG EOI (FF D9)
+      const maxScan = Math.min(len - 1, i + 8 * 1024 * 1024);
+      for (let j = i + 200; j < maxScan; j++) {
+        if (u8[j] === 0xFF && u8[j + 1] === 0xD9) {
+          const jpegBytes = u8.subarray(i, j + 2);
+          if (jpegBytes.length >= 1024) {
+            let binary = '';
+            const chunk = 8192;
+            for (let c = 0; c < jpegBytes.length; c += chunk) {
+              const sub = jpegBytes.subarray(c, Math.min(c + chunk, jpegBytes.length));
+              binary += String.fromCharCode.apply(null, sub as unknown as number[]);
+            }
+            return `data:image/jpeg;base64,${btoa(binary)}`;
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+export async function extractEpsThumbnail(file: File, forAi: boolean = false): Promise<string | undefined> {
   try {
-    // 1. Check for DOS EPS Header with TIFF Preview (Dominant format for Adobe Illustrator & Stock vectors)
+    // 1. High-Resolution True-Color XMP JPEG Thumbnail (Best Quality, Universal)
+    // Adobe Illustrator, Freepik, Adobe Stock, Shutterstock, and Vecteezy embed a 300-800px full-color JPEG
+    try {
+      const headSlice = await file.slice(0, Math.min(4194304, file.size)).arrayBuffer();
+      const headText = new TextDecoder('latin1').decode(headSlice);
+
+      let base64Img = findXmpJpegThumbnail(headText);
+      if (!base64Img && file.size > 4194304) {
+        try {
+          const tailSlice = await file.slice(Math.max(0, file.size - 2097152)).arrayBuffer();
+          const tailText = new TextDecoder('latin1').decode(tailSlice);
+          base64Img = findXmpJpegThumbnail(tailText);
+        } catch {}
+      }
+
+      if (base64Img && base64Img.length > 80) {
+        return `data:image/jpeg;base64,${base64Img}`;
+      }
+    } catch (xmpErr) {
+      console.warn("XMP thumbnail extraction attempt:", xmpErr);
+    }
+
+    // 2. Embedded Binary JFIF/JPEG Stream in EPS File
+    try {
+      const scanLen = Math.min(6 * 1024 * 1024, file.size);
+      const scanBuf = await file.slice(0, scanLen).arrayBuffer();
+      const jpegDataUrl = findEmbeddedBinaryJpeg(scanBuf);
+      if (jpegDataUrl) {
+        return jpegDataUrl;
+      }
+    } catch (binErr) {
+      console.warn("Binary JPEG scan attempt:", binErr);
+    }
+
+    // 3. Server-Side Ghostscript Vector Rendering (/api/render-eps)
+    // When running in full-stack container, Ghostscript renders PostScript paths at 150 DPI
+    if (typeof window !== 'undefined' && file.size <= 35 * 1024 * 1024) {
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const res = reader.result as string;
+            resolve(res.includes(',') ? res.split(',')[1] : res);
+          };
+          reader.onerror = () => reject(new Error("Failed to read file"));
+          reader.readAsDataURL(file);
+        });
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch('/api/render-eps', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ base64 }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.preview) {
+            return resData.preview;
+          }
+        }
+      } catch (apiErr) {
+        // Handled silently for static hosts like Cloudflare Pages
+      }
+    }
+
+    // 4. Safe DOS EPS Header TIFF Preview (with Barcode/Glitch Detection)
     if (file.size >= 30) {
       try {
         const headerBuf = await file.slice(0, 30).arrayBuffer();
@@ -270,15 +451,20 @@ export async function extractEpsThumbnail(file: File): Promise<string | undefine
               const rgba = UTIF.toRGBA8(ifds[0]);
               const width = ifds[0].width;
               const height = ifds[0].height;
-              if (width > 0 && height > 0) {
-                const canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                  const imgData = new ImageData(new Uint8ClampedArray(rgba), width, height);
-                  ctx.putImageData(imgData, 0, 0);
-                  return canvas.toDataURL('image/jpeg', 0.88);
+              if (width > 0 && height > 0 && rgba) {
+                // Verify this preview is NOT a corrupted vertical zebra-stripe/barcode artifact
+                if (!isBarcodeOrCorrupted(rgba, width, height)) {
+                  const canvas = document.createElement('canvas');
+                  canvas.width = width;
+                  canvas.height = height;
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                    const imgData = new ImageData(new Uint8ClampedArray(rgba), width, height);
+                    ctx.putImageData(imgData, 0, 0);
+                    return canvas.toDataURL('image/jpeg', 0.88);
+                  }
+                } else {
+                  console.warn("TIFF preview rejected: detected stride/barcode glitch pattern");
                 }
               }
             }
@@ -289,35 +475,17 @@ export async function extractEpsThumbnail(file: File): Promise<string | undefine
       }
     }
 
-    // 2. Look for xmpGImg:image base64 thumbnail in XMP (Check both start and end of file)
-    const headSlice = await file.slice(0, Math.min(1048576, file.size)).arrayBuffer();
-    const headText = new TextDecoder('latin1').decode(headSlice);
-
-    let thumbMatch = headText.match(/<xmpGImg:image>([\s\S]*?)<\/xmpGImg:image>/i);
-    if (!thumbMatch && file.size > 1048576) {
-      try {
-        const tailSlice = await file.slice(Math.max(0, file.size - 524288)).arrayBuffer();
-        const tailText = new TextDecoder('latin1').decode(tailSlice);
-        thumbMatch = tailText.match(/<xmpGImg:image>([\s\S]*?)<\/xmpGImg:image>/i);
-      } catch {}
-    }
-
-    if (thumbMatch) {
-      const base64 = thumbMatch[1].replace(/\s/g, '');
-      if (base64.length > 50) {
-        return `data:image/jpeg;base64,${base64}`;
-      }
-    }
-
-    // 3. Look for PostScript %%BeginPreview: hex raster
-    const previewMatch = headText.match(/%%BeginPreview:\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)([\s\S]*?)%%EndPreview/i);
-    if (previewMatch) {
-      try {
+    // 5. PostScript %%BeginPreview: hex raster (with Glitch Detection)
+    try {
+      const headSlice = await file.slice(0, Math.min(524288, file.size)).arrayBuffer();
+      const headText = new TextDecoder('latin1').decode(headSlice);
+      const previewMatch = headText.match(/%%BeginPreview:\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)([\s\S]*?)%%EndPreview/i);
+      if (previewMatch) {
         const width = parseInt(previewMatch[1], 10);
         const height = parseInt(previewMatch[2], 10);
         const depth = parseInt(previewMatch[3], 10);
         const hexData = previewMatch[5].replace(/^[ \t]*%[ \t]*/gm, '').replace(/[^0-9a-fA-F]/g, '');
-        if (width > 0 && height > 0 && hexData.length > 0) {
+        if (width > 10 && height > 10 && hexData.length > 0) {
           const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
@@ -350,45 +518,27 @@ export async function extractEpsThumbnail(file: File): Promise<string | undefine
                 data[i * 4 + 3] = 255;
               }
             }
-            ctx.putImageData(imgData, 0, 0);
-            return canvas.toDataURL('image/jpeg', 0.88);
+            if (!isBarcodeOrCorrupted(data, width, height)) {
+              ctx.putImageData(imgData, 0, 0);
+              return canvas.toDataURL('image/jpeg', 0.88);
+            }
           }
         }
-      } catch (hexErr) {
-        console.warn("Hex preview extraction fallback:", hexErr);
       }
+    } catch (hexErr) {
+      console.warn("Hex preview extraction fallback:", hexErr);
     }
 
-    // 4. Server-Side Vector Rendering via Ghostscript / ImageMagick (/api/render-eps)
-    if (typeof window !== 'undefined' && file.size <= 30 * 1024 * 1024) {
-      try {
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const res = reader.result as string;
-            resolve(res.includes(',') ? res.split(',')[1] : res);
-          };
-          reader.onerror = () => reject(new Error("Failed to read file"));
-          reader.readAsDataURL(file);
-        });
-
-        const res = await fetch('/api/render-eps', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ base64 })
-        });
-        if (res.ok) {
-          const resData = await res.json();
-          if (resData.preview) {
-            return resData.preview;
-          }
-        }
-      } catch (apiErr) {
-        console.warn("Server EPS rendering fallback:", apiErr);
-      }
+    // 6. Vector Artboard Fallback
+    // CRITICAL: When generating for AI vision model, return undefined!
+    // Never send synthetic blueprint curves to the AI, or it will hallucinate grid/blueprint metadata!
+    if (forAi) {
+      return undefined;
     }
 
-    // 5. Canvas Artboard Fallback (Guaranteed to render a preview for any EPS)
+    // For UI display, render clean vector artboard card
+    const headSlice = await file.slice(0, Math.min(65536, file.size)).arrayBuffer();
+    const headText = new TextDecoder('latin1').decode(headSlice);
     return generateVectorArtboardThumbnail(file.name, headText);
   } catch (e) {
     console.error("EPS preview error:", e);
@@ -493,32 +643,95 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
 
 async function extractEpsMetadata(file: File): Promise<string> {
   try {
-    // Read a larger chunk to find more metadata (64KB)
-    const buffer = await file.slice(0, 65536).arrayBuffer();
-    const text = new TextDecoder().decode(buffer);
-    
-    const titleMatch = text.match(/%%Title:\s*(.*)/i);
-    const creatorMatch = text.match(/%%Creator:\s*(.*)/i);
-    const keywordsMatch = text.match(/%%Keywords:\s*(.*)/i);
-    const subjectMatch = text.match(/%%Subject:\s*(.*)/i);
-    
-    let info = "";
-    if (titleMatch) info += `Title Hint: ${titleMatch[1].trim()}\n`;
-    if (creatorMatch) info += `Creator Hint: ${creatorMatch[1].trim()}\n`;
-    if (subjectMatch) info += `Subject Hint: ${subjectMatch[1].trim()}\n`;
-    if (keywordsMatch) info += `Keywords Hint: ${keywordsMatch[1].trim()}\n`;
+    // Read up to 2MB to capture headers, XMP block, AI layers, typography, and color tables
+    const maxRead = Math.min(2 * 1024 * 1024, file.size);
+    const buffer = await file.slice(0, maxRead).arrayBuffer();
+    const text = new TextDecoder('latin1').decode(buffer);
 
-    // Look for XML metadata (XMP) which is often embedded in modern EPS
-    const xmpMatch = text.match(/<x:xmpmeta[^>]*>([\s\S]*?)<\/x:xmpmeta>/i);
-    if (xmpMatch) {
-      const xmp = xmpMatch[1];
-      const dcTitle = xmp.match(/<dc:title>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)<\/rdf:li>/i);
-      const dcDesc = xmp.match(/<dc:description>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)<\/rdf:li>/i);
-      if (dcTitle) info += `XMP Title: ${dcTitle[1].trim()}\n`;
-      if (dcDesc) info += `XMP Description: ${dcDesc[1].trim()}\n`;
+    const titleMatch = text.match(/%%Title:\s*([^\r\n]+)/i);
+    const creatorMatch = text.match(/%%Creator:\s*([^\r\n]+)/i);
+    const colorsMatch = text.match(/%%DocumentCustomColors:\s*([^\r\n]+)/i);
+    const processColors = text.match(/%%DocumentProcessColors:\s*([^\r\n]+)/i);
+    const bboxMatch = text.match(/%%(?:HiRes)?BoundingBox:\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)/i);
+
+    // 1. Layer Names (Illustrator %AI5_LayerName: tells exact visual elements)
+    const layerNames: string[] = [];
+    const layerRegex = /%AI5_LayerName:\s*([^\r\n]+)/gi;
+    let lm: RegExpExecArray | null;
+    while ((lm = layerRegex.exec(text)) !== null) {
+      const l = lm[1].replace(/\\/g, '').trim();
+      if (l && !layerNames.includes(l) && !l.toLowerCase().startsWith('layer ') && l !== 'Layer') {
+        layerNames.push(l);
+      }
     }
-    
-    return info;
+
+    // 2. XMP Dublin Core Title & Description
+    const dcTitle = text.match(/<dc:title>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)<\/rdf:li>/i);
+    const dcDesc = text.match(/<dc:description>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)<\/rdf:li>/i);
+    const headline = text.match(/<photoshop:Headline>([\s\S]*?)<\/photoshop:Headline>/i);
+
+    // 3. XMP Keywords / Subjects
+    const xmpKeywords: string[] = [];
+    const subjectBlock = text.match(/<dc:subject>[\s\S]*?<\/dc:subject>/i);
+    if (subjectBlock) {
+      const liRegex = /<rdf:li[^>]*>([\s\S]*?)<\/rdf:li>/gi;
+      let km: RegExpExecArray | null;
+      while ((km = liRegex.exec(subjectBlock[0])) !== null) {
+        const k = km[1].trim();
+        if (k && !xmpKeywords.includes(k)) xmpKeywords.push(k);
+      }
+    }
+
+    // 4. PostScript Typography / Embedded Text Strings
+    const textStrings: string[] = [];
+    const showRegex = /\(([^)\\r\\n]{3,60})\)\s*(?:show|ashow|widthshow|kshow)/gi;
+    let tm: RegExpExecArray | null;
+    while ((tm = showRegex.exec(text)) !== null) {
+      const t = tm[1].trim();
+      if (t && !textStrings.includes(t) && !/^[\d\s.,:/%_-]+$/.test(t) && !t.startsWith('%')) {
+        textStrings.push(t);
+        if (textStrings.length >= 8) break;
+      }
+    }
+
+    // Format into rich, high-density context lines for the AI
+    const lines: string[] = [];
+    if (dcTitle?.[1]?.trim()) {
+      lines.push(`Embedded Artwork Title: "${dcTitle[1].trim()}"`);
+    } else if (titleMatch?.[1]?.trim() && !titleMatch[1].trim().toLowerCase().startsWith('untitled')) {
+      lines.push(`Vector Title: "${titleMatch[1].trim()}"`);
+    }
+
+    if (headline?.[1]?.trim()) {
+      lines.push(`Artwork Headline: "${headline[1].trim()}"`);
+    }
+    if (dcDesc?.[1]?.trim()) {
+      lines.push(`Embedded Artwork Description: "${dcDesc[1].trim()}"`);
+    }
+    if (xmpKeywords.length > 0) {
+      lines.push(`Embedded Vector Keywords: ${xmpKeywords.slice(0, 30).join(', ')}`);
+    }
+    if (layerNames.length > 0) {
+      lines.push(`Vector Layers Detected (${layerNames.length}): ${layerNames.slice(0, 15).join(' | ')}`);
+    }
+    if (textStrings.length > 0) {
+      lines.push(`Typography / Text within Vector: "${textStrings.join('", "')}"`);
+    }
+    if (colorsMatch?.[1]?.trim()) {
+      lines.push(`Color Palette / Custom Colors: ${colorsMatch[1].trim()}`);
+    } else if (processColors?.[1]?.trim()) {
+      lines.push(`Process Colors: ${processColors[1].trim()}`);
+    }
+    if (bboxMatch) {
+      const w = Math.round(Math.abs(parseFloat(bboxMatch[3]) - parseFloat(bboxMatch[1])));
+      const h = Math.round(Math.abs(parseFloat(bboxMatch[4]) - parseFloat(bboxMatch[2])));
+      lines.push(`Vector Artboard Bounds: ${w}x${h} px (${w === h ? 'Square 1:1' : w > h ? 'Landscape' : 'Portrait'})`);
+    }
+    if (creatorMatch?.[1]?.trim()) {
+      lines.push(`Vector Creator Software: ${creatorMatch[1].trim()}`);
+    }
+
+    return lines.join('\n');
   } catch (e) {
     return "";
   }
