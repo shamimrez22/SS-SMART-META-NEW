@@ -1325,7 +1325,7 @@ export async function prepareEmbeddedBlob(
       const updated = embedMetadataInSvg(text, metadata);
       return new Blob([updated], { type: 'image/svg+xml' });
     }
-    if (['mp4', 'mov', 'm4v'].includes(ext)) {
+    if (['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', 'wmv'].includes(ext)) {
       return await embedMetadataInMp4Blob(file, metadata);
     }
     // Other binary formats

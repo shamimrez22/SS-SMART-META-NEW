@@ -514,7 +514,6 @@ export default function App() {
   const [folderName, setFolderName] = useState<string>('');
   const [apiStatus, setApiStatus] = useState<ApiStatus>({});
   const [isEmbedModalOpen, setIsEmbedModalOpen] = useState(false);
-  const [isIframeNoticeOpen, setIsIframeNoticeOpen] = useState(false);
 
   const ensureDirectoryHandle = async (): Promise<any> => {
     if (directoryHandle) {
@@ -534,14 +533,8 @@ export default function App() {
         console.warn("Existing directoryHandle permission check:", e);
       }
     }
-    const isInIframe = window.self !== window.top;
-    if (isInIframe) {
-      setIsIframeNoticeOpen(true);
-      return null;
-    }
     if ('showDirectoryPicker' in window) {
       try {
-        showNotification("আপনার কম্পিউটারের ফোল্ডারটি সিলেক্ট করুন যাতে কোনো ডাউনলোড ছাড়াই সরাসরি সেই ফোল্ডারের ফাইলগুলো রিনেম ও সেভ হয়!", 'info');
         // @ts-ignore
         const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
         if (handle) {
@@ -556,15 +549,12 @@ export default function App() {
         }
         return null;
       } catch (err: any) {
-        if (err.name === 'SecurityError' || err.message?.includes('Cross origin') || err.message?.includes('sub frame')) {
-          setIsIframeNoticeOpen(true);
-        } else if (err.name !== 'AbortError') {
+        if (err.name !== 'AbortError' && err.name !== 'SecurityError') {
           showNotification("ফোল্ডার অ্যাক্সেস পারমিশন দেওয়া হয়নি। আবার চেষ্টা করুন।", 'error');
         }
         return null;
       }
     } else {
-      showNotification("সরাসরি ফোল্ডারে ফাইল রিনেম করার জন্য Google Chrome বা Microsoft Edge ব্রাউজার ব্যবহার করুন।", 'error');
       return null;
     }
   };
@@ -671,12 +661,6 @@ export default function App() {
   };
 
   const handleDirectorySelect = async () => {
-    const isInIframe = window.self !== window.top;
-    if (isInIframe) {
-      setIsIframeNoticeOpen(true);
-      document.getElementById('folder-upload')?.click();
-      return;
-    }
     if (!('showDirectoryPicker' in window)) {
       document.getElementById('folder-upload')?.click();
       showNotification("সরাসরি ডিস্কে ফাইল রিনেম করার জন্য Google Chrome বা Microsoft Edge ব্যবহার করুন।", 'info');
@@ -695,10 +679,15 @@ export default function App() {
         if (entry.kind === 'file') {
           const file = await entry.getFile();
           const ext = file.name.split('.').pop()?.toLowerCase() || '';
-          if (['png', 'eps', 'mp4', 'mov', 'jpg', 'jpeg', 'ai', 'svg', 'webp', 'avi'].includes(ext)) {
+          const allowedMedia = [
+            'png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif',
+            'eps', 'ai', 'svg',
+            'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'
+          ];
+          if (allowedMedia.includes(ext)) {
             const id = Math.random().toString(36).substr(2, 9);
             newFileObjects[id] = file;
-            const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif'];
+            const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif', 'tif', 'tiff', 'heic'];
             const isImage = imageExtensions.includes(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
             newItems.push({
               id,
@@ -740,7 +729,7 @@ export default function App() {
               setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
             }
           });
-        } else if (['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext)) {
+        } else if (['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext)) {
           extractVideoThumbnail(file).then(thumb => {
             if (thumb) {
               setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
@@ -753,7 +742,6 @@ export default function App() {
     } catch (err: any) {
       if (err.name === 'SecurityError' || err.message?.includes('sub frames') || err.message?.includes('Cross origin')) {
         document.getElementById('folder-upload')?.click();
-        showNotification("Notice: Inside preview frame, folder loaded! Click 'Open in New Tab' ↗ above for direct disk overwriting.", 'info');
       } else if (err.name !== 'AbortError') {
         console.error("Directory access denied or failed:", err);
         showNotification(`Folder error: ${err.message}`, 'error');
@@ -764,8 +752,7 @@ export default function App() {
   };
 
   const handleFileSelectDirect = async () => {
-    const isInIframe = window.self !== window.top;
-    if (isInIframe || !('showOpenFilePicker' in window)) {
+    if (!('showOpenFilePicker' in window)) {
       document.getElementById('file-upload')?.click();
       return;
     }
@@ -775,10 +762,10 @@ export default function App() {
         multiple: true,
         types: [
           {
-            description: 'Stock Assets (Images, Vectors & Videos)',
+            description: 'All Media & Stock Assets (Images, Vectors & Videos)',
             accept: {
-              'image/*': ['.jpg', '.jpeg', '.png', '.webp'],
-              'video/*': ['.mp4', '.mov', '.avi'],
+              'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff', '.bmp', '.gif', '.heic', '.svg'],
+              'video/*': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.wmv'],
               'application/postscript': ['.eps', '.ai'],
               'image/svg+xml': ['.svg']
             }
@@ -796,7 +783,7 @@ export default function App() {
         const id = Math.random().toString(36).substr(2, 9);
         
         newFileObjects[id] = file;
-        const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif'];
+        const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif', 'tif', 'tiff', 'heic'];
         const isImage = imageExtensions.includes(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
         newItems.push({
           id,
@@ -830,7 +817,7 @@ export default function App() {
               setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
             }
           });
-        } else if (['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext)) {
+        } else if (['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext)) {
           extractVideoThumbnail(file).then(thumb => {
             if (thumb) {
               setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
@@ -950,8 +937,19 @@ export default function App() {
       const updatedFile = new File([outputBlob], targetFilename, { type: actualFile.type || 'image/jpeg' });
       setFileObjects(prev => ({ ...prev, [id]: updatedFile }));
 
+      // 1. Direct Folder In-Place Save & Rename
       if (activeDir && typeof activeDir.getFileHandle === 'function') {
-        // 1. Direct Folder In-Place Save & Rename
+        try {
+          if (typeof activeDir.queryPermission === 'function') {
+            let perm = await activeDir.queryPermission({ mode: 'readwrite' });
+            if (perm !== 'granted' && typeof activeDir.requestPermission === 'function') {
+              perm = await activeDir.requestPermission({ mode: 'readwrite' });
+            }
+          }
+        } catch (permErr) {
+          console.warn("Folder permission check:", permErr);
+        }
+
         let newFileHandle: any = null;
         try {
           newFileHandle = await activeDir.getFileHandle(targetFilename, { create: true });
@@ -986,29 +984,75 @@ export default function App() {
                 await activeDir.removeEntry(`${originalFilename}.xmp`);
               } catch (delXmpErr) {}
             }
+
+            setFiles(prev => prev.map(f => f.id === id ? { 
+              ...f, 
+              status: 'saved', 
+              handle: newFileHandle, 
+              filename: targetFilename,
+              originalFilename: targetFilename,
+              errorMessage: undefined
+            } : f));
+
+            return true;
           } catch (writeErr) {
-            console.warn("Write to file handle warning:", writeErr);
+            console.warn("Write to file handle failed, falling back:", writeErr);
+          }
+        }
+      } 
+      
+      // 2. Direct Single File Handle Save with ReadWrite Permission Check & Move
+      if (fileMetadata.handle && typeof fileMetadata.handle.createWritable === 'function') {
+        let handleWriteOk = false;
+        try {
+          if (typeof fileMetadata.handle.queryPermission === 'function') {
+            let perm = await fileMetadata.handle.queryPermission({ mode: 'readwrite' });
+            if (perm !== 'granted' && typeof fileMetadata.handle.requestPermission === 'function') {
+              perm = await fileMetadata.handle.requestPermission({ mode: 'readwrite' });
+            }
           }
 
+          // If renamed, try to move/rename file handle on disk
+          if (targetFilename && targetFilename !== originalFilename && typeof (fileMetadata.handle as any).move === 'function') {
+            try {
+              await (fileMetadata.handle as any).move(targetFilename);
+            } catch (mErr) {
+              console.warn("Handle move failed, writing to current handle:", mErr);
+            }
+          }
+
+          const writable = await fileMetadata.handle.createWritable({ keepExistingData: false });
+          await writable.write(outputBlob);
+          await writable.close();
+          handleWriteOk = true;
+        } catch (hErr) {
+          console.warn("Direct handle save rejected or unsupported, using download fallback:", hErr);
+          handleWriteOk = false;
+        }
+
+        if (handleWriteOk) {
           setFiles(prev => prev.map(f => f.id === id ? { 
             ...f, 
             status: 'saved', 
-            handle: newFileHandle, 
             filename: targetFilename,
             originalFilename: targetFilename,
             errorMessage: undefined
           } : f));
-
           return true;
         }
-      } else if (fileMetadata.handle && typeof fileMetadata.handle.createWritable === 'function') {
-        try {
-          const writable = await fileMetadata.handle.createWritable({ keepExistingData: false });
-          await writable.write(outputBlob);
-          await writable.close();
-        } catch (hErr) {
-          console.warn("Direct handle save warning:", hErr);
-        }
+      }
+
+      // 3. Fallback for single files without writable handle OR when handle write is blocked:
+      // Instantly download the renamed file with 5-star rating, IPTC, EXIF, and XMP embedded inside!
+      try {
+        const blobUrl = URL.createObjectURL(outputBlob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = targetFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
 
         setFiles(prev => prev.map(f => f.id === id ? { 
           ...f, 
@@ -1018,17 +1062,11 @@ export default function App() {
           errorMessage: undefined
         } : f));
         return true;
+      } catch (downErr) {
+        console.error("Direct download fallback failed:", downErr);
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved' } : f));
+        return false;
       }
-
-      // No physical activeDir or handle; preserve file as saved in memory
-      setFiles(prev => prev.map(f => f.id === id ? { 
-        ...f, 
-        status: 'saved', 
-        filename: targetFilename,
-        originalFilename: targetFilename,
-        errorMessage: undefined
-      } : f));
-      return true;
     } catch (err: any) {
       console.warn("saveMetadataToLocalFile safe catch:", err);
       setFiles(prev => prev.map(f => f.id === id ? { 
@@ -1041,48 +1079,7 @@ export default function App() {
   };
 
   const handleEmbedAll = async () => {
-    let activeDir = directoryHandle;
-    if (!activeDir && window.self === window.top) {
-      activeDir = await ensureDirectoryHandle();
-    }
-
-    const completedFiles = files.filter(f => f.status === 'completed' || f.status === 'saved' || f.title || f.keywords);
-    if (completedFiles.length === 0) {
-      showNotification("সেভ করার মতো কোনো ফাইল পাওয়া যায়নি। অনুগ্রহ করে প্রথমে মেটাডাটা তৈরি করুন।", 'info');
-      return;
-    }
-
-    if (activeDir) {
-      if (typeof activeDir.queryPermission === 'function') {
-        try {
-          let perm = await activeDir.queryPermission({ mode: 'readwrite' });
-          if (perm !== 'granted' && typeof activeDir.requestPermission === 'function') {
-            perm = await activeDir.requestPermission({ mode: 'readwrite' });
-          }
-        } catch (e) {}
-      }
-
-      setIsGenerating(true);
-      let successCount = 0;
-
-      for (const file of completedFiles) {
-        try {
-          const ok = await saveMetadataToLocalFile(file.id, file, activeDir);
-          if (ok) successCount++;
-        } catch (err) {
-          console.warn(`Failed to save ${file.filename}:`, err);
-        }
-      }
-
-      setIsGenerating(false);
-      showNotification(`✓ সম্পূর্ণ সফল! "${activeDir.name}" ফোল্ডারের ${successCount}টি ফাইল সরাসরি রিনেম হয়েছে এবং ভেতরে ৫-স্টার ও মেটাডাটা সেভ হয়েছে (কোনো ডাউনলোড ছাড়াই)!`, 'success');
-    } else {
-      if (window.self !== window.top) {
-        setIsIframeNoticeOpen(true);
-      } else {
-        showNotification("সরাসরি ফোল্ডারে রিনেম ও মেটাডাটা সেভ করতে অনুগ্রহ করে আপনার ফোল্ডারটি সিলেক্ট করুন।", 'info');
-      }
-    }
+    await handleEmbed('all');
   };
 
   const downloadPhotoshopScript = () => {
@@ -1678,60 +1675,94 @@ export default function App() {
 
   const handleEmbed = async (type: 'image' | 'video' | 'eps' | 'all') => {
     let activeDir = directoryHandle;
-    if (!activeDir && window.self === window.top) {
-      activeDir = await ensureDirectoryHandle();
-    }
 
     const candidateFiles = files.filter(f => {
       const ext = f.fileType.toLowerCase();
-      if (type === 'image') return ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
-      if (type === 'video') return ['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext);
+      if (type === 'image') return ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif'].includes(ext);
+      if (type === 'video') return ['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext);
       if (type === 'eps') return ['eps', 'ai', 'svg'].includes(ext);
       return true;
     }).filter(f => f.status === 'completed' || f.status === 'saved' || f.title || f.keywords);
 
     if (candidateFiles.length === 0) {
-      showNotification(`সেভ করার মতো কোনো ফাইল পাওয়া যায়নি। অনুগ্রহ করে প্রথমে মেটাডাটা তৈরি করুন।`, 'info');
+      showNotification(`সেভ করার মতো কোনো ফাইল পাওয়া যায়নি। অনুগ্রহ করে প্রথমে মেটাডাটা Generate করুন।`, 'info');
       return;
     }
 
-    if (!activeDir) {
-      if (window.self !== window.top) {
-        setIsIframeNoticeOpen(true);
-        return;
-      }
-      showNotification("জিপ ফাইল তৈরি করে ডাউনলোড করা হচ্ছে...", 'info');
-      await handleDownloadZip();
-      return;
-    }
-
-    // Verify / request write permission
-    if (typeof activeDir.queryPermission === 'function') {
-      try {
-        let perm = await activeDir.queryPermission({ mode: 'readwrite' });
-        if (perm !== 'granted' && typeof activeDir.requestPermission === 'function') {
-          perm = await activeDir.requestPermission({ mode: 'readwrite' });
-        }
-      } catch (permErr) {
-        console.warn("Permission check skipped:", permErr);
-      }
-    }
-
-    showNotification(`"${activeDir.name || 'ফোল্ডারে'}" সরাসরি ${candidateFiles.length}টি ফাইল রিনেম ও ৫-স্টার মেটাডাটা সেভ করা হচ্ছে...`, 'info');
     setIsGenerating(true);
+    const targetLabel = activeDir?.name ? `"${activeDir.name}" ফোল্ডারে` : (candidateFiles.length === 1 ? 'সরাসরি ফাইলে' : 'ফাইলগুলোতে');
+    showNotification(`${targetLabel} ৫-স্টার মেটাডাটা সেভ করা হচ্ছে...`, 'info');
 
-    let successCount = 0;
-    for (const file of candidateFiles) {
-      try {
-        const ok = await saveMetadataToLocalFile(file.id, file, activeDir);
-        if (ok) successCount++;
-      } catch (err) {
-        console.warn(`Save warning for ${file.filename}:`, err);
+    let directSavedCount = 0;
+
+    if (activeDir) {
+      // 1. In-place Folder Save
+      for (const file of candidateFiles) {
+        try {
+          const saved = await saveMetadataToLocalFile(file.id, file, activeDir);
+          if (saved) directSavedCount++;
+        } catch (err) {
+          console.warn(`Folder embed error for ${file.filename}:`, err);
+        }
+      }
+    } else {
+      // 2. Single or Multiple files without an active folder
+      const allHaveHandles = candidateFiles.every(f => f.handle && typeof f.handle.createWritable === 'function');
+      
+      if (candidateFiles.length === 1) {
+        // Single file: save to handle or download directly
+        try {
+          const saved = await saveMetadataToLocalFile(candidateFiles[0].id, candidateFiles[0], undefined);
+          if (saved) directSavedCount++;
+        } catch (err) {
+          await downloadWithMetadata(candidateFiles[0].id);
+          directSavedCount++;
+        }
+      } else if (allHaveHandles) {
+        // All files have FileSystemFileHandles
+        for (const file of candidateFiles) {
+          try {
+            const saved = await saveMetadataToLocalFile(file.id, file, undefined);
+            if (saved) directSavedCount++;
+          } catch (err) {
+            console.warn(`Handle embed error for ${file.filename}:`, err);
+          }
+        }
+      } else {
+        // Multiple files loaded via standard file input / drag-and-drop
+        // Prompt directory picker if supported so all files can be saved in-place directly to a folder
+        let picked = false;
+        if ('showDirectoryPicker' in window) {
+          try {
+            showNotification("ফাইলগুলো সরাসরি সেভ করার জন্য একটি ফোল্ডার নির্বাচন করুন...", 'info');
+            // @ts-ignore
+            const pickedDir = await window.showDirectoryPicker({ mode: 'readwrite' });
+            if (pickedDir) {
+              setDirectoryHandle(pickedDir);
+              setFolderName(pickedDir.name);
+              picked = true;
+              for (const file of candidateFiles) {
+                const saved = await saveMetadataToLocalFile(file.id, file, pickedDir);
+                if (saved) directSavedCount++;
+              }
+            }
+          } catch (pickErr) {
+            console.warn("Directory picker cancelled, packaging into ZIP bundle:", pickErr);
+            picked = false;
+          }
+        }
+
+        if (!picked) {
+          // Cleanly package all files into ZIP with embedded 5-star metadata and scripts
+          showNotification("সমস্ত ফাইল ৫-স্টার মেটাডাটা সহ ZIP বান্ডেল তৈরি হচ্ছে...", 'info');
+          await handleDownloadZip();
+          directSavedCount = candidateFiles.length;
+        }
       }
     }
 
     setIsGenerating(false);
-    showNotification(`✓ সম্পূর্ণ সফল! "${activeDir.name || 'আপনার ফোল্ডারে'}" ${successCount}টি ফাইল সরাসরি রিনেম হয়েছে এবং ভেতরে ৫-স্টার ও মেটাডাটা সেভ হয়েছে!`, 'success');
+    showNotification(`✓ সম্পূর্ণ সফল! ${directSavedCount}টি ফাইলে ৫-স্টার মেটাডাটা ও রিনেম সংরক্ষিত হয়েছে!`, 'success');
   };
 
   const filteredFiles = useMemo(() => {
@@ -1790,37 +1821,48 @@ export default function App() {
     if (!fileMetadata || !actualFile) return;
 
     let activeDir = directoryHandle;
-    if (!activeDir) {
-      activeDir = await ensureDirectoryHandle();
-    }
 
     if (activeDir) {
       try {
-        await saveMetadataToLocalFile(id, fileMetadata, activeDir);
-        showNotification(`✓ ফোল্ডারে সরাসরি রিনেম এবং ভেতরে মেটাডাটা ও ৫-স্টার সেভ হয়েছে: "${fileMetadata.filename}"!`, 'success');
-        return;
+        const ok = await saveMetadataToLocalFile(id, fileMetadata, activeDir);
+        if (ok) {
+          showNotification(`✓ ফোল্ডারে সরাসরি রিনেম এবং ভেতরে মেটাডাটা ও ৫-স্টার সেভ হয়েছে: "${fileMetadata.filename}"!`, 'success');
+          return;
+        }
       } catch (err: any) {
-        showNotification(`ফোল্ডারে সেভ ব্যর্থ হয়েছে: ${err.message}`, 'error');
-        return;
+        console.warn("Folder save failed, falling back:", err);
       }
     }
 
-    // Direct single file handle save
-    if (fileMetadata.handle && 'createWritable' in fileMetadata.handle) {
+    // Direct single file handle save with explicit readwrite permissions
+    if (fileMetadata.handle && typeof fileMetadata.handle.createWritable === 'function') {
       try {
+        if (typeof fileMetadata.handle.queryPermission === 'function') {
+          let perm = await fileMetadata.handle.queryPermission({ mode: 'readwrite' });
+          if (perm !== 'granted' && typeof fileMetadata.handle.requestPermission === 'function') {
+            perm = await fileMetadata.handle.requestPermission({ mode: 'readwrite' });
+          }
+        }
+        if (fileMetadata.filename && fileMetadata.filename !== fileMetadata.originalFilename && typeof (fileMetadata.handle as any).move === 'function') {
+          try {
+            await (fileMetadata.handle as any).move(fileMetadata.filename);
+          } catch (mErr) {
+            console.warn("Handle move failed:", mErr);
+          }
+        }
         const outputBlob = await prepareEmbeddedBlob(actualFile, fileMetadata);
-        const writable = await fileMetadata.handle.createWritable();
+        const writable = await fileMetadata.handle.createWritable({ keepExistingData: false });
         await writable.write(outputBlob);
         await writable.close();
         setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved' } : f));
-        showNotification(`✓ সরাসরি ডিস্কে "${fileMetadata.filename}" আপডেট হয়েছে!`, 'success');
+        showNotification(`✓ সরাসরি ফাইলে "${fileMetadata.filename}" মেটাডাটা ও ৫-স্টার সেভ হয়েছে!`, 'success');
         return;
       } catch (err: any) {
-        console.warn("Direct file handle save failed:", err);
+        console.warn("Direct file handle save failed, downloading directly:", err);
       }
     }
 
-    // Fallback: download directly with 5-star & metadata embedded
+    // Fallback: download directly with 5-star & metadata embedded without permission prompts
     try {
       const outputBlob = await prepareEmbeddedBlob(actualFile, fileMetadata);
       const url = URL.createObjectURL(outputBlob);
@@ -1840,7 +1882,11 @@ export default function App() {
 
   const handleFilesAdded = (fileList: FileList | File[]) => {
     const filesArray = Array.from(fileList);
-    const allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'eps', 'mp4', 'mov', 'avi', 'm4v', 'ai', 'svg'];
+    const allowedExtensions = [
+      'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif',
+      'eps', 'ai', 'svg',
+      'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'
+    ];
     
     // Pre-filter files to avoid unnecessary processing
     const validFiles = filesArray.filter(file => {
@@ -1862,7 +1908,7 @@ export default function App() {
       const id = Math.random().toString(36).substr(2, 9);
       newFileObjects[id] = file;
       
-      const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif'];
+      const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif', 'tif', 'tiff', 'heic'];
       const isImage = imageExtensions.includes(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
       
       newItems.push({
@@ -1897,7 +1943,7 @@ export default function App() {
             setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
           }
         });
-      } else if (['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext)) {
+      } else if (['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext)) {
         extractVideoThumbnail(file).then(thumb => {
           if (thumb) {
             setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
@@ -1981,104 +2027,90 @@ export default function App() {
         </div>
       )}
 
-      {/* Direct Disk Save Banner for iframe preview */}
-      {window.self !== window.top && (
-        <div className="bg-gradient-to-r from-emerald-700 via-teal-700 to-blue-700 text-white px-4 py-2 flex items-center justify-between shadow-md z-50 text-xs font-semibold animate-in fade-in border-b border-emerald-400/30">
-          <div className="flex items-center gap-2.5">
-            <span className="text-sm bg-white/20 p-1 rounded-full">⚡</span>
-            <span>
-              <strong className="text-emerald-200">সরাসরি কম্পিউটারের ফোল্ডারে ফাইল রিনেম ও সেভ করতে চান?</strong> প্রিভিউ ফ্রেমের পরিবর্তে নতুন ট্যাবে খুলুন — তাহলে <strong>কোনো ডাউনলোড ছাড়া</strong> আপনার আসল ফোল্ডারেই সব ফাইল রিনেম ও মেটাডাটা সেভ হবে!
-            </span>
-          </div>
-          <button
-            onClick={() => window.open(window.location.href, '_blank')}
-            className="ml-4 px-3 py-1.5 bg-white hover:bg-emerald-50 text-emerald-950 rounded-sm font-black uppercase text-[10px] tracking-wider flex items-center gap-1.5 shadow-md cursor-pointer shrink-0 transition-transform active:scale-95"
-          >
-            <ExternalLink size={13} />
-            <span>নতুন ট্যাবে খুলুন (Open in New Tab)</span>
-          </button>
-        </div>
-      )}
 
       {/* Main Header */}
       <header className="bg-secondary/80 backdrop-blur-md border-b border-border z-40 shadow-md relative text-foreground">
         {/* Row 1: Primary Studio Controls & Main Actions */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 gap-3 flex-wrap">
-          {/* Left: Brand & Directory Connection */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          {/* Left: Brand & File Adding Section (Two distinct options: Add Files & Add Folder) */}
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <div className="flex items-center gap-1.5">
               <div className="w-7 h-7 bg-blue-600 rounded flex items-center justify-center shadow-md shadow-blue-500/25">
                 <Sparkles size={16} className="text-white" />
               </div>
-              <h1 className="text-xs font-black uppercase tracking-wider text-foreground">
+              <h1 className="text-xs font-black uppercase tracking-wider text-foreground select-none">
                 SS <span className="text-blue-500">Smart Meta</span>
               </h1>
             </div>
 
             <div className="h-4 w-px bg-border/80 mx-0.5" />
 
-            {/* Folder Connection Pill (Unified Folder Target) */}
-            {directoryHandle ? (
-              <div 
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 shadow-xs"
-                title={`Connected Folder: ${folderName}`}
+            {/* File Adding Options (Add Files & Add Folder both permanently visible) */}
+            <div className="flex items-center gap-1.5">
+              <button 
+                onClick={handleFileSelectDirect}
+                className="flex items-center gap-1 px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60 rounded text-xs font-bold transition-all shadow-sm cursor-pointer active:scale-95 whitespace-nowrap"
+                title="Add individual files (Images, EPS Vectors, Videos, etc.)"
               >
-                <FolderCheck size={13} className="shrink-0 text-emerald-500" />
-                <span className="truncate max-w-[130px]">{folderName || 'Active Folder'}</span>
-                <button 
-                  onClick={handleDirectorySelect}
-                  className="text-[10px] text-muted-foreground hover:text-foreground underline ml-0.5 cursor-pointer"
-                  title="Change destination folder"
-                >
-                  Change
-                </button>
-              </div>
-            ) : (
+                <Plus size={13} strokeWidth={2.5} />
+                <span>Add Files</span>
+              </button>
+
               <button 
                 onClick={handleDirectorySelect}
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-700 dark:text-amber-300 rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
-                title="Select a local folder on your computer for direct in-place save & rename"
+                className="flex items-center gap-1 px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-300 rounded text-xs font-black transition-all cursor-pointer shadow-sm active:scale-95 whitespace-nowrap"
+                title="Select a folder to import and directly embed metadata in-place"
               >
-                <FolderPlus size={13} className="shrink-0 text-amber-500" />
-                <span>Connect Folder</span>
+                <FolderPlus size={13} strokeWidth={2.5} />
+                <span>Add Folder</span>
               </button>
-            )}
+
+              {directoryHandle && (
+                <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-950/70 border border-emerald-500/70 rounded text-xs font-bold text-emerald-300 shadow-xs">
+                  <FolderCheck size={12} className="text-emerald-400 shrink-0" />
+                  <span className="max-w-[120px] truncate" title={`Active Folder: ${folderName}`}>{folderName || 'Folder'}</span>
+                  <button 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setDirectoryHandle(null); 
+                      setFolderName(''); 
+                      showNotification("ফোল্ডার ডিসকানেক্ট করা হয়েছে", 'info'); 
+                    }}
+                    className="p-0.5 hover:bg-emerald-800/60 rounded text-emerald-400 hover:text-white cursor-pointer ml-0.5"
+                    title="Disconnect folder"
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Center: Action Buttons Group (Clear high-contrast colors, zero black-on-black boxes) */}
+          {/* Center: Action Buttons Group (All labels fully visible, high-contrast distinct badges) */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            {/* Input Action */}
-            <button 
-              onClick={handleFileSelectDirect}
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-              title="Add individual files (Images, EPS Vectors, Videos)"
-            >
-              <Plus size={14} strokeWidth={2.5} />
-              <span>Add Files</span>
-            </button>
-
             {/* Main AI Generation */}
             <button 
               onClick={startGeneration}
               disabled={isGenerating || files.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-35 disabled:pointer-events-none active:scale-95"
+              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/60 rounded text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-45 disabled:pointer-events-none active:scale-95 whitespace-nowrap"
               title="Generate 5-Star SEO metadata with chosen AI provider"
             >
-              {isGenerating ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} className="fill-current" />}
-              <span>{isGenerating ? 'Generating...' : 'Generate'}</span>
+              {isGenerating ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} className="fill-current" />}
+              <span>{isGenerating ? 'Generating...' : 'Generate AI'}</span>
             </button>
 
+            {/* Regen All */}
             <button 
               onClick={() => {
                 setFiles(prev => prev.map(f => ({ ...f, status: 'pending' })));
                 setTimeout(startGeneration, 100);
               }}
               disabled={isGenerating || files.length === 0}
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-secondary hover:bg-accent text-foreground border border-border rounded text-xs font-medium transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              className="flex items-center gap-1 px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/35 text-sky-200 border border-sky-400/60 rounded text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none active:scale-95 shadow-xs whitespace-nowrap"
               title="Regenerate metadata for all files"
             >
               <RefreshCcw size={12} strokeWidth={2.5} />
-              <span className="hidden sm:inline">Regen All</span>
+              <span>Regen All</span>
             </button>
 
             {files.some(f => f.status === 'error') && (
@@ -2088,7 +2120,7 @@ export default function App() {
                   setTimeout(startGeneration, 100);
                 }}
                 disabled={isGenerating}
-                className="flex items-center gap-1.5 px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-400 border border-amber-500/40 rounded text-xs font-semibold transition-all cursor-pointer"
+                className="flex items-center gap-1 px-2.5 py-1 bg-amber-500/25 hover:bg-amber-500/40 text-amber-200 border border-amber-400/70 rounded text-xs font-bold transition-all cursor-pointer shadow-xs active:scale-95 whitespace-nowrap"
                 title="Retry failed files"
               >
                 <RefreshCw size={12} strokeWidth={2.5} />
@@ -2102,7 +2134,7 @@ export default function App() {
                   stopRef.current = true;
                   setIsGenerating(false);
                 }}
-                className="flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-bold transition-all shadow-xs cursor-pointer animate-pulse"
+                className="flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white border border-rose-400/60 rounded text-xs font-bold transition-all shadow-sm cursor-pointer animate-pulse whitespace-nowrap"
                 title="Stop generation"
               >
                 <Square size={11} className="fill-current" />
@@ -2113,62 +2145,65 @@ export default function App() {
             {files.length > 0 && (
               <button 
                 onClick={clearAll}
-                className="flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded text-xs font-medium transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-2.5 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 border border-rose-500/50 rounded text-xs font-bold transition-colors cursor-pointer whitespace-nowrap"
                 title="Clear all assets from workspace"
               >
                 <Trash2 size={12} strokeWidth={2.5} />
-                <span className="hidden sm:inline">Clear</span>
+                <span>Clear All</span>
               </button>
             )}
 
             <div className="h-4 w-px bg-border/80 mx-0.5" />
 
-            {/* In-Place Disk Actions */}
+            {/* Embed & Save Action */}
             <button 
               onClick={() => handleEmbed('all')}
               disabled={files.length === 0 || isGenerating}
-              className="flex items-center gap-1.5 px-3 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-35 disabled:pointer-events-none active:scale-95"
-              title="Save directly inside your selected local folder (Renames files and embeds 5-star EXIF/IPTC/XMP metadata)"
+              className="flex items-center gap-1.5 px-3 py-1 bg-teal-600 hover:bg-teal-500 text-white border border-teal-400/60 rounded text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-45 disabled:pointer-events-none active:scale-95 whitespace-nowrap"
+              title="Directly embed 5-star EXIF/IPTC/XMP metadata into files in-place"
             >
-              <FolderCheck size={13} strokeWidth={2.5} />
-              <span>Save In-Place</span>
+              <FolderCheck size={12} strokeWidth={2.5} />
+              <span>Embed (Save)</span>
             </button>
 
+            {/* Rename All */}
             <button 
               onClick={renameAllByTitle}
               disabled={files.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1 bg-secondary hover:bg-accent text-foreground border border-border rounded text-xs font-medium transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-500/20 hover:bg-indigo-500/35 text-indigo-200 border border-indigo-400/60 rounded text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none active:scale-95 shadow-xs whitespace-nowrap"
               title="Automatically rename all filenames using generated titles"
             >
               <Edit3 size={12} strokeWidth={2.5} />
-              <span className="hidden md:inline">Rename All</span>
+              <span>Rename All</span>
             </button>
 
+            {/* Zip Bundle */}
             <button 
               onClick={handleDownloadZip}
               disabled={files.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1 bg-secondary hover:bg-accent text-foreground border border-border rounded text-xs font-medium transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              className="flex items-center gap-1 px-2.5 py-1 bg-orange-500/20 hover:bg-orange-500/35 text-orange-200 border border-orange-400/60 rounded text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none active:scale-95 shadow-xs whitespace-nowrap"
               title="Download renamed files with metadata packaged in a ZIP bundle"
             >
               <Download size={12} strokeWidth={2.5} />
-              <span className="hidden md:inline">Zip Bundle</span>
+              <span>Zip Bundle</span>
             </button>
 
+            {/* Adobe JSX */}
             <button 
               onClick={() => setIsEmbedModalOpen(true)}
-              className="flex items-center gap-1 px-2 py-1 bg-purple-500/15 hover:bg-purple-500/25 text-purple-600 dark:text-purple-300 border border-purple-500/35 rounded text-xs font-semibold transition-all cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1 bg-purple-700 hover:bg-purple-600 text-white border border-purple-400/60 rounded text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95 whitespace-nowrap"
               title="Adobe Photoshop & Illustrator Automation Scripts (.jsx)"
             >
               <FileCode size={12} strokeWidth={2.5} />
-              <span className="hidden lg:inline">Adobe JSX</span>
+              <span>Adobe JSX</span>
             </button>
           </div>
 
           {/* Right: Quick Tools */}
           <div className="flex items-center gap-2 shrink-0">
             {/* AI Provider Select */}
-            <div className="flex items-center gap-1 bg-secondary border border-border px-1.5 py-0.5 rounded shadow-2xs">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase">AI:</span>
+            <div className="flex items-center gap-1.5 bg-slate-800/90 border border-indigo-400/60 px-2 py-0.5 rounded shadow-xs">
+              <span className="text-[10px] font-black text-indigo-300 uppercase">AI:</span>
               <select 
                 value={activeKey.provider}
                 onChange={(e) => {
@@ -2176,7 +2211,7 @@ export default function App() {
                   const firstReadyIndex = apiConfig[provider].findIndex(key => key.trim() !== '');
                   setActiveKey({ provider, index: firstReadyIndex !== -1 ? firstReadyIndex : 0 });
                 }}
-                className="bg-transparent text-foreground text-xs font-bold focus:outline-none cursor-pointer uppercase"
+                className="bg-transparent text-slate-100 text-xs font-black focus:outline-none cursor-pointer uppercase"
               >
                 <option value="gemini">Gemini {apiConfig.gemini.some(k => k) ? '✓' : ''}</option>
                 <option value="groq">Groq {apiConfig.groq.some(k => k) ? '✓' : ''}</option>
@@ -2185,11 +2220,12 @@ export default function App() {
             </div>
 
             {/* Theme Select */}
-            <div className="flex items-center bg-secondary border border-border px-1.5 py-0.5 rounded shadow-2xs">
+            <div className="flex items-center gap-1.5 bg-slate-800/90 border border-slate-500/70 px-2 py-0.5 rounded shadow-xs">
+              <span className="text-[10px] font-black text-slate-300 uppercase">THEME:</span>
               <select 
                 value={theme}
                 onChange={(e) => setTheme(e.target.value as any)}
-                className="bg-transparent text-foreground text-xs font-bold focus:outline-none cursor-pointer uppercase"
+                className="bg-transparent text-slate-100 text-xs font-black focus:outline-none cursor-pointer uppercase"
               >
                 <option value="dark">Dark</option>
                 <option value="classic">Classic</option>
@@ -2225,80 +2261,80 @@ export default function App() {
         </div>
 
         {/* Row 2: Secondary Bar (Asset Filtering, Options & Single CSV Export Hub) */}
-        <div className="flex items-center justify-between px-3 py-1.5 bg-muted/60 text-xs gap-3 flex-wrap">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900/80 border-b border-slate-800 text-xs gap-3 flex-wrap">
           {/* Left: Asset Filter & Gen Options */}
           <div className="flex items-center gap-3">
             {/* Asset Type Segmented Control */}
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Filter:</span>
-              <div className="flex bg-secondary rounded border border-border p-0.5 shadow-2xs">
+              <span className="text-[11px] font-black text-blue-400 uppercase tracking-wider">Filter:</span>
+              <div className="flex bg-slate-800/90 rounded border border-slate-700 p-0.5 shadow-2xs">
                 {[
-                  { id: 'all', label: 'All', icon: Database },
-                  { id: 'image', label: 'Images', icon: FileImage },
-                  { id: 'video', label: 'Videos', icon: Video },
-                  { id: 'eps', label: 'EPS', icon: Layers }
+                  { id: 'all', label: 'All', icon: Database, activeBg: 'bg-white text-slate-950 shadow-xs' },
+                  { id: 'image', label: 'Images', icon: FileImage, activeBg: 'bg-blue-600 text-white shadow-xs border border-blue-400/60' },
+                  { id: 'video', label: 'Videos', icon: Video, activeBg: 'bg-rose-600 text-white shadow-xs border border-rose-400/60' },
+                  { id: 'eps', label: 'EPS', icon: Layers, activeBg: 'bg-amber-600 text-white shadow-xs border border-amber-400/60' }
                 ].map(item => (
                   <button 
                     key={item.id}
                     onClick={() => setSettings(prev => ({ ...prev, metadataFor: item.id as any }))}
                     className={cn(
-                      "flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold uppercase rounded transition-all cursor-pointer",
+                      "flex items-center gap-1 px-2.5 py-0.5 text-[11px] font-bold uppercase rounded transition-all cursor-pointer",
                       settings.metadataFor === item.id 
-                        ? "bg-primary text-primary-foreground shadow-xs" 
-                        : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                        ? item.activeBg 
+                        : "text-slate-300 hover:text-white hover:bg-slate-700/60"
                     )}
                   >
-                    <item.icon size={11} />
+                    <item.icon size={12} />
                     <span>{item.label}</span>
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="h-3.5 w-px bg-border/70 hidden sm:block" />
+            <div className="h-4 w-px bg-slate-700" />
 
-            {/* Gen Options Checkboxes */}
-            <div className="hidden sm:flex items-center gap-3 text-[11px] text-foreground">
-              <label className="flex items-center gap-1 cursor-pointer select-none">
+            {/* Gen Options Checkboxes - Distinct Color Badges (Permanently Visible) */}
+            <div className="flex items-center gap-2 text-[11px] flex-wrap">
+              <label className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/60 text-emerald-300 font-bold hover:border-emerald-400 shadow-2xs cursor-pointer select-none transition-colors whitespace-nowrap">
                 <input 
                   type="checkbox" 
                   checked={genOptions.autoSave}
                   onChange={(e) => setGenOptions(prev => ({ ...prev, autoSave: e.target.checked }))}
-                  className="w-3.5 h-3.5 rounded bg-secondary border border-border text-primary cursor-pointer"
+                  className="w-3.5 h-3.5 rounded accent-emerald-500 cursor-pointer"
                 />
-                <span className="font-medium text-muted-foreground hover:text-foreground">Auto-Save</span>
+                <span>Auto-Save</span>
               </label>
 
-              <label className="flex items-center gap-1 cursor-pointer select-none">
+              <label className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-950/60 border border-cyan-500/60 text-cyan-300 font-bold hover:border-cyan-400 shadow-2xs cursor-pointer select-none transition-colors whitespace-nowrap">
                 <input 
                   type="checkbox" 
                   checked={genOptions.autoExport}
                   onChange={(e) => setGenOptions(prev => ({ ...prev, autoExport: e.target.checked }))}
-                  className="w-3.5 h-3.5 rounded bg-secondary border border-border text-primary cursor-pointer"
+                  className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
                 />
-                <span className="font-medium text-muted-foreground hover:text-foreground">Auto-Export</span>
+                <span>Auto-Export</span>
               </label>
 
-              <label className="flex items-center gap-1 cursor-pointer select-none">
+              <label className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-purple-950/60 border border-purple-500/60 text-purple-300 font-bold hover:border-purple-400 shadow-2xs cursor-pointer select-none transition-colors whitespace-nowrap">
                 <input 
                   type="checkbox" 
                   checked={genOptions.aiEnhance}
                   onChange={(e) => setGenOptions(prev => ({ ...prev, aiEnhance: e.target.checked }))}
-                  className="w-3.5 h-3.5 rounded bg-secondary border border-border text-primary cursor-pointer"
+                  className="w-3.5 h-3.5 rounded accent-purple-500 cursor-pointer"
                 />
-                <span className="font-medium text-muted-foreground hover:text-foreground">AI Enhance</span>
+                <span>AI Enhance</span>
               </label>
             </div>
           </div>
 
           {/* Right: Export CSV Hub & Inspector */}
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-secondary border border-border px-1.5 py-0.5 rounded shadow-2xs">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase">Preset:</span>
+            <div className="flex items-center gap-1.5 bg-slate-800/90 border-2 border-cyan-500/70 px-2 py-0.5 rounded shadow-xs">
+              <span className="text-[10px] font-black text-cyan-300 uppercase tracking-wider">Preset:</span>
               <select 
                 value={selectedExportSite}
                 onChange={(e) => setSelectedExportSite(e.target.value)}
-                className="bg-transparent text-foreground text-xs font-semibold focus:outline-none cursor-pointer"
+                className="bg-transparent text-slate-100 text-xs font-bold focus:outline-none cursor-pointer"
               >
                 <option value="all_files">Master CSV (All Columns)</option>
                 <option value="adobe">Adobe Stock</option>
@@ -2317,52 +2353,35 @@ export default function App() {
             <button 
               onClick={() => handleExport(selectedExportSite, false)}
               disabled={files.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1 bg-secondary hover:bg-accent text-foreground border border-border rounded text-xs font-semibold transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              className="flex items-center gap-1 px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white border border-cyan-400/60 rounded text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
               title="Download CSV for processed files matching preset"
             >
-              <FileSpreadsheet size={12} strokeWidth={2.5} />
+              <FileSpreadsheet size={13} strokeWidth={2.5} />
               <span>Export CSV</span>
             </button>
 
             <button 
               onClick={() => handleExport('all_files', true)}
               disabled={files.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 rounded text-xs font-semibold transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
+              className="flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/60 rounded text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
               title="Export complete master CSV for ALL files in current batch"
             >
-              <Download size={12} strokeWidth={2.5} />
+              <Download size={13} strokeWidth={2.5} />
               <span>All Files CSV</span>
-            </button>
-
-            <div className="h-3.5 w-px bg-border/70 mx-0.5" />
-
-            {/* Inspector Toggle */}
-            <button 
-              onClick={() => setIsInspectorOpen(prev => !prev)}
-              className={cn(
-                "flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold transition-all cursor-pointer border",
-                isInspectorOpen
-                  ? "bg-primary text-primary-foreground border-primary shadow-xs"
-                  : "bg-secondary text-muted-foreground hover:text-foreground border-border hover:bg-accent"
-              )}
-              title="Toggle Asset Preview & Metadata Inspector Panel"
-            >
-              <Eye size={12} strokeWidth={2.5} />
-              <span>Inspector</span>
             </button>
 
             {/* Cooldown or Status Light */}
             {isPaused && (
-              <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/15 border border-red-500/30 text-red-500 text-[10px] font-bold animate-pulse">
+              <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 border border-red-500/50 text-red-400 text-[10px] font-black animate-pulse">
                 <AlertCircle size={10} />
                 <span>Cooldown ({cooldownTimer}s)</span>
               </div>
             )}
 
-            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-secondary border border-border rounded text-[11px]">
-              <div className={cn("w-1.5 h-1.5 rounded-full shadow-[0_0_5px_rgba(16,185,129,0.5)]", isGenerating ? (isPaused ? "bg-red-500" : "bg-amber-500 animate-pulse") : "bg-emerald-500")} />
-              <span className="text-muted-foreground font-semibold">Assets:</span>
-              <span className="font-bold text-blue-500 tabular-nums">{files.length}</span>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 border border-slate-600 rounded text-xs shadow-xs">
+              <div className={cn("w-2 h-2 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.7)]", isGenerating ? (isPaused ? "bg-red-500" : "bg-amber-400 animate-ping") : "bg-emerald-400")} />
+              <span className="text-slate-300 font-bold">Assets:</span>
+              <span className="font-black text-cyan-400 tabular-nums">{files.length}</span>
             </div>
           </div>
         </div>
@@ -2406,28 +2425,28 @@ export default function App() {
 
         {/* Left/Center Area: Virtualized Windows Table */}
         <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-          {/* Windows Style Table Header */}
-          <div className="flex flex-row w-full border-b border-border bg-muted/80 text-[10px] font-bold uppercase tracking-wider text-muted-foreground shrink-0">
-            <div className="w-[12%] px-2.5 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
-              <span>Filename</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
+          {/* Windows Style Table Header with High-Contrast Distinct Colors */}
+          <div className="flex flex-row w-full border-b-2 border-slate-700 bg-slate-900/95 text-[11px] font-black uppercase tracking-wider shrink-0 shadow-xs">
+            <div className="w-[12%] px-2.5 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-cyan-400 transition-colors">
+              <span>Filename</span> <ChevronRight size={12} className="rotate-90 text-cyan-400/70" />
             </div>
-            <div className="w-[15%] px-2.5 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
-              <span>Title</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
+            <div className="w-[15%] px-2.5 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-amber-400 transition-colors">
+              <span>Title</span> <ChevronRight size={12} className="rotate-90 text-amber-400/70" />
             </div>
-            <div className="w-[25%] px-2.5 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
-              <span>Keywords</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
+            <div className="w-[25%] px-2.5 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-emerald-400 transition-colors">
+              <span>Keywords</span> <ChevronRight size={12} className="rotate-90 text-emerald-400/70" />
             </div>
-            <div className="w-[20%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
-              <span>Description</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
+            <div className="w-[20%] px-3 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-purple-300 transition-colors">
+              <span>Description</span> <ChevronRight size={12} className="rotate-90 text-purple-300/70" />
             </div>
-            <div className="w-[10%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
-              <span>Category</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
+            <div className="w-[10%] px-3 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-rose-400 transition-colors">
+              <span>Category</span> <ChevronRight size={12} className="rotate-90 text-rose-400/70" />
             </div>
-            <div className="w-[8%] px-3 py-1.5 border-r border-border shrink-0 hover:bg-accent/50 cursor-pointer flex items-center justify-between">
-              <span>KW Count</span> <ChevronRight size={11} className="rotate-90 opacity-60" />
+            <div className="w-[8%] px-3 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-blue-400 transition-colors">
+              <span>KW Count</span> <ChevronRight size={12} className="rotate-90 text-blue-400/70" />
             </div>
-            <div className="w-[10%] px-3 py-1.5 text-center shrink-0 hover:bg-accent/50 cursor-pointer">
-              <span>Rating</span>
+            <div className="w-[10%] px-3 py-2 text-center shrink-0 hover:bg-slate-800/60 cursor-pointer text-yellow-400 transition-colors">
+              <span>5★ & Save</span>
             </div>
           </div>
 
@@ -2471,23 +2490,6 @@ export default function App() {
             )}
           </div>
         </div>
-
-        {/* Right Area: Asset Inspector Panel */}
-        {isInspectorOpen && (
-          <div className="w-[360px] xl:w-[420px] shrink-0 border-l border-border bg-card flex flex-col h-full overflow-hidden shadow-xl z-10">
-            <AssetInspector
-              file={activeSelectedFile}
-              actualFile={activeSelectedFile ? fileObjects[activeSelectedFile.id] : undefined}
-              updateFile={updateFile}
-              regenerateSingleFile={regenerateSingleFile}
-              downloadWithMetadata={downloadWithMetadata}
-              deleteFile={deleteFile}
-              openPreviewModal={openPreviewModal}
-              isGenerating={isGenerating}
-              onClose={() => setIsInspectorOpen(false)}
-            />
-          </div>
-        )}
       </div>
 
       {/* Windows Style Footer */}
@@ -3411,66 +3413,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Iframe Direct Disk Notice Modal */}
-      {isIframeNoticeOpen && (
-        <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="w-full max-w-lg bg-background border border-emerald-500/40 rounded-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="p-4 border-b border-emerald-500/30 flex items-center justify-between bg-emerald-500/10">
-              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-                <FolderCheck size={20} />
-                <h3 className="font-black text-sm uppercase tracking-wider">সরাসরি ফোল্ডারে ফাইল রিনেম ও মেটাডাটা সেভ</h3>
-              </div>
-              <button 
-                onClick={() => setIsIframeNoticeOpen(false)} 
-                className="p-1 hover:bg-emerald-500/20 rounded text-muted-foreground hover:text-foreground transition-all"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-4 bg-background text-foreground text-sm">
-              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-md text-xs leading-relaxed space-y-1">
-                <p className="font-bold text-amber-700 dark:text-amber-300">
-                  ❓ কেন ফাইল ডাউনলোড হচ্ছিল?
-                </p>
-                <p className="text-muted-foreground">
-                  আপনি বর্তমানে AI Studio প্রিভিউ ফ্রেমের (iFrame) মধ্যে কাজ করছেন। গুগল ক্রোম ও এজ ব্রাউজারের সিকিউরিটি রুল অনুযায়ী কোনো ওয়েবসাইট আইফ্রেমের ভেতর থেকে সরাসরি ব্যবহারকারীর কম্পিউটারের হার্ডডিস্ক ফোল্ডার পরিবর্তন বা রিনেম করতে পারে না।
-                </p>
-              </div>
 
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-md text-xs leading-relaxed space-y-2">
-                <p className="font-bold text-emerald-700 dark:text-emerald-300">
-                  ⚡ কোনো ডাউনলোড ছাড়াই সরাসরি ফোল্ডারে ফাইল রিনেম ও সেভ করার ৩টি সহজ ধাপ:
-                </p>
-                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-                  <li>নিচের <strong>"নতুন ট্যাবে খুলুন (Open in New Tab)"</strong> বাটনে চাপ দিন।</li>
-                  <li>নতুন ট্যাবে অ্যাপটি খুললে <strong>"Add Folder"</strong> অথবা <strong>"Save In-Place"</strong> এ ক্লিক করে আপনার কম্পিউটারের ফোল্ডারটি একবার সিলেক্ট করুন এবং ব্রাউজার পারমিশন চাইলে <em>"View & Edit Files"</em> এ সম্মতি দিন।</li>
-                  <li>এরপর <strong>"Save In-Place"</strong> চাপলেই কোনো ডাউনলোড ছাড়া আপনার কম্পিউটারের ফোল্ডারের আসল ফাইলগুলোই রিনেম হয়ে যাবে এবং ভেতরে ৫-স্টার, টাইটেল ও কিওয়ার্ড বসে যাবে!</li>
-                </ol>
-              </div>
-
-              <div className="pt-2 flex flex-col sm:flex-row gap-2">
-                <button 
-                  onClick={() => {
-                    setIsIframeNoticeOpen(false);
-                    window.open(window.location.href, '_blank');
-                  }}
-                  className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider rounded-md transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-                >
-                  <ExternalLink size={16} />
-                  <span>নতুন ট্যাবে খুলুন (Open in New Tab)</span>
-                </button>
-                <button 
-                  onClick={() => setIsIframeNoticeOpen(false)}
-                  className="py-3 px-4 bg-secondary hover:bg-muted text-foreground font-bold text-xs uppercase tracking-wider rounded-md transition-all border border-border cursor-pointer"
-                >
-                  বুঝেছি (Close)
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       <input 
         type="file" 
@@ -3483,7 +3426,7 @@ export default function App() {
             e.target.value = ''; // Reset to allow re-uploading same file
           }
         }}
-        accept=".jpg,.jpeg,.png,.eps,.mp4,.mov,.ai,.svg,.webp,.avi"
+        accept=".jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.gif,.heic,.avif,.eps,.ai,.svg,.mp4,.mov,.avi,.mkv,.webm,.m4v,.wmv"
       />
       <input 
         type="file" 

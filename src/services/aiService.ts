@@ -769,9 +769,13 @@ let cachedWorkingModel: string | null = null;
 async function generateWithGemini(file: File, settings: any, apiKey: string) {
   const ai = new GoogleGenAI({ apiKey });
   const ext = file?.name.split('.').pop()?.toLowerCase() || '';
-  const isSupportedImage = file && (SUPPORTED_GEMINI_MIMES.includes(file.type) || ['jpg', 'jpeg', 'png', 'webp'].includes(ext));
-  const isEps = file && (ext === 'eps' || file.type === 'application/postscript' || file.type === 'image/x-eps');
-  const isVideo = file && (file.type.startsWith('video/') || ['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext));
+  const isSupportedImage = file && (
+    SUPPORTED_GEMINI_MIMES.includes(file.type) || 
+    ['jpg', 'jpeg', 'png', 'webp', 'svg', 'bmp', 'gif', 'avif', 'tiff', 'tif', 'heic'].includes(ext) ||
+    Boolean(file.type?.startsWith('image/'))
+  );
+  const isEps = file && (ext === 'eps' || ext === 'ai' || file.type === 'application/postscript' || file.type === 'image/x-eps');
+  const isVideo = file && (file.type.startsWith('video/') || ['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv', 'flv', '3gp'].includes(ext));
 
   const parts: any[] = [];
 
@@ -985,9 +989,13 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
     : "https://api.mistral.ai/v1/chat/completions";
   
   const ext = file?.name.split('.').pop()?.toLowerCase() || '';
-  const isSupportedImage = file && (SUPPORTED_GEMINI_MIMES.includes(file.type) || ['jpg', 'jpeg', 'png', 'webp'].includes(ext));
-  const isEps = file && (ext === 'eps' || file.type === 'application/postscript' || file.type === 'image/x-eps');
-  const isVideo = file && (file.type.startsWith('video/') || ['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext));
+  const isSupportedImage = file && (
+    SUPPORTED_GEMINI_MIMES.includes(file.type) || 
+    ['jpg', 'jpeg', 'png', 'webp', 'svg', 'bmp', 'gif', 'avif', 'tiff', 'tif', 'heic'].includes(ext) ||
+    Boolean(file.type?.startsWith('image/'))
+  );
+  const isEps = file && (ext === 'eps' || ext === 'ai' || file.type === 'application/postscript' || file.type === 'image/x-eps');
+  const isVideo = file && (file.type.startsWith('video/') || ['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv', 'flv', '3gp'].includes(ext));
 
   let imageData: string | undefined;
   if (isSupportedImage) {
