@@ -342,132 +342,96 @@ function insertSegmentsIntoJpeg(jpegBytes: Uint8Array, segmentsToInsert: Uint8Ar
   return finalJpeg;
 }
 
-// Embed EXIF + IPTC + XMP into JPEG Image Blob (Rock-Solid for Windows, Photoshop & Stock agencies)
+// Embed EXIF + IPTC + XMP into JPEG Image Blob (Rock-Solid for Windows Explorer, Adobe Photoshop & Stock agencies)
 export async function embedMetadataInImageBlob(
-  file: File,
+  file: File | Blob,
   metadata: Partial<StockMetadata>
 ): Promise<Blob> {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const base64 = e.target?.result as string;
-        if (!base64 || typeof base64 !== 'string') {
-          return resolve(file);
-        }
+  try {
+    const buffer = await file.arrayBuffer();
+    const jpegBytes = new Uint8Array(buffer);
 
-        const title = (metadata.title || '').trim();
-        const description = (metadata.description || '').trim();
-        const rawKeywords = (metadata.keywords || '').trim();
-        // Windows Explorer requires semicolons between keywords in XPKeywords
-        const windowsKeywords = rawKeywords
-          .split(',')
-          .map(k => k.trim())
-          .filter(Boolean)
-          .join('; ');
-        const rating = (metadata.rating !== undefined && metadata.rating > 0) ? metadata.rating : 5;
+    // Validate JPEG SOI marker (0xFF, 0xD8)
+    if (jpegBytes.length < 4 || jpegBytes[0] !== 0xFF || jpegBytes[1] !== 0xD8) {
+      console.warn("Not a valid JPEG, returning original file");
+      return file;
+    }
 
-        let withExifBase64 = base64;
-        try {
-          let zeroth: any = {};
-          let exif: any = {};
+    const title = (metadata.title || '').trim();
+    const description = (metadata.description || '').trim();
+    const rawKeywords = (metadata.keywords || '').trim();
+    const rating = (metadata.rating !== undefined && metadata.rating > 0) ? metadata.rating : 5;
 
-          try {
-            const existingExif = piexif.load(base64);
-            if (existingExif['0th']) zeroth = existingExif['0th'];
-            if (existingExif['Exif']) exif = existingExif['Exif'];
-          } catch {
-            // If no previous exif or non-standard format, start clean
-          }
+    // Windows Explorer requires semicolons between keywords in XPKeywords
+    const windowsKeywords = rawKeywords
+      .split(',')
+      .map(k => k.trim())
+      .filter(Boolean)
+      .join('; ');
 
-          // 1. Standard Exif IFD tags (Windows Explorer Properties -> Details)
-          zeroth[piexif.ImageIFD.ImageDescription] = description;
-          zeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
-          zeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
-          zeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
-          zeroth[piexif.ImageIFD.XPComment] = toUtf16Le(description);
-          zeroth[piexif.ImageIFD.XPAuthor] = toUtf16Le('Stock Contributor');
-          zeroth[piexif.ImageIFD.Rating] = rating;               // Tag 18246 (1-5 stars)
-          zeroth[piexif.ImageIFD.RatingPercent] = 99;           // Tag 18249 (99% = 5 stars in Windows Explorer)
-          zeroth[piexif.ImageIFD.Artist] = 'Stock Contributor';
-          zeroth[piexif.ImageIFD.Copyright] = `Copyright ${new Date().getFullYear()}`;
+    // 1. Prepare Standard Exif 0th IFD tags (Windows Explorer Properties -> Details & Adobe)
+    let zeroth: any = {};
+    let exif: any = {};
 
-          let exifBytes: string | null = null;
-          try {
-            const exifObj = { '0th': zeroth, Exif: exif, GPS: {} };
-            exifBytes = piexif.dump(exifObj);
-          } catch (dumpErr) {
-            // If existing tags had conflicts, retry with only clean standard tags
-            try {
-              const cleanZeroth: any = {};
-              cleanZeroth[piexif.ImageIFD.ImageDescription] = description;
-              cleanZeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
-              cleanZeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
-              cleanZeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
-              cleanZeroth[piexif.ImageIFD.Rating] = rating;
-              cleanZeroth[piexif.ImageIFD.RatingPercent] = 99;
-              cleanZeroth[piexif.ImageIFD.Artist] = 'Stock Contributor';
-              cleanZeroth[piexif.ImageIFD.Copyright] = `Copyright ${new Date().getFullYear()}`;
-              exifBytes = piexif.dump({ '0th': cleanZeroth, Exif: {}, GPS: {} });
-            } catch (cleanDumpErr) {
-              console.warn("Could not dump clean EXIF:", cleanDumpErr);
-            }
-          }
+    zeroth[piexif.ImageIFD.ImageDescription] = description;
+    zeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
+    zeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
+    zeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
+    zeroth[piexif.ImageIFD.XPComment] = toUtf16Le(description);
+    zeroth[piexif.ImageIFD.XPAuthor] = toUtf16Le('Stock Contributor');
+    zeroth[piexif.ImageIFD.Rating] = rating;               // Tag 18246 (1-5 stars)
+    zeroth[piexif.ImageIFD.RatingPercent] = 99;           // Tag 18249 (99% = 5 stars in Windows Explorer)
+    zeroth[piexif.ImageIFD.Artist] = 'Stock Contributor';
+    zeroth[piexif.ImageIFD.Copyright] = `Copyright ${new Date().getFullYear()}`;
 
-          if (exifBytes) {
-            try {
-              withExifBase64 = piexif.insert(exifBytes, base64);
-            } catch (insertErr) {
-              console.warn("Piexif insert skipped:", insertErr);
-              withExifBase64 = base64;
-            }
-          }
-        } catch (exifErr) {
-          console.warn("EXIF processing warning:", exifErr);
-          withExifBase64 = base64;
-        }
+    let exifDump = '';
+    try {
+      exifDump = piexif.dump({ '0th': zeroth, Exif: exif, GPS: {} });
+    } catch (dumpErr) {
+      console.warn("Initial EXIF dump failed, retrying with minimal tags:", dumpErr);
+      const cleanZeroth: any = {
+        [piexif.ImageIFD.ImageDescription]: description,
+        [piexif.ImageIFD.XPTitle]: toUtf16Le(title),
+        [piexif.ImageIFD.XPKeywords]: toUtf16Le(windowsKeywords),
+        [piexif.ImageIFD.Rating]: rating,
+        [piexif.ImageIFD.RatingPercent]: 99
+      };
+      exifDump = piexif.dump({ '0th': cleanZeroth, Exif: {}, GPS: {} });
+    }
 
-        // Convert base64 to binary byte array safely
-        let jpegBytes: Uint8Array;
-        try {
-          const b64Data = withExifBase64.includes(',') ? withExifBase64.split(',')[1] : withExifBase64;
-          const binaryStr = atob(b64Data);
-          jpegBytes = new Uint8Array(binaryStr.length);
-          for (let i = 0; i < binaryStr.length; i++) {
-            jpegBytes[i] = binaryStr.charCodeAt(i);
-          }
-        } catch (b64Err) {
-          const ab = await file.arrayBuffer();
-          jpegBytes = new Uint8Array(ab);
-        }
+    // Convert exifDump string directly into binary bytes for APP1 segment (0xFF, 0xE1)
+    const exifDumpBytes = new Uint8Array(exifDump.length);
+    for (let i = 0; i < exifDump.length; i++) {
+      exifDumpBytes[i] = exifDump.charCodeAt(i) & 0xff;
+    }
 
-        // 2. Standard Adobe XMP APP1 Packet & IPTC APP13 Block
-        try {
-          const xmpString = createXmpPacket(metadata, 'image/jpeg');
-          const xmpApp1 = createXmpApp1Block(xmpString);
-          const iptcApp13 = createIptcApp13Block(title, description, rawKeywords, metadata.category);
-          const fullJpegBytes = insertSegmentsIntoJpeg(jpegBytes, [xmpApp1, iptcApp13]);
-          resolve(new Blob([fullJpegBytes], { type: 'image/jpeg' }));
-        } catch (segErr) {
-          console.warn("Segment insertion warning, returning jpegBytes:", segErr);
-          resolve(new Blob([jpegBytes], { type: 'image/jpeg' }));
-        }
-      } catch (err) {
-        console.warn("Failed to embed JPEG metadata, returning original file:", err);
-        resolve(file);
-      }
-    };
-    reader.onerror = () => {
-      console.warn("FileReader error, returning original file");
-      resolve(file);
-    };
-    reader.readAsDataURL(file);
-  });
+    const segLen = 2 + exifDumpBytes.length;
+    const app1Exif = new Uint8Array(4 + exifDumpBytes.length);
+    app1Exif[0] = 0xFF;
+    app1Exif[1] = 0xE1;
+    app1Exif[2] = (segLen >> 8) & 0xff;
+    app1Exif[3] = segLen & 0xff;
+    app1Exif.set(exifDumpBytes, 4);
+
+    // 2. Standard Adobe XMP APP1 Packet (0xFF, 0xE1)
+    const xmpString = createXmpPacket(metadata, 'image/jpeg');
+    const xmpApp1 = createXmpApp1Block(xmpString);
+
+    // 3. Photoshop 3.0 IPTC-NAA APP13 Block (0xFF, 0xED)
+    const iptcApp13 = createIptcApp13Block(title, description, rawKeywords, metadata.category);
+
+    // 4. Clean existing metadata segments and insert fresh Exif + XMP + IPTC
+    const fullJpegBytes = insertSegmentsIntoJpeg(jpegBytes, [app1Exif, xmpApp1, iptcApp13]);
+    return new Blob([fullJpegBytes], { type: 'image/jpeg' });
+  } catch (err) {
+    console.error("embedMetadataInImageBlob fatal error:", err);
+    return file;
+  }
 }
 
 // Embed Title, Description, Keywords, 5-Star Rating, and XMP inside PNG image
 export async function embedMetadataInPngBlob(
-  file: File,
+  file: File | Blob,
   metadata: Partial<StockMetadata>
 ): Promise<Blob> {
   try {
@@ -496,12 +460,14 @@ export async function embedMetadataInPngBlob(
       zeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
       zeroth[piexif.ImageIFD.Rating] = rating;
       zeroth[piexif.ImageIFD.RatingPercent] = 99;
+      
       const dumped = piexif.dump({ '0th': zeroth, Exif: {}, GPS: {} });
-      const b64 = dumped.includes(',') ? dumped.split(',')[1] : dumped;
-      const binary = atob(b64);
-      const rawExif = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) rawExif[i] = binary.charCodeAt(i);
-      const tiffOffset = (rawExif[0] === 0x45 && rawExif[1] === 0x78) ? 6 : 0;
+      const rawExif = new Uint8Array(dumped.length);
+      for (let i = 0; i < dumped.length; i++) {
+        rawExif[i] = dumped.charCodeAt(i) & 0xff;
+      }
+      // PNG eXIf chunk contains the raw TIFF header. If piexif prepended 'Exif\0\0', skip those 6 bytes
+      const tiffOffset = (rawExif.length >= 6 && rawExif[0] === 0x45 && rawExif[1] === 0x78) ? 6 : 0;
       exifChunk = createPngChunk('eXIf', rawExif.subarray(tiffOffset));
     } catch (e) {
       console.warn("Could not create PNG eXIf chunk:", e);
@@ -668,13 +634,39 @@ export async function embedMetadataInEpsBlob(
       psLength = bytes.length;
     }
 
-    // Safe PostScript slice extraction using ISO-8859-1 (Latin1) to preserve all byte values 0-255 without distortion
     const psSlice = bytes.subarray(psOffset, psOffset + psLength);
-    const psText = new TextDecoder('iso-8859-1').decode(psSlice);
 
-    // Inject updated DSC comments & XMP packet
-    const updatedPsText = injectEpsMetadata(psText, metadata);
-    const newPsBytes = new TextEncoder().encode(updatedPsText);
+    // Safe PostScript slice extraction: Only parse and rewrite the ASCII/DSC comments header.
+    // Binary PostScript paths, fonts, and raster previews are kept 100% untouched as raw bytes.
+    let commentsEnd = psSlice.length;
+    const searchLimit = Math.min(psSlice.length, 131072);
+    // Search for "%%EndComments" marker in bytes (ASCII: 37, 37, 69, 110, 100, 67, 111, 109, 109, 101, 110, 116, 115)
+    const endMarker = [37, 37, 69, 110, 100, 67, 111, 109, 109, 101, 110, 116, 115];
+    for (let i = 0; i < searchLimit - endMarker.length; i++) {
+      let match = true;
+      for (let m = 0; m < endMarker.length; m++) {
+        if (psSlice[i + m] !== endMarker[m]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        commentsEnd = i;
+        break;
+      }
+    }
+
+    const headerSlice = psSlice.subarray(0, commentsEnd);
+    const bodySlice = psSlice.subarray(commentsEnd);
+    const headerText = new TextDecoder('latin1').decode(headerSlice);
+
+    // Inject updated DSC comments & XMP packet into ASCII header only
+    const updatedHeaderText = injectEpsMetadata(headerText, metadata);
+    const newHeaderBytes = new TextEncoder().encode(updatedHeaderText);
+
+    const newPsBytes = new Uint8Array(newHeaderBytes.length + bodySlice.length);
+    newPsBytes.set(newHeaderBytes, 0);
+    newPsBytes.set(bodySlice, newHeaderBytes.length);
     const delta = newPsBytes.length - psLength;
 
     if (!isDosEps) {
@@ -1305,11 +1297,12 @@ export async function embedMetadataInMp4Blob(
 
 // Unified processor: Takes any file format and returns embedded binary Blob
 export async function prepareEmbeddedBlob(
-  file: File,
+  file: File | Blob,
   metadata: Partial<StockMetadata>
 ): Promise<Blob> {
   try {
-    const ext = (metadata.filename || file.name).split('.').pop()?.toLowerCase() || '';
+    const filename = metadata.filename || (file instanceof File ? file.name : 'asset.jpg');
+    const ext = (metadata.fileType || filename.split('.').pop() || '').toLowerCase();
 
     if (['jpg', 'jpeg'].includes(ext)) {
       return await embedMetadataInImageBlob(file, metadata);
@@ -1326,12 +1319,12 @@ export async function prepareEmbeddedBlob(
       return new Blob([updated], { type: 'image/svg+xml' });
     }
     if (['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', 'wmv'].includes(ext)) {
-      return await embedMetadataInMp4Blob(file, metadata);
+      return await embedMetadataInMp4Blob(file as File, metadata);
     }
     // Other binary formats
     return file;
   } catch (err) {
-    console.warn("prepareEmbeddedBlob fallback to original file:", err);
+    console.error("prepareEmbeddedBlob error:", err);
     return file;
   }
 }

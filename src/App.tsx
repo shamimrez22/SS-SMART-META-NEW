@@ -67,11 +67,12 @@ import { cn, sanitizeFilenameForFs } from './lib/utils';
 const STORAGE_KEY = 'ai-metadata-pro-config';
 const HISTORY_KEY = 'ai-metadata-pro-history';
 
-// Optimized Copyable Cell Component with readable typography
+// Optimized Copyable Cell Component with readable typography and slim borders
 const CopyableCell = React.memo(({ value, onChange, placeholder, colorClass, isGenerating, onCopy }: any) => {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!value) return;
     navigator.clipboard.writeText(value);
     setCopied(true);
@@ -80,12 +81,13 @@ const CopyableCell = React.memo(({ value, onChange, placeholder, colorClass, isG
   };
 
   return (
-    <div className="w-full h-full relative group/cell p-0.5">
+    <div className="w-full h-full relative group/cell">
       <textarea 
         value={value || ''}
         onChange={(e) => onChange(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
         className={cn(
-          "w-full h-full bg-secondary/80 hover:bg-secondary text-foreground border border-border/70 rounded-sm p-1 text-[10px] resize-none focus:ring-1 focus:ring-primary focus:border-primary outline-none custom-scrollbar leading-tight placeholder:text-muted-foreground/40 font-medium transition-all",
+          "w-full h-full bg-slate-900/60 hover:bg-slate-900/90 focus:bg-slate-950 text-slate-100 border border-slate-700/80 hover:border-slate-500 focus:border-blue-500 rounded px-1.5 py-0.5 text-[11px] leading-[14px] resize-none focus:ring-1 focus:ring-blue-500/40 outline-none custom-scrollbar placeholder:text-slate-500 font-medium transition-all",
           colorClass,
           isGenerating && "opacity-50 blur-[1px]"
         )}
@@ -93,18 +95,18 @@ const CopyableCell = React.memo(({ value, onChange, placeholder, colorClass, isG
       />
       {isGenerating && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <RefreshCw size={12} className="animate-spin text-primary opacity-80" />
+          <RefreshCw size={12} className="animate-spin text-blue-400 opacity-90" />
         </div>
       )}
       <button 
         onClick={handleCopy}
         className={cn(
-          "absolute top-1 right-2 p-0.5 bg-muted text-foreground border border-border rounded-sm opacity-0 group-hover/cell:opacity-100 transition-all hover:bg-accent shadow-sm cursor-pointer",
-          copied && "opacity-100 bg-emerald-500/20 text-emerald-500 border-emerald-500/50"
+          "absolute top-0.5 right-1 p-0.5 bg-slate-800 text-slate-200 border border-slate-600 rounded opacity-0 group-hover/cell:opacity-100 transition-all hover:bg-slate-700 shadow-2xs cursor-pointer z-10",
+          copied && "opacity-100 bg-emerald-600 text-white border-emerald-400"
         )}
         title="Copy Content"
       >
-        {copied ? <Check size={9} className="text-emerald-500" /> : <Copy size={9} className="text-foreground" />}
+        {copied ? <Check size={8} /> : <Copy size={8} />}
       </button>
     </div>
   );
@@ -133,32 +135,32 @@ const FileRow = React.memo(({ index, style, data }: any) => {
         if (openPreviewModal) openPreviewModal(file);
       }}
       className={cn(
-        "flex flex-row w-full hover:bg-primary/5 transition-colors group items-center border-b border-border bg-background cursor-pointer",
+        "flex flex-row w-full hover:bg-primary/5 transition-colors group items-center border-b border-border/40 bg-background cursor-pointer",
         isSelected && "bg-primary/10 border-l-4 border-l-primary ring-1 ring-inset ring-primary/20",
         file.status === 'generating' && "bg-blue-500/5"
       )}
     >
-      <div className="w-[12%] px-1.5 py-0.5 border-r border-border flex items-center gap-2 overflow-hidden shrink-0 h-full">
+      {/* 1. Filename & Thumbnail: 18% (min 190px) */}
+      <div className="w-[18%] min-w-[190px] px-1.5 py-1 border-r border-border/40 flex items-center gap-2 overflow-hidden shrink-0 h-full">
         <div 
           onClick={(e) => {
             e.stopPropagation();
             if (openPreviewModal) openPreviewModal(file);
             if (setSelectedFileId) setSelectedFileId(file.id);
           }}
-          className="w-9 h-9 bg-secondary rounded border border-border flex-shrink-0 overflow-hidden relative shadow-xs cursor-pointer hover:border-primary hover:scale-105 transition-all group/thumb"
-          title="Click to view full preview & metadata (প্রিভিউ দেখতে ক্লিক করুন)"
+          className="w-10 h-10 bg-secondary rounded border border-border/60 flex-shrink-0 overflow-hidden relative shadow-2xs cursor-pointer hover:border-primary hover:scale-105 transition-all group/thumb"
+          title="Click to view full preview & metadata"
         >
           {file.previewUrl ? (
             <img src={file.previewUrl} alt="" className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground bg-muted/40">
-              <FileText size={15} />
-              <span className="text-[6px] font-bold uppercase mt-0.5 opacity-80">{file.fileType || 'FILE'}</span>
+              <FileText size={16} />
+              <span className="text-[7px] font-bold uppercase mt-0.5 opacity-80">{file.fileType || 'FILE'}</span>
             </div>
           )}
-          {/* Status corner badges that never obstruct the preview image */}
           {(file.status === 'completed' || file.status === 'saved') && (
-            <div className="absolute bottom-0.5 right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-background flex items-center justify-center shadow-xs" title="Processed">
+            <div className="absolute bottom-0.5 right-0.5 w-3 h-3 bg-emerald-500 rounded-full border border-background flex items-center justify-center shadow-xs" title="Processed">
               <CheckCircle2 size={8} className="text-white" />
             </div>
           )}
@@ -168,14 +170,14 @@ const FileRow = React.memo(({ index, style, data }: any) => {
             </div>
           )}
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 flex flex-col justify-center">
           <input 
             type="text"
             value={file.filename}
             onChange={(e) => updateFile(file.id, { filename: e.target.value })}
             onClick={(e) => e.stopPropagation()}
-            className="text-[9px] font-bold text-foreground truncate leading-none uppercase tracking-tighter bg-transparent hover:bg-muted/40 focus:bg-background focus:ring-1 focus:ring-primary rounded px-0.5 py-0.5 w-full outline-none transition-all cursor-text border border-transparent hover:border-border"
-            title={`File: ${file.filename} (Click to edit filename)`}
+            className="text-[10px] font-bold text-foreground truncate leading-tight uppercase tracking-tight bg-transparent hover:bg-muted/40 focus:bg-background focus:ring-1 focus:ring-primary rounded-xs px-1 py-0.5 w-full outline-none transition-all cursor-text border border-transparent hover:border-border/40"
+            title={file.filename}
           />
           <div className="flex items-center gap-1 mt-0.5">
             <span 
@@ -186,10 +188,10 @@ const FileRow = React.memo(({ index, style, data }: any) => {
                 }
               }}
               className={cn(
-                "text-[7px] font-black px-1 py-0 rounded-sm uppercase tracking-widest border group relative cursor-help",
+                "text-[7px] font-black px-1.5 py-0.2 rounded-xs uppercase tracking-widest border group relative cursor-help",
                 (file.status === 'completed' || file.status === 'saved') ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40" :
                 (file.status === 'generating' || file.status === 'retrying') ? "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/40 animate-pulse" :
-                file.status === 'error' ? "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/40" : "bg-secondary text-foreground border-border"
+                file.status === 'error' ? "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/40" : "bg-secondary text-foreground border-border/40"
               )}
             >
               {file.status}
@@ -204,14 +206,11 @@ const FileRow = React.memo(({ index, style, data }: any) => {
                   </div>
                 </div>
               )}
-              {file.status === 'error' && (
-                <AlertCircle size={8} className="inline-block ml-1 text-red-500 animate-pulse" />
-              )}
             </span>
             {file.status === 'pending' && (
               <button 
                 onClick={(e) => { e.stopPropagation(); regenerateSingleFile(file.id); }}
-                className="text-[7px] font-black px-1.5 py-0.5 rounded-sm uppercase tracking-wider bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-0.5 shadow-sm active:scale-95 transition-transform"
+                className="text-[7px] font-black px-1.5 py-0.2 rounded-xs uppercase tracking-wider bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-0.5 shadow-xs active:scale-95 transition-transform"
                 title="Generate AI metadata for this specific file"
               >
                 <Sparkles size={7} />
@@ -222,7 +221,7 @@ const FileRow = React.memo(({ index, style, data }: any) => {
               <button 
                 onClick={(e) => { e.stopPropagation(); regenerateSingleFile(file.id); }}
                 className={cn(
-                  "text-[6px] font-black px-1 py-0 rounded-sm uppercase tracking-widest transition-colors flex items-center gap-0.5 shadow-sm active:scale-95 border border-border",
+                  "text-[6px] font-black px-1 py-0.2 rounded-xs uppercase tracking-widest transition-colors flex items-center gap-0.5 shadow-xs active:scale-95 border border-border/40",
                   file.status === 'error' ? "bg-red-600 text-white hover:bg-red-500" : "bg-primary text-primary-foreground hover:opacity-90"
                 )}
                 title="Re-generate AI metadata for this file"
@@ -235,96 +234,115 @@ const FileRow = React.memo(({ index, style, data }: any) => {
         </div>
       </div>
 
-      <div className="w-[15%] px-1 py-0.5 border-r border-border h-full shrink-0">
+      {/* 2. Title: 22% (min 230px) */}
+      <div className="w-[22%] min-w-[230px] p-1 border-r border-border/40 h-full shrink-0">
         <CopyableCell 
           value={file.title}
           onChange={(val: string) => updateFile(file.id, { title: val })}
           placeholder="TITLE..."
-          colorClass="text-foreground font-bold"
+          colorClass="text-foreground font-semibold"
           isGenerating={file.status === 'generating' || file.status === 'retrying'}
         />
       </div>
 
-      <div className="w-[25%] px-1 py-0.5 border-r border-border h-full shrink-0 relative">
+      {/* 3. Keywords: 26% (min 270px) */}
+      <div className="w-[26%] min-w-[270px] p-1 border-r border-border/40 h-full shrink-0">
         <CopyableCell 
           value={file.keywords}
           onChange={(val: string) => updateFile(file.id, { keywords: val })}
           placeholder="KEYWORDS..."
-          colorClass="text-foreground font-bold"
+          colorClass="text-foreground"
           isGenerating={file.status === 'generating' || file.status === 'retrying'}
         />
-        {file.keywordScore && (
-          <div className="absolute bottom-1 right-2 text-[6px] font-black text-foreground bg-secondary px-0.5 py-0 rounded-sm border border-border z-10">
-            {file.keywordScore}%
-          </div>
-        )}
       </div>
 
-      <div className="w-[20%] px-1 py-0.5 border-r border-border h-full shrink-0">
+      {/* 4. Description: 18% (min 190px) */}
+      <div className="w-[18%] min-w-[190px] p-1 border-r border-border/40 h-full shrink-0">
         <CopyableCell 
           value={file.description}
           onChange={(val: string) => updateFile(file.id, { description: val })}
           placeholder="DESCRIPTION..."
-          colorClass="text-foreground font-bold"
+          colorClass="text-foreground"
           isGenerating={file.status === 'generating' || file.status === 'retrying'}
         />
       </div>
 
-      <div className="w-[10%] px-1 py-0.5 border-r border-border h-full shrink-0">
+      {/* 5. Category: 5% (min 65px) */}
+      <div className="w-[5%] min-w-[65px] p-1 border-r border-border/40 h-full shrink-0">
         <CopyableCell 
           value={file.category}
           onChange={(val: string) => updateFile(file.id, { category: val })}
           placeholder="CATEGORY..."
-          colorClass="text-foreground font-bold"
+          colorClass="text-foreground font-medium text-center"
           isGenerating={file.status === 'generating' || file.status === 'retrying'}
         />
       </div>
 
-      <div className="w-[8%] px-1 py-0.5 border-r border-border h-full shrink-0 flex items-center justify-center">
-        <div className="text-[9px] font-black text-foreground bg-secondary px-1.5 py-0.5 rounded-sm border border-border">
-          {file.keywords ? file.keywords.split(',').length : 0}
-        </div>
+      {/* 6. KW Count & Score: 4% (min 50px) */}
+      <div className="w-[4%] min-w-[50px] p-1 border-r border-border/40 h-full shrink-0 flex flex-col items-center justify-center gap-0.5">
+        <span className="text-[10px] font-black text-foreground bg-secondary px-1.5 py-0.5 rounded border border-border/60 shadow-2xs">
+          {file.keywords ? file.keywords.split(',').filter(Boolean).length : 0}
+        </span>
+        {file.keywordScore && (
+          <span className="text-[8px] font-bold text-emerald-600 dark:text-emerald-400">
+            {file.keywordScore}%
+          </span>
+        )}
       </div>
 
-      <div className="w-[10%] px-1 py-0.5 h-full shrink-0 flex items-center justify-center gap-0.5">
-        {[1, 2, 3, 4, 5].map((star) => (
-          <button
-            key={star}
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              updateFile(file.id, { rating: star });
-            }}
-            className="p-0.5 hover:scale-125 transition-transform cursor-pointer"
-            title={`Rating: ${file.rating !== undefined && file.rating > 0 ? file.rating : 5} Stars (Click to set ${star} Stars)`}
-          >
-            <Star 
-              size={9} 
-              className={cn(
-                "transition-all",
-                star <= (file.rating !== undefined && file.rating > 0 ? file.rating : 5) 
-                  ? "text-amber-400 fill-amber-400 drop-shadow-[0_0_2px_rgba(251,191,36,0.5)]" 
-                  : "text-muted-foreground/20 hover:text-amber-300"
-              )} 
-            />
-          </button>
-        ))}
-        {(file.status === 'completed' || file.status === 'saved' || file.title || file.keywords) && (
+      {/* 7. Rating 5★ & SAVE: 7% (min 95px) */}
+      <div className="w-[7%] min-w-[95px] px-1 py-1 h-full shrink-0 flex flex-col items-center justify-center gap-1">
+        <div className="flex items-center justify-center gap-0.5">
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                updateFile(file.id, { rating: star });
+              }}
+              className="p-0.2 hover:scale-125 transition-transform cursor-pointer"
+              title={`Rating: ${file.rating !== undefined && file.rating > 0 ? file.rating : 5} Stars`}
+            >
+              <Star 
+                size={10} 
+                className={cn(
+                  "transition-all",
+                  star <= (file.rating !== undefined && file.rating > 0 ? file.rating : 5) 
+                    ? "text-amber-400 fill-amber-400 drop-shadow-[0_0_2px_rgba(251,191,36,0.6)]" 
+                    : "text-muted-foreground/25 hover:text-amber-300"
+                )} 
+              />
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1">
+          {file.status === 'saved' ? (
+            <span 
+              className="px-1.5 py-0.5 bg-emerald-950/80 text-emerald-400 border border-emerald-500/60 rounded text-[8px] font-black uppercase tracking-wider flex items-center gap-0.5 shadow-xs" 
+              title="সরাসরি আসল ফাইলে ৫-স্টার মেটাডাটা সেভ হয়েছে"
+            >
+              <CheckCircle2 size={9} />
+              <span>SAVED</span>
+            </span>
+          ) : (
+            <button 
+              onClick={(e) => { e.stopPropagation(); downloadWithMetadata(file.id); }}
+              className="px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[8px] font-black uppercase tracking-wider flex items-center gap-0.5 shadow-xs transition-all active:scale-95 cursor-pointer"
+              title="কোনো ডাউনলোড ছাড়াই সরাসরি এই ফাইলে ৫-স্টার মেটাডাটা সেভ করুন"
+            >
+              <Save size={9} />
+              <span>SAVE</span>
+            </button>
+          )}
           <button 
-            onClick={(e) => { e.stopPropagation(); downloadWithMetadata(file.id); }}
-            className="ml-1 p-1 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/15 rounded-sm transition-all border border-emerald-500/30"
-            title="Save / Embed 5-Star Metadata & Rename this file"
+            onClick={handleDelete}
+            className="p-0.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-all opacity-0 group-hover:opacity-100 cursor-pointer"
+            title="Delete file"
           >
-            <Save size={10} />
+            <Trash2 size={11} />
           </button>
-        )}
-        <button 
-          onClick={handleDelete}
-          className="ml-1 p-1 text-muted-foreground/30 hover:text-red-400 hover:bg-red-500/10 rounded-[1px] transition-all opacity-0 group-hover:opacity-100"
-          title="DELETE FILE"
-        >
-          <Trash2 size={10} />
-        </button>
+        </div>
       </div>
     </div>
   );
@@ -514,8 +532,22 @@ export default function App() {
   const [folderName, setFolderName] = useState<string>('');
   const [apiStatus, setApiStatus] = useState<ApiStatus>({});
   const [isEmbedModalOpen, setIsEmbedModalOpen] = useState(false);
+  const [showIframeModal, setShowIframeModal] = useState(false);
+
+  const isInIframe = useMemo(() => {
+    try {
+      return typeof window !== 'undefined' && window.self !== window.top;
+    } catch (e) {
+      return true;
+    }
+  }, []);
 
   const ensureDirectoryHandle = async (): Promise<any> => {
+    if (isInIframe) {
+      setShowIframeModal(true);
+      return null;
+    }
+
     if (directoryHandle) {
       try {
         if (typeof directoryHandle.queryPermission === 'function') {
@@ -540,7 +572,11 @@ export default function App() {
         if (handle) {
           if (typeof handle.requestPermission === 'function') {
             try {
-              await handle.requestPermission({ mode: 'readwrite' });
+              const p = await handle.requestPermission({ mode: 'readwrite' });
+              if (p !== 'granted') {
+                showNotification("ফোল্ডারে লেখার পারমিশন দেওয়া হয়নি।", 'error');
+                return null;
+              }
             } catch (pErr) {}
           }
           setDirectoryHandle(handle);
@@ -549,12 +585,15 @@ export default function App() {
         }
         return null;
       } catch (err: any) {
-        if (err.name !== 'AbortError' && err.name !== 'SecurityError') {
-          showNotification("ফোল্ডার অ্যাক্সেস পারমিশন দেওয়া হয়নি। আবার চেষ্টা করুন।", 'error');
+        if (err.name === 'SecurityError' || err.message?.includes('sub frame') || err.message?.includes('Cross-origin')) {
+          setShowIframeModal(true);
+        } else if (err.name !== 'AbortError') {
+          showNotification("ফোল্ডার নির্বাচন বাতিল বা পারমিশন দেওয়া হয়নি। কোনো ফাইল ডাউনলোড করা হয়নি।", 'error');
         }
         return null;
       }
     } else {
+      showNotification("আপনার ব্রাউজারে File System Access API নেই। ফাইলে সরাসরি সেভ করতে Google Chrome বা Microsoft Edge ব্রাউজার ব্যবহার করুন।", 'error');
       return null;
     }
   };
@@ -661,14 +700,27 @@ export default function App() {
   };
 
   const handleDirectorySelect = async () => {
+    if (isInIframe) {
+      setShowIframeModal(true);
+      return;
+    }
     if (!('showDirectoryPicker' in window)) {
       document.getElementById('folder-upload')?.click();
-      showNotification("সরাসরি ডিস্কে ফাইল রিনেম করার জন্য Google Chrome বা Microsoft Edge ব্যবহার করুন।", 'info');
+      showNotification("সরাসরি ফোল্ডারে ফাইল সেভ ও রিনেম করতে Google Chrome বা Microsoft Edge ব্যবহার করুন।", 'info');
       return;
     }
     try {
       // @ts-ignore
       const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      if (typeof handle.requestPermission === 'function') {
+        try {
+          const perm = await handle.requestPermission({ mode: 'readwrite' });
+          if (perm !== 'granted') {
+            showNotification("ফোল্ডারে লেখার পারমিশন দেওয়া হয়নি।", 'error');
+            return;
+          }
+        } catch (pErr) {}
+      }
       setIsLoadingFiles(true);
       setDirectoryHandle(handle);
       setFolderName(handle.name);
@@ -707,7 +759,7 @@ export default function App() {
       }
 
       if (newItems.length === 0) {
-        showNotification(`No supported media files found in "${handle.name}".`, 'info');
+        showNotification(`"${handle.name}" ফোল্ডারে কোনো সাপোর্ট করা ফাইল পাওয়া যায়নি।`, 'info');
         return;
       }
 
@@ -738,10 +790,10 @@ export default function App() {
         }
       }
 
-      showNotification(`Connected "${handle.name}": Loaded ${newItems.length} assets! Changes will occur directly in this folder.`, 'success');
+      showNotification(`"${handle.name}" ফোল্ডার কানেক্ট হয়েছে (${newItems.length} ফাইল)। এখন 'Embed' বাটনে ক্লিক করার সাথে সাথে মূল ফোল্ডারের আসল ফাইলগুলোতে সরাসরি পরিবর্তন হবে!`, 'success');
     } catch (err: any) {
       if (err.name === 'SecurityError' || err.message?.includes('sub frames') || err.message?.includes('Cross origin')) {
-        document.getElementById('folder-upload')?.click();
+        setShowIframeModal(true);
       } else if (err.name !== 'AbortError') {
         console.error("Directory access denied or failed:", err);
         showNotification(`Folder error: ${err.message}`, 'error');
@@ -752,6 +804,10 @@ export default function App() {
   };
 
   const handleFileSelectDirect = async () => {
+    if (isInIframe) {
+      setShowIframeModal(true);
+      return;
+    }
     if (!('showOpenFilePicker' in window)) {
       document.getElementById('file-upload')?.click();
       return;
@@ -826,10 +882,10 @@ export default function App() {
         }
       }
 
-      showNotification(`Selected ${newItems.length} files with direct disk read/write access!`, 'success');
+      showNotification(`${newItems.length}টি ফাইল সিলেক্ট করা হয়েছে। মেটাডাটা সরাসরি মূল ফাইলে সেভ হবে।`, 'success');
     } catch (err: any) {
       if (err.name === 'SecurityError' || err.message?.includes('sub frames') || err.message?.includes('Cross origin')) {
-        document.getElementById('file-upload')?.click();
+        setShowIframeModal(true);
       } else if (err.name !== 'AbortError') {
         console.error("File selection failed:", err);
       }
@@ -913,8 +969,12 @@ export default function App() {
 
     const fallbackExt = fileMetadata.fileType || (actualFile ? actualFile.name.split('.').pop() : 'jpg') || 'jpg';
     const rawTarget = (metadata.filename || fileMetadata.filename || (actualFile ? actualFile.name : `stock_${id}`)).trim();
-    const targetFilename = sanitizeFilenameForFs(rawTarget, fallbackExt);
-    const originalFilename = fileMetadata.originalFilename || (actualFile ? actualFile.name : targetFilename);
+    const originalFilename = fileMetadata.originalFilename || (actualFile ? actualFile.name : rawTarget);
+    const targetFilename = (metadata.filename && metadata.filename !== originalFilename)
+      ? sanitizeFilenameForFs(metadata.filename, fallbackExt)
+      : (fileMetadata.filename && fileMetadata.filename !== originalFilename)
+        ? sanitizeFilenameForFs(fileMetadata.filename, fallbackExt)
+        : originalFilename;
 
     try {
       setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saving', errorMessage: undefined } : f));
@@ -922,15 +982,30 @@ export default function App() {
       let outputBlob: Blob;
       if (actualFile) {
         try {
-          outputBlob = await prepareEmbeddedBlob(actualFile, { ...fileMetadata, ...metadata, filename: targetFilename });
+          const ratingVal = (metadata.rating !== undefined && metadata.rating > 0)
+            ? metadata.rating
+            : (fileMetadata.rating !== undefined && fileMetadata.rating > 0) ? fileMetadata.rating : 5;
+          const titleVal = (metadata.title || fileMetadata.title || originalFilename.replace(/\.[^/.]+$/, '')).trim();
+          const descVal = (metadata.description || fileMetadata.description || titleVal).trim();
+          const kwVal = (metadata.keywords || fileMetadata.keywords || '').trim();
+
+          outputBlob = await prepareEmbeddedBlob(actualFile, { 
+            ...fileMetadata, 
+            ...metadata, 
+            filename: targetFilename,
+            rating: ratingVal,
+            title: titleVal,
+            description: descVal,
+            keywords: kwVal
+          });
         } catch (embErr) {
           console.warn("Embed failed, falling back to original file:", embErr);
           outputBlob = actualFile;
         }
       } else {
         console.warn(`File ${id} has no binary object in memory.`);
-        setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved', errorMessage: undefined } : f));
-        return true;
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'error', errorMessage: 'ফাইল অবজেক্ট পাওয়া যায়নি' } : f));
+        return false;
       }
 
       // Update in-memory file object
@@ -1026,7 +1101,7 @@ export default function App() {
           await writable.close();
           handleWriteOk = true;
         } catch (hErr) {
-          console.warn("Direct handle save rejected or unsupported, using download fallback:", hErr);
+          console.warn("Direct handle save failed:", hErr);
           handleWriteOk = false;
         }
 
@@ -1042,39 +1117,36 @@ export default function App() {
         }
       }
 
-      // 3. Fallback for single files without writable handle OR when handle write is blocked:
-      // Instantly download the renamed file with 5-star rating, IPTC, EXIF, and XMP embedded inside!
-      try {
-        const blobUrl = URL.createObjectURL(outputBlob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = targetFilename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(blobUrl);
-
-        setFiles(prev => prev.map(f => f.id === id ? { 
-          ...f, 
-          status: 'saved', 
-          filename: targetFilename,
-          originalFilename: targetFilename,
-          errorMessage: undefined
-        } : f));
-        return true;
-      } catch (downErr) {
-        console.error("Direct download fallback failed:", downErr);
-        setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved' } : f));
-        return false;
+      // 3. If neither folder handle nor file handle is connected or writable:
+      // DO NOT DOWNLOAD! The user explicitly requested: "KONO KICU DOWNLOAD HOBE NA, FILE J JAIGAY ACEY OI JAIGAY CHANGE HOBE".
+      // We prompt the user with directory picker so it can be saved in-place.
+      if (!activeDir && typeof (window as any).showDirectoryPicker === 'function') {
+        try {
+          const pickedDir = await ensureDirectoryHandle();
+          if (pickedDir) {
+            return await saveMetadataToLocalFile(id, metadata, pickedDir);
+          }
+        } catch (dirErr) {
+          console.warn("Directory pick error:", dirErr);
+        }
       }
+
+      // If user cancelled or folder couldn't be connected, DO NOT DOWNLOAD!
+      showNotification(`"${targetFilename}" ফাইলে সরাসরি সেভ করতে 'Add Folder' দিয়ে ফোল্ডার কানেক্ট করুন। কোনো ফাইল ডাউনলোড করা হয়নি।`, 'error');
+      setFiles(prev => prev.map(f => f.id === id ? { 
+        ...f, 
+        status: 'error', 
+        errorMessage: 'ফোল্ডার কানেক্ট করা নেই। কোনো ফাইল ডাউনলোড হয়নি।' 
+      } : f));
+      return false;
     } catch (err: any) {
       console.warn("saveMetadataToLocalFile safe catch:", err);
       setFiles(prev => prev.map(f => f.id === id ? { 
         ...f, 
-        status: 'saved', 
-        errorMessage: undefined 
+        status: 'error', 
+        errorMessage: err.message || 'সেভ করা সম্ভব হয়নি' 
       } : f));
-      return true;
+      return false;
     }
   };
 
@@ -1673,8 +1745,36 @@ export default function App() {
     showNotification(`Exported ${targetFiles.length} records in standard ${format.toUpperCase()} format!`, 'success');
   };
 
-  const handleEmbed = async (type: 'image' | 'video' | 'eps' | 'all') => {
+  const handleEmbed = async (type: 'image' | 'video' | 'eps' | 'all', targetSingleId?: string) => {
+    if (isInIframe) {
+      setShowIframeModal(true);
+      return;
+    }
+
     let activeDir = directoryHandle;
+
+    // 1. If a specific single file is targeted
+    if (targetSingleId) {
+      const targetFile = files.find(f => f.id === targetSingleId);
+      if (targetFile) {
+        if (!activeDir && (!targetFile.handle || typeof targetFile.handle.createWritable !== 'function')) {
+          showNotification(`"${targetFile.filename}" ফাইলে কোনো ডাউনলোড ছাড়া সরাসরি সেভ করতে ফোল্ডারটি নির্বাচন করুন...`, 'info');
+          activeDir = await ensureDirectoryHandle();
+          if (!activeDir) {
+            showNotification(`ফোল্ডার নির্বাচন বাতিল হয়েছে। কোনো ফাইল ডাউনলোড করা হয়নি।`, 'error');
+            return;
+          }
+        }
+        setIsGenerating(true);
+        showNotification(`"${targetFile.filename}" ফাইলে সরাসরি আসল স্থানে ৫-স্টার মেটাডাটা সেভ করা হচ্ছে...`, 'info');
+        const ok = await saveMetadataToLocalFile(targetFile.id, targetFile, activeDir);
+        setIsGenerating(false);
+        if (ok) {
+          showNotification(`✓ কোনো ডাউনলোড ছাড়াই সরাসরি আসল ফাইলে ৫-স্টার মেটাডাটা সেভ হয়েছে: "${targetFile.filename}"!`, 'success');
+        }
+        return;
+      }
+    }
 
     const candidateFiles = files.filter(f => {
       const ext = f.fileType.toLowerCase();
@@ -1682,87 +1782,47 @@ export default function App() {
       if (type === 'video') return ['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext);
       if (type === 'eps') return ['eps', 'ai', 'svg'].includes(ext);
       return true;
-    }).filter(f => f.status === 'completed' || f.status === 'saved' || f.title || f.keywords);
+    });
 
     if (candidateFiles.length === 0) {
-      showNotification(`সেভ করার মতো কোনো ফাইল পাওয়া যায়নি। অনুগ্রহ করে প্রথমে মেটাডাটা Generate করুন।`, 'info');
+      showNotification(`সেভ করার মতো কোনো ফাইল পাওয়া যায়নি। অনুগ্রহ করে ফাইল বা ফোল্ডার যোগ করুন।`, 'info');
       return;
     }
 
+    // Ensure we have activeDir or file handles so we NEVER trigger browser downloads
+    if (!activeDir) {
+      const allHaveHandles = candidateFiles.every(f => f.handle && typeof f.handle.createWritable === 'function');
+      if (!allHaveHandles) {
+        showNotification("ফাইলগুলো যে ফোল্ডারে আছে সেই ফোল্ডারটি নির্বাচন করুন যাতে কোনো ডাউনলোড ছাড়া সরাসরি মূল ফাইলে মেটাডাটা সেভ হতে পারে...", 'info');
+        activeDir = await ensureDirectoryHandle();
+        if (!activeDir) {
+          showNotification("ফোল্ডার নির্বাচন বাতিল করা হয়েছে। সরাসরি সেভ করতে 'Add Folder' ব্যবহার করুন।", 'error');
+          return;
+        }
+      }
+    }
+
     setIsGenerating(true);
-    const targetLabel = activeDir?.name ? `"${activeDir.name}" ফোল্ডারে` : (candidateFiles.length === 1 ? 'সরাসরি ফাইলে' : 'ফাইলগুলোতে');
-    showNotification(`${targetLabel} ৫-স্টার মেটাডাটা সেভ করা হচ্ছে...`, 'info');
+    const targetLabel = activeDir?.name ? `"${activeDir.name}" ফোল্ডারে` : 'আসল ফাইলগুলোতে';
+    showNotification(`${targetLabel} সরাসরি ৫-স্টার মেটাডাটা সেভ করা হচ্ছে (কোনো ডাউনলোড ছাড়া)...`, 'info');
 
     let directSavedCount = 0;
 
-    if (activeDir) {
-      // 1. In-place Folder Save
-      for (const file of candidateFiles) {
-        try {
-          const saved = await saveMetadataToLocalFile(file.id, file, activeDir);
-          if (saved) directSavedCount++;
-        } catch (err) {
-          console.warn(`Folder embed error for ${file.filename}:`, err);
-        }
-      }
-    } else {
-      // 2. Single or Multiple files without an active folder
-      const allHaveHandles = candidateFiles.every(f => f.handle && typeof f.handle.createWritable === 'function');
-      
-      if (candidateFiles.length === 1) {
-        // Single file: save to handle or download directly
-        try {
-          const saved = await saveMetadataToLocalFile(candidateFiles[0].id, candidateFiles[0], undefined);
-          if (saved) directSavedCount++;
-        } catch (err) {
-          await downloadWithMetadata(candidateFiles[0].id);
-          directSavedCount++;
-        }
-      } else if (allHaveHandles) {
-        // All files have FileSystemFileHandles
-        for (const file of candidateFiles) {
-          try {
-            const saved = await saveMetadataToLocalFile(file.id, file, undefined);
-            if (saved) directSavedCount++;
-          } catch (err) {
-            console.warn(`Handle embed error for ${file.filename}:`, err);
-          }
-        }
-      } else {
-        // Multiple files loaded via standard file input / drag-and-drop
-        // Prompt directory picker if supported so all files can be saved in-place directly to a folder
-        let picked = false;
-        if ('showDirectoryPicker' in window) {
-          try {
-            showNotification("ফাইলগুলো সরাসরি সেভ করার জন্য একটি ফোল্ডার নির্বাচন করুন...", 'info');
-            // @ts-ignore
-            const pickedDir = await window.showDirectoryPicker({ mode: 'readwrite' });
-            if (pickedDir) {
-              setDirectoryHandle(pickedDir);
-              setFolderName(pickedDir.name);
-              picked = true;
-              for (const file of candidateFiles) {
-                const saved = await saveMetadataToLocalFile(file.id, file, pickedDir);
-                if (saved) directSavedCount++;
-              }
-            }
-          } catch (pickErr) {
-            console.warn("Directory picker cancelled, packaging into ZIP bundle:", pickErr);
-            picked = false;
-          }
-        }
-
-        if (!picked) {
-          // Cleanly package all files into ZIP with embedded 5-star metadata and scripts
-          showNotification("সমস্ত ফাইল ৫-স্টার মেটাডাটা সহ ZIP বান্ডেল তৈরি হচ্ছে...", 'info');
-          await handleDownloadZip();
-          directSavedCount = candidateFiles.length;
-        }
+    for (const file of candidateFiles) {
+      try {
+        const saved = await saveMetadataToLocalFile(file.id, file, activeDir);
+        if (saved) directSavedCount++;
+      } catch (err) {
+        console.warn(`Folder embed error for ${file.filename}:`, err);
       }
     }
 
     setIsGenerating(false);
-    showNotification(`✓ সম্পূর্ণ সফল! ${directSavedCount}টি ফাইলে ৫-স্টার মেটাডাটা ও রিনেম সংরক্ষিত হয়েছে!`, 'success');
+    if (directSavedCount > 0) {
+      showNotification(`✓ সফল! ${directSavedCount}টি ফাইল কোনো ডাউনলোড ছাড়াই সরাসরি আসল ফোল্ডারে মেটাডাটা সহ সেভ হয়েছে!`, 'success');
+    } else {
+      showNotification(`ফাইল সেভ সম্পন্ন হয়নি। কোনো ফাইল ডাউনলোড করা হয়নি।`, 'error');
+    }
   };
 
   const filteredFiles = useMemo(() => {
@@ -1822,61 +1882,18 @@ export default function App() {
 
     let activeDir = directoryHandle;
 
-    if (activeDir) {
-      try {
-        const ok = await saveMetadataToLocalFile(id, fileMetadata, activeDir);
-        if (ok) {
-          showNotification(`✓ ফোল্ডারে সরাসরি রিনেম এবং ভেতরে মেটাডাটা ও ৫-স্টার সেভ হয়েছে: "${fileMetadata.filename}"!`, 'success');
-          return;
-        }
-      } catch (err: any) {
-        console.warn("Folder save failed, falling back:", err);
-      }
-    }
-
-    // Direct single file handle save with explicit readwrite permissions
-    if (fileMetadata.handle && typeof fileMetadata.handle.createWritable === 'function') {
-      try {
-        if (typeof fileMetadata.handle.queryPermission === 'function') {
-          let perm = await fileMetadata.handle.queryPermission({ mode: 'readwrite' });
-          if (perm !== 'granted' && typeof fileMetadata.handle.requestPermission === 'function') {
-            perm = await fileMetadata.handle.requestPermission({ mode: 'readwrite' });
-          }
-        }
-        if (fileMetadata.filename && fileMetadata.filename !== fileMetadata.originalFilename && typeof (fileMetadata.handle as any).move === 'function') {
-          try {
-            await (fileMetadata.handle as any).move(fileMetadata.filename);
-          } catch (mErr) {
-            console.warn("Handle move failed:", mErr);
-          }
-        }
-        const outputBlob = await prepareEmbeddedBlob(actualFile, fileMetadata);
-        const writable = await fileMetadata.handle.createWritable({ keepExistingData: false });
-        await writable.write(outputBlob);
-        await writable.close();
-        setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved' } : f));
-        showNotification(`✓ সরাসরি ফাইলে "${fileMetadata.filename}" মেটাডাটা ও ৫-স্টার সেভ হয়েছে!`, 'success');
+    if (!activeDir && (!fileMetadata.handle || typeof fileMetadata.handle.createWritable !== 'function')) {
+      showNotification(`"${fileMetadata.filename}" ফাইলে কোনো ডাউনলোড ছাড়া সরাসরি সেভ করতে আসল ফোল্ডারটি নির্বাচন করুন...`, 'info');
+      activeDir = await ensureDirectoryHandle();
+      if (!activeDir) {
+        showNotification(`ফোল্ডার নির্বাচন বাতিল হয়েছে। কোনো ফাইল ডাউনলোড করা হয়নি।`, 'error');
         return;
-      } catch (err: any) {
-        console.warn("Direct file handle save failed, downloading directly:", err);
       }
     }
 
-    // Fallback: download directly with 5-star & metadata embedded without permission prompts
-    try {
-      const outputBlob = await prepareEmbeddedBlob(actualFile, fileMetadata);
-      const url = URL.createObjectURL(outputBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileMetadata.filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved' } : f));
-      showNotification(`✓ ডাউনলোড সম্পন্ন: "${fileMetadata.filename}" (৫-স্টার ও মেটাডাটা সহ)!`, 'success');
-    } catch (downErr: any) {
-      showNotification(`ডাউনলোড ব্যর্থ: ${downErr.message}`, 'error');
+    const ok = await saveMetadataToLocalFile(id, fileMetadata, activeDir);
+    if (ok) {
+      showNotification(`✓ কোনো ডাউনলোড ছাড়াই সরাসরি আসল ফাইলে "${fileMetadata.filename}" ৫-স্টার মেটাডাটা সেভ হয়েছে!`, 'success');
     }
   };
 
@@ -2106,7 +2123,7 @@ export default function App() {
                 setTimeout(startGeneration, 100);
               }}
               disabled={isGenerating || files.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/35 text-sky-200 border border-sky-400/60 rounded text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none active:scale-95 shadow-xs whitespace-nowrap"
+              className="flex items-center gap-1 px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white border border-sky-400/60 rounded text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none active:scale-95 shadow-xs whitespace-nowrap"
               title="Regenerate metadata for all files"
             >
               <RefreshCcw size={12} strokeWidth={2.5} />
@@ -2120,7 +2137,7 @@ export default function App() {
                   setTimeout(startGeneration, 100);
                 }}
                 disabled={isGenerating}
-                className="flex items-center gap-1 px-2.5 py-1 bg-amber-500/25 hover:bg-amber-500/40 text-amber-200 border border-amber-400/70 rounded text-xs font-bold transition-all cursor-pointer shadow-xs active:scale-95 whitespace-nowrap"
+                className="flex items-center gap-1 px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white border border-amber-400/70 rounded text-xs font-bold transition-all cursor-pointer shadow-xs active:scale-95 whitespace-nowrap"
                 title="Retry failed files"
               >
                 <RefreshCw size={12} strokeWidth={2.5} />
@@ -2145,7 +2162,7 @@ export default function App() {
             {files.length > 0 && (
               <button 
                 onClick={clearAll}
-                className="flex items-center gap-1 px-2.5 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 border border-rose-500/50 rounded text-xs font-bold transition-colors cursor-pointer whitespace-nowrap"
+                className="flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white border border-rose-400/60 rounded text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs active:scale-95"
                 title="Clear all assets from workspace"
               >
                 <Trash2 size={12} strokeWidth={2.5} />
@@ -2156,21 +2173,33 @@ export default function App() {
             <div className="h-4 w-px bg-border/80 mx-0.5" />
 
             {/* Embed & Save Action */}
+            {activeSelectedFile && (
+              <button 
+                onClick={() => handleEmbed('all', activeSelectedFile.id)}
+                disabled={isGenerating}
+                className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/60 rounded text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-45 active:scale-95 whitespace-nowrap"
+                title={`কোনো ডাউনলোড ছাড়া "${activeSelectedFile.filename}" ফাইলে সরাসরি ইন-প্লেস ৫-স্টার মেটাডাটা সেভ করুন`}
+              >
+                <FolderCheck size={12} strokeWidth={2.5} />
+                <span>Embed Selected</span>
+              </button>
+            )}
+
             <button 
               onClick={() => handleEmbed('all')}
               disabled={files.length === 0 || isGenerating}
               className="flex items-center gap-1.5 px-3 py-1 bg-teal-600 hover:bg-teal-500 text-white border border-teal-400/60 rounded text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-45 disabled:pointer-events-none active:scale-95 whitespace-nowrap"
-              title="Directly embed 5-star EXIF/IPTC/XMP metadata into files in-place"
+              title="কোনো ডাউনলোড ছাড়া আসল ফোল্ডারের ফাইলগুলোতে সরাসরি ৫-স্টার EXIF/IPTC/XMP মেটাডাটা সেভ করুন"
             >
               <FolderCheck size={12} strokeWidth={2.5} />
-              <span>Embed (Save)</span>
+              <span>{activeSelectedFile ? 'Embed All' : 'Embed (Save)'}</span>
             </button>
 
             {/* Rename All */}
             <button 
               onClick={renameAllByTitle}
               disabled={files.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-500/20 hover:bg-indigo-500/35 text-indigo-200 border border-indigo-400/60 rounded text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none active:scale-95 shadow-xs whitespace-nowrap"
+              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/60 rounded text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none active:scale-95 shadow-xs whitespace-nowrap"
               title="Automatically rename all filenames using generated titles"
             >
               <Edit3 size={12} strokeWidth={2.5} />
@@ -2181,7 +2210,7 @@ export default function App() {
             <button 
               onClick={handleDownloadZip}
               disabled={files.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1 bg-orange-500/20 hover:bg-orange-500/35 text-orange-200 border border-orange-400/60 rounded text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none active:scale-95 shadow-xs whitespace-nowrap"
+              className="flex items-center gap-1 px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white border border-amber-400/60 rounded text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none active:scale-95 shadow-xs whitespace-nowrap"
               title="Download renamed files with metadata packaged in a ZIP bundle"
             >
               <Download size={12} strokeWidth={2.5} />
@@ -2236,10 +2265,11 @@ export default function App() {
 
             <button 
               onClick={() => window.open(window.location.href, '_blank')}
-              className="p-1.5 hover:bg-accent text-muted-foreground hover:text-foreground rounded transition-colors cursor-pointer"
-              title="Open in New Tab for direct local folder permissions"
+              className="flex items-center gap-1 px-2.5 py-1 bg-sky-950/80 hover:bg-sky-900 border border-sky-500/70 text-sky-300 font-bold rounded text-xs transition-colors cursor-pointer shadow-2xs whitespace-nowrap active:scale-95"
+              title="ব্রাউজারের নতুন ট্যাবে খুলুন যাতে সরাসরি কম্পিউটারের ফোল্ডারে ফাইল সেভ করা যায় (কোনো ডাউনলোড ছাড়া)"
             >
-              <ExternalLink size={14} />
+              <ExternalLink size={12} strokeWidth={2.5} />
+              <span>New Window</span>
             </button>
 
             <button 
@@ -2295,7 +2325,10 @@ export default function App() {
 
             {/* Gen Options Checkboxes - Distinct Color Badges (Permanently Visible) */}
             <div className="flex items-center gap-2 text-[11px] flex-wrap">
-              <label className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/60 text-emerald-300 font-bold hover:border-emerald-400 shadow-2xs cursor-pointer select-none transition-colors whitespace-nowrap">
+              <label className={cn(
+                "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border shadow-2xs cursor-pointer select-none transition-all whitespace-nowrap font-bold",
+                genOptions.autoSave ? "bg-emerald-600 text-white border-emerald-400" : "bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500"
+              )}>
                 <input 
                   type="checkbox" 
                   checked={genOptions.autoSave}
@@ -2305,7 +2338,10 @@ export default function App() {
                 <span>Auto-Save</span>
               </label>
 
-              <label className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-950/60 border border-cyan-500/60 text-cyan-300 font-bold hover:border-cyan-400 shadow-2xs cursor-pointer select-none transition-colors whitespace-nowrap">
+              <label className={cn(
+                "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border shadow-2xs cursor-pointer select-none transition-all whitespace-nowrap font-bold",
+                genOptions.autoExport ? "bg-cyan-600 text-white border-cyan-400" : "bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500"
+              )}>
                 <input 
                   type="checkbox" 
                   checked={genOptions.autoExport}
@@ -2315,7 +2351,10 @@ export default function App() {
                 <span>Auto-Export</span>
               </label>
 
-              <label className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-purple-950/60 border border-purple-500/60 text-purple-300 font-bold hover:border-purple-400 shadow-2xs cursor-pointer select-none transition-colors whitespace-nowrap">
+              <label className={cn(
+                "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border shadow-2xs cursor-pointer select-none transition-all whitespace-nowrap font-bold",
+                genOptions.aiEnhance ? "bg-purple-600 text-white border-purple-400" : "bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500"
+              )}>
                 <input 
                   type="checkbox" 
                   checked={genOptions.aiEnhance}
@@ -2425,69 +2464,73 @@ export default function App() {
 
         {/* Left/Center Area: Virtualized Windows Table */}
         <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-          {/* Windows Style Table Header with High-Contrast Distinct Colors */}
-          <div className="flex flex-row w-full border-b-2 border-slate-700 bg-slate-900/95 text-[11px] font-black uppercase tracking-wider shrink-0 shadow-xs">
-            <div className="w-[12%] px-2.5 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-cyan-400 transition-colors">
-              <span>Filename</span> <ChevronRight size={12} className="rotate-90 text-cyan-400/70" />
-            </div>
-            <div className="w-[15%] px-2.5 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-amber-400 transition-colors">
-              <span>Title</span> <ChevronRight size={12} className="rotate-90 text-amber-400/70" />
-            </div>
-            <div className="w-[25%] px-2.5 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-emerald-400 transition-colors">
-              <span>Keywords</span> <ChevronRight size={12} className="rotate-90 text-emerald-400/70" />
-            </div>
-            <div className="w-[20%] px-3 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-purple-300 transition-colors">
-              <span>Description</span> <ChevronRight size={12} className="rotate-90 text-purple-300/70" />
-            </div>
-            <div className="w-[10%] px-3 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-rose-400 transition-colors">
-              <span>Category</span> <ChevronRight size={12} className="rotate-90 text-rose-400/70" />
-            </div>
-            <div className="w-[8%] px-3 py-2 border-r border-slate-800 shrink-0 hover:bg-slate-800/60 cursor-pointer flex items-center justify-between text-blue-400 transition-colors">
-              <span>KW Count</span> <ChevronRight size={12} className="rotate-90 text-blue-400/70" />
-            </div>
-            <div className="w-[10%] px-3 py-2 text-center shrink-0 hover:bg-slate-800/60 cursor-pointer text-yellow-400 transition-colors">
-              <span>5★ & Save</span>
-            </div>
-          </div>
+          <div className="flex-1 overflow-x-auto overflow-y-hidden flex flex-col min-w-0 custom-scrollbar">
+            <div className="min-w-[1100px] h-full flex flex-col">
+              {/* Windows Style Table Header with High-Contrast Distinct Colors */}
+              <div className="flex flex-row w-full border-b border-slate-700 bg-slate-900 text-[11px] font-bold uppercase tracking-wider shrink-0 shadow-xs">
+                <div className="w-[18%] min-w-[190px] px-2.5 py-1.5 border-r border-slate-800 shrink-0 flex items-center justify-between text-cyan-400">
+                  <span>Filename</span>
+                </div>
+                <div className="w-[22%] min-w-[230px] px-2.5 py-1.5 border-r border-slate-800 shrink-0 flex items-center justify-between text-amber-400">
+                  <span>Title</span>
+                </div>
+                <div className="w-[26%] min-w-[270px] px-2.5 py-1.5 border-r border-slate-800 shrink-0 flex items-center justify-between text-emerald-400">
+                  <span>Keywords</span>
+                </div>
+                <div className="w-[18%] min-w-[190px] px-2.5 py-1.5 border-r border-slate-800 shrink-0 flex items-center justify-between text-purple-300">
+                  <span>Description</span>
+                </div>
+                <div className="w-[5%] min-w-[65px] px-1 py-1.5 border-r border-slate-800 shrink-0 text-center text-rose-400">
+                  <span>Category</span>
+                </div>
+                <div className="w-[4%] min-w-[50px] px-1 py-1.5 border-r border-slate-800 shrink-0 text-center text-sky-400">
+                  <span>Count</span>
+                </div>
+                <div className="w-[7%] min-w-[95px] px-1 py-1.5 text-center shrink-0 text-yellow-400">
+                  <span>5★ & Save</span>
+                </div>
+              </div>
 
-          {/* Table Body */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar bg-background">
-            {filteredFiles.length === 0 ? (
-              <div 
-                className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-6 transition-all"
-              >
-                <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center border border-border">
-                  <Upload size={48} strokeWidth={1} className="opacity-10" />
-                </div>
-                <div className="text-center">
-                  <p className="text-lg font-bold text-muted-foreground uppercase">NO {settings.metadataFor.toUpperCase()} FILES LOADED</p>
-                </div>
+              {/* Table Body */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar bg-background">
+                {filteredFiles.length === 0 ? (
+                  <div 
+                    className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-6 transition-all"
+                  >
+                    <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center border border-border">
+                      <Upload size={48} strokeWidth={1} className="opacity-10" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-muted-foreground uppercase">NO {settings.metadataFor.toUpperCase()} FILES LOADED</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-full w-full border-t border-border/40">
+                    <FixedSizeList
+                      height={window.innerHeight - 200}
+                      itemCount={filteredFiles.length}
+                      itemSize={62}
+                      width="100%"
+                      itemData={{
+                        files: filteredFiles,
+                        updateFile,
+                        regenerateSingleFile,
+                        downloadWithMetadata,
+                        deleteFile,
+                        isGenerating,
+                        openErrorModal,
+                        openPreviewModal,
+                        selectedFileId: activeSelectedFile?.id,
+                        setSelectedFileId
+                      }}
+                      className="custom-scrollbar"
+                    >
+                      {FileRow}
+                    </FixedSizeList>
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="h-full w-full border-t border-border">
-                <FixedSizeList
-                  height={window.innerHeight - 200}
-                  itemCount={filteredFiles.length}
-                  itemSize={52}
-                  width="100%"
-                  itemData={{
-                    files: filteredFiles,
-                    updateFile,
-                    regenerateSingleFile,
-                    downloadWithMetadata,
-                    deleteFile,
-                    isGenerating,
-                    openErrorModal,
-                    openPreviewModal,
-                    selectedFileId: activeSelectedFile?.id,
-                    setSelectedFileId
-                  }}
-                  className="custom-scrollbar"
-                >
-                  {FileRow}
-                </FixedSizeList>
-              </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
@@ -3378,7 +3421,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Modal Footer Actions */}
             <div className="p-3 bg-muted/40 border-t border-border flex items-center justify-between gap-2 flex-wrap">
               <div className="text-[10px] font-medium text-muted-foreground">
                 Live metadata editing active. Changes are instantly saved.
@@ -3408,6 +3450,62 @@ export default function App() {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Iframe Restriction Modal for Direct Local Disk In-Place Saving */}
+      {showIframeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-amber-500/60 rounded-lg max-w-lg w-full p-6 shadow-2xl text-slate-100 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 border border-amber-500/40">
+                  <FolderCheck size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">সরাসরি মূল ফাইলে সেভ করার নির্দেশনা</h3>
+                  <p className="text-xs text-amber-400 font-medium mt-0.5">কোনো কিছু ডাউনলোড হবে না — ইন-প্লেস ওভাররাইট</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowIframeModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-300 space-y-2.5 leading-relaxed bg-slate-950/70 p-3.5 rounded border border-slate-800">
+              <p className="font-semibold text-white">
+                আপনি চেয়েছেন: <span className="text-amber-300 font-bold">"ফাইল যে জায়গায় আছে ওই জায়গায় চেঞ্জ হবে, কোনো কিছু ডাউনলোড হবে না।"</span>
+              </p>
+              <p>
+                আপনার কম্পিউটারের মূল ফোল্ডারের ফাইলে সরাসরি ৫-স্টার মেটাডাটা পরিবর্তন (In-place Overwrite) করতে ব্রাউজার সিকিউরিটির কারণে অ্যাপটি <strong>নতুন উইন্ডো/ট্যাবে (New Window)</strong> ওপেন করতে হবে।
+              </p>
+              <p className="text-emerald-400 font-semibold">
+                ✓ নিচে <strong>"নতুন ট্যাবে খুলুন"</strong> বাটনে ক্লিক করে ফোল্ডার সিলেক্ট করলেই আপনার কম্পিউটারের আসল ফাইলে সরাসরি ৫-স্টার রেটিং, টাইটেল, কিওয়ার্ডস ও রিনেম সেভ হবে — কোনো ডাউনলোড ছাড়াই!
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => setShowIframeModal(false)}
+                className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded border border-slate-700 cursor-pointer"
+              >
+                বাতিল করুন
+              </button>
+              <button
+                onClick={() => {
+                  setShowIframeModal(false);
+                  window.open(window.location.href, '_blank');
+                }}
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded flex items-center gap-1.5 shadow-md cursor-pointer transition-all active:scale-95"
+              >
+                <ExternalLink size={14} />
+                <span>নতুন ট্যাবে খুলুন (Open in New Tab)</span>
+              </button>
             </div>
           </div>
         </div>

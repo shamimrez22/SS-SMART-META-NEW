@@ -25,8 +25,8 @@ export function sanitizeFilenameForFs(name: string, fallbackExt: string = 'jpg')
   base = base.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
   // Trim leading/trailing spaces, dots, and hyphens
   base = base.replace(/^[.\s-]+|[.\s-]+$/g, '');
-  // Collapse whitespace and multiple dashes
-  base = base.replace(/[-_\s]+/g, '-');
+  // Collapse whitespace and repeated dashes
+  base = base.replace(/\s+/g, '-').replace(/-+/g, '-');
   if (!base || base === '-') base = `stock_${Date.now()}`;
 
   ext = ext.replace(/[/\\?%*:|"<>#\s]/g, '').toLowerCase() || fallbackExt;
