@@ -489,6 +489,18 @@ export default function App() {
               newMetadata.filename = newName;
             }
           }
+          if (updates.keywords !== undefined || updates.title !== undefined) {
+            const kwCount = (newMetadata.keywords || '').split(',').map(k => k.trim()).filter(Boolean).length;
+            if (kwCount >= 35 && newMetadata.title?.trim()) {
+              newMetadata.keywordScore = 100;
+            } else if (kwCount >= 25) {
+              newMetadata.keywordScore = 90;
+            } else if (kwCount >= 15) {
+              newMetadata.keywordScore = 75;
+            } else if (kwCount > 0) {
+              newMetadata.keywordScore = Math.min(100, Math.round((kwCount / 35) * 100));
+            }
+          }
           return newMetadata;
         }
         return f;
@@ -2992,17 +3004,76 @@ export default function App() {
                 </div>
 
                 {/* Custom Global Instructions */}
-                <div className={cn("space-y-3 transition-all duration-300", !settings.customPromptEnabled && "opacity-40 pointer-events-none")}>
-                  <label className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center justify-between">
-                    <span>Custom Global AI Prompt Instructions</span>
-                    <span className="text-xs text-muted-foreground normal-case font-medium">Enabled via "Custom Prompt" switch above</span>
-                  </label>
-                  <textarea 
-                    value={settings.customPrompt}
-                    onChange={(e) => setSettings(prev => ({ ...prev, customPrompt: e.target.value }))}
-                    placeholder="Provide additional rules for the AI (e.g., 'Always emphasize lighting and mood', 'Keep titles concise and editorial', 'Avoid brand names')..."
-                    className="w-full bg-secondary border border-border text-xs md:text-sm p-4 rounded-md h-28 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 resize-none font-medium leading-relaxed"
-                  />
+                <div className="space-y-3 transition-all duration-300">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2">
+                      <span>Custom Global AI Prompt Instructions</span>
+                      {settings.customPromptEnabled ? (
+                        <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">ACTIVE</span>
+                      ) : (
+                        <span className="text-[10px] font-bold text-muted-foreground bg-secondary px-2 py-0.5 rounded border border-border">DISABLED</span>
+                      )}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setSettings(prev => ({ ...prev, customPromptEnabled: !prev.customPromptEnabled }))}
+                      className={cn(
+                        "text-xs font-bold px-2.5 py-1 rounded transition-colors",
+                        settings.customPromptEnabled 
+                          ? "bg-primary text-primary-foreground" 
+                          : "bg-secondary text-muted-foreground hover:text-foreground border border-border"
+                      )}
+                    >
+                      {settings.customPromptEnabled ? "Disable Custom Prompt" : "Enable Custom Prompt"}
+                    </button>
+                  </div>
+
+                  {/* 1-Click Subject-Accuracy Presets */}
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <span className="text-[11px] font-bold text-muted-foreground">Quick 100% Presets:</span>
+                    <button
+                      type="button"
+                      onClick={() => setSettings(prev => ({
+                        ...prev,
+                        customPromptEnabled: true,
+                        customPrompt: "Analyze the exact visual content of the file with 100% accuracy. If there are visible numbers, year digits, road signs, or specific subjects, feature them prominently in the title, description, and keywords. Generate exactly 50 hyper-relevant commercial stock keywords with zero generic filler."
+                      }))}
+                      className="text-[11px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      🎯 100% Exact Subject & Numbers
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettings(prev => ({
+                        ...prev,
+                        customPromptEnabled: true,
+                        customPrompt: "Strictly identify the exact landscape, road markings, painted numbers/years (such as 2027), drone perspective, and forest setting. Include future roadmap, journey, and new year celebration concepts."
+                      }))}
+                      className="text-[11px] font-semibold bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      🌲 Aerial Road & Year 2027
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettings(prev => ({
+                        ...prev,
+                        customPromptEnabled: true,
+                        customPrompt: "World-class commercial stock metadata: Literal descriptive title, comprehensive 35-word description, and exactly 50 high-ranking stock keywords categorized by primary subject, environment, and commercial search intent."
+                      }))}
+                      className="text-[11px] font-semibold bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30 px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      ⭐ 50 Full Keywords & 5-Star Rank
+                    </button>
+                  </div>
+
+                  <div className={cn("transition-all duration-300", !settings.customPromptEnabled && "opacity-40")}>
+                    <textarea 
+                      value={settings.customPrompt}
+                      onChange={(e) => setSettings(prev => ({ ...prev, customPrompt: e.target.value }))}
+                      placeholder="Provide additional rules for the AI (e.g., 'Always emphasize lighting and mood', 'Keep titles concise and editorial', 'Avoid brand names')..."
+                      className="w-full bg-secondary border border-border text-xs md:text-sm p-4 rounded-md h-28 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 resize-none font-medium leading-relaxed"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
