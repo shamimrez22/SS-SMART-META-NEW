@@ -468,11 +468,16 @@ export default function App() {
   }, [notification]);
 
   const formatFilename = useCallback((text: string) => {
-    return text
-      .toLowerCase()
-      .replace(/[^\w\s-]/g, '') // Remove special chars
-      .replace(/[\s_-]+/g, '-') // Replace spaces and underscores with hyphens
-      .replace(/^-+|-+$/g, ''); // Trim hyphens
+    if (!text || !text.trim()) return '';
+    let clean = text.trim();
+    // Remove characters illegal in file systems on Windows/Mac/Linux: \ / : * ? " < > | #
+    clean = clean.replace(/[/\\?%*:|"<>#]/g, '');
+    // Replace punctuation, brackets, quotes with space
+    clean = clean.replace(/[,;()[\]{}"'`~+=]/g, ' ');
+    // Collapse whitespace and underscores to single hyphen
+    clean = clean.replace(/[\s_]+/g, '-').replace(/-+/g, '-');
+    clean = clean.replace(/^[.-]+|[.-]+$/g, '');
+    return clean.toLowerCase();
   }, []);
 
   const updateFile = useCallback((id: string, updates: Partial<StockMetadata>) => {
@@ -483,6 +488,10 @@ export default function App() {
       return prev.map(f => {
         if (f.id === id) {
           const newMetadata = { ...f, ...updates };
+          // Ensure originalFilename is never lost
+          if (!newMetadata.originalFilename) {
+            newMetadata.originalFilename = f.originalFilename || f.filename;
+          }
           if (updates.title !== undefined && updates.filename === undefined && updates.title.trim()) {
             const extension = f.filename.split('.').pop() || f.fileType || 'jpg';
             const formatted = formatFilename(updates.title);
@@ -918,6 +927,7 @@ export default function App() {
             newItems.push({
               id,
               filename: file.name,
+              originalFilename: file.name,
               title: '',
               description: '',
               keywords: '',
@@ -970,11 +980,41 @@ export default function App() {
     const fallbackExt = fileMetadata.fileType || (actualFile ? actualFile.name.split('.').pop() : 'jpg') || 'jpg';
     const rawTarget = (metadata.filename || fileMetadata.filename || (actualFile ? actualFile.name : `stock_${id}`)).trim();
     const originalFilename = fileMetadata.originalFilename || (actualFile ? actualFile.name : rawTarget);
-    const targetFilename = (metadata.filename && metadata.filename !== originalFilename)
-      ? sanitizeFilenameForFs(metadata.filename, fallbackExt)
-      : (fileMetadata.filename && fileMetadata.filename !== originalFilename)
-        ? sanitizeFilenameForFs(fileMetadata.filename, fallbackExt)
-        : originalFilename;
+
+    // Determine the desired target filename:
+    // 1. Explicit filename passed in metadata that differs from original
+    // 2. Or fileMetadata.filename if it differs from original
+    // 3. Or if title is set and filename is still original: auto-derive SEO filename from title!
+    let desiredName = (metadata.filename || '').trim();
+    if (!desiredName || desiredName === originalFilename) {
+      if (fileMetadata.filename && fileMetadata.filename.trim() !== originalFilename) {
+        desiredName = fileMetadata.filename.trim();
+      } else {
+        const titleForName = (metadata.title || fileMetadata.title || '').trim();
+        if (titleForName) {
+          const formattedTitle = formatFilename(titleForName);
+          if (formattedTitle) {
+            desiredName = `${formattedTitle}.${fallbackExt}`;
+          }
+        }
+      }
+    }
+    if (!desiredName) {
+      desiredName = originalFilename;
+    }
+
+    const targetFilename = sanitizeFilenameForFs(desiredName, fallbackExt);
+    const isRenamed = targetFilename !== originalFilename;
+
+    // Single FileSystemFileHandle cannot rename/move itself on user local disk outside of OPFS.
+    // If the file needs to be renamed and activeDir is not connected yet, prompt user for folder!
+    if (isRenamed && !activeDir && typeof (window as any).showDirectoryPicker === 'function' && !isInIframe) {
+      try {
+        activeDir = await ensureDirectoryHandle();
+      } catch (dirErr) {
+        console.warn("Prompting for directory to rename failed:", dirErr);
+      }
+    }
 
     try {
       setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saving', errorMessage: undefined } : f));
@@ -1012,7 +1052,7 @@ export default function App() {
       const updatedFile = new File([outputBlob], targetFilename, { type: actualFile.type || 'image/jpeg' });
       setFileObjects(prev => ({ ...prev, [id]: updatedFile }));
 
-      // 1. Direct Folder In-Place Save & Rename
+      // 1. Direct Folder In-Place Save & Rename (Overwrites/creates targetFilename on disk and deletes originalFilename)
       if (activeDir && typeof activeDir.getFileHandle === 'function') {
         try {
           if (typeof activeDir.queryPermission === 'function') {
@@ -1029,12 +1069,9 @@ export default function App() {
         try {
           newFileHandle = await activeDir.getFileHandle(targetFilename, { create: true });
         } catch (nameErr) {
-          const safeName = `stock_${id}_${Date.now()}.${fallbackExt}`;
-          try {
-            newFileHandle = await activeDir.getFileHandle(safeName, { create: true });
-          } catch (safeErr) {
-            console.warn("Failed to get fallback handle:", safeErr);
-          }
+          console.warn("Failed to get handle for targetFilename:", targetFilename, nameErr);
+          const safeName = sanitizeFilenameForFs(`asset_${id}_${Date.now()}`, fallbackExt);
+          newFileHandle = await activeDir.getFileHandle(safeName, { create: true });
         }
 
         if (newFileHandle && typeof newFileHandle.createWritable === 'function') {
@@ -1048,16 +1085,33 @@ export default function App() {
               await activeDir.removeEntry(`${targetFilename}.xmp`);
             } catch (e) {}
 
-            // Delete old unrenamed file from folder if filename changed
-            if (originalFilename && originalFilename !== targetFilename) {
-              try {
-                await activeDir.removeEntry(originalFilename);
-              } catch (delErr) {
-                console.warn("Could not remove old file:", delErr);
+            // If renamed, delete old unrenamed file from folder!
+            if (isRenamed) {
+              // Case-insensitive check: if only letter case changed on Windows (e.g. DSC.JPG -> dsc.jpg),
+              // deleting originalFilename might delete the newly written file on Windows NTFS!
+              if (originalFilename.toLowerCase() !== targetFilename.toLowerCase()) {
+                try {
+                  await activeDir.removeEntry(originalFilename);
+                } catch (delErr) {
+                  // Fallback: search folder entries case-insensitively to remove old file
+                  try {
+                    for await (const entry of activeDir.values()) {
+                      if (entry.kind === 'file' && 
+                          entry.name.toLowerCase() === originalFilename.toLowerCase() && 
+                          entry.name.toLowerCase() !== targetFilename.toLowerCase()) {
+                        await activeDir.removeEntry(entry.name);
+                        break;
+                      }
+                    }
+                  } catch (scanErr) {
+                    console.warn("Folder scan removal failed:", scanErr);
+                  }
+                }
+
+                try {
+                  await activeDir.removeEntry(`${originalFilename}.xmp`);
+                } catch (delXmpErr) {}
               }
-              try {
-                await activeDir.removeEntry(`${originalFilename}.xmp`);
-              } catch (delXmpErr) {}
             }
 
             setFiles(prev => prev.map(f => f.id === id ? { 
@@ -1076,7 +1130,7 @@ export default function App() {
         }
       } 
       
-      // 2. Direct Single File Handle Save with ReadWrite Permission Check & Move
+      // 2. Direct Single File Handle Save (when folder handle is not available)
       if (fileMetadata.handle && typeof fileMetadata.handle.createWritable === 'function') {
         let handleWriteOk = false;
         try {
@@ -1087,12 +1141,12 @@ export default function App() {
             }
           }
 
-          // If renamed, try to move/rename file handle on disk
-          if (targetFilename && targetFilename !== originalFilename && typeof (fileMetadata.handle as any).move === 'function') {
+          // In standard web browsers, handle.move() is not supported on user disk files outside OPFS
+          if (isRenamed && typeof (fileMetadata.handle as any).move === 'function') {
             try {
               await (fileMetadata.handle as any).move(targetFilename);
             } catch (mErr) {
-              console.warn("Handle move failed, writing to current handle:", mErr);
+              console.warn("Handle move not supported:", mErr);
             }
           }
 
@@ -1106,11 +1160,14 @@ export default function App() {
         }
 
         if (handleWriteOk) {
+          if (isRenamed) {
+            showNotification(`"${originalFilename}" ফাইলে মেটাডাটা সেভ হয়েছে। কিন্তু ফাইলের নাম "${targetFilename}"-এ পরিবর্তন করতে 'Add Folder' দিয়ে ফোল্ডার কানেক্ট করুন।`, 'info');
+          }
           setFiles(prev => prev.map(f => f.id === id ? { 
             ...f, 
             status: 'saved', 
-            filename: targetFilename,
-            originalFilename: targetFilename,
+            filename: isRenamed ? targetFilename : f.filename,
+            originalFilename: isRenamed ? originalFilename : targetFilename,
             errorMessage: undefined
           } : f));
           return true;
@@ -1118,8 +1175,6 @@ export default function App() {
       }
 
       // 3. If neither folder handle nor file handle is connected or writable:
-      // DO NOT DOWNLOAD! The user explicitly requested: "KONO KICU DOWNLOAD HOBE NA, FILE J JAIGAY ACEY OI JAIGAY CHANGE HOBE".
-      // We prompt the user with directory picker so it can be saved in-place.
       if (!activeDir && typeof (window as any).showDirectoryPicker === 'function') {
         try {
           const pickedDir = await ensureDirectoryHandle();
@@ -1132,7 +1187,7 @@ export default function App() {
       }
 
       // If user cancelled or folder couldn't be connected, DO NOT DOWNLOAD!
-      showNotification(`"${targetFilename}" ফাইলে সরাসরি সেভ করতে 'Add Folder' দিয়ে ফোল্ডার কানেক্ট করুন। কোনো ফাইল ডাউনলোড করা হয়নি।`, 'error');
+      showNotification(`"${targetFilename}" ফাইলটি সরাসরি রিনেম ও সেভ করতে 'Add Folder' দিয়ে ফোল্ডার কানেক্ট করুন। কোনো ফাইল ডাউনলোড করা হয়নি।`, 'error');
       setFiles(prev => prev.map(f => f.id === id ? { 
         ...f, 
         status: 'error', 
@@ -1789,11 +1844,17 @@ export default function App() {
       return;
     }
 
-    // Ensure we have activeDir or file handles so we NEVER trigger browser downloads
+    // Ensure we have activeDir or file handles so we NEVER trigger browser downloads,
+    // and if any file has been renamed, a folder handle is required to rename the file on disk.
     if (!activeDir) {
-      const allHaveHandles = candidateFiles.every(f => f.handle && typeof f.handle.createWritable === 'function');
-      if (!allHaveHandles) {
-        showNotification("ফাইলগুলো যে ফোল্ডারে আছে সেই ফোল্ডারটি নির্বাচন করুন যাতে কোনো ডাউনলোড ছাড়া সরাসরি মূল ফাইলে মেটাডাটা সেভ হতে পারে...", 'info');
+      const needsFolder = candidateFiles.some(f => {
+        const orig = f.originalFilename || f.filename;
+        const target = sanitizeFilenameForFs(f.filename, f.fileType || 'jpg');
+        return target !== orig || !f.handle || typeof f.handle.createWritable !== 'function';
+      });
+
+      if (needsFolder) {
+        showNotification("ফাইলগুলো রিনেম ও মেটাডাটা সরাসরি আসল ফোল্ডারে সেভ করতে ফোল্ডারটি নির্বাচন করুন...", 'info');
         activeDir = await ensureDirectoryHandle();
         if (!activeDir) {
           showNotification("ফোল্ডার নির্বাচন বাতিল করা হয়েছে। সরাসরি সেভ করতে 'Add Folder' ব্যবহার করুন।", 'error');
@@ -1882,8 +1943,14 @@ export default function App() {
 
     let activeDir = directoryHandle;
 
-    if (!activeDir && (!fileMetadata.handle || typeof fileMetadata.handle.createWritable !== 'function')) {
-      showNotification(`"${fileMetadata.filename}" ফাইলে কোনো ডাউনলোড ছাড়া সরাসরি সেভ করতে আসল ফোল্ডারটি নির্বাচন করুন...`, 'info');
+    const fallbackExt = fileMetadata.fileType || (actualFile ? actualFile.name.split('.').pop() : 'jpg') || 'jpg';
+    const rawTarget = (fileMetadata.filename || (actualFile ? actualFile.name : `stock_${id}`)).trim();
+    const originalFilename = fileMetadata.originalFilename || (actualFile ? actualFile.name : rawTarget);
+    const targetFilename = sanitizeFilenameForFs(rawTarget, fallbackExt);
+    const isRenamed = targetFilename !== originalFilename;
+
+    if (!activeDir && (isRenamed || !fileMetadata.handle || typeof fileMetadata.handle.createWritable !== 'function')) {
+      showNotification(`"${targetFilename}" ফাইলে কোনো ডাউনলোড ছাড়া সরাসরি রিনেম ও সেভ করতে মূল ফোল্ডারটি নির্বাচন করুন...`, 'info');
       activeDir = await ensureDirectoryHandle();
       if (!activeDir) {
         showNotification(`ফোল্ডার নির্বাচন বাতিল হয়েছে। কোনো ফাইল ডাউনলোড করা হয়নি।`, 'error');
@@ -1893,7 +1960,7 @@ export default function App() {
 
     const ok = await saveMetadataToLocalFile(id, fileMetadata, activeDir);
     if (ok) {
-      showNotification(`✓ কোনো ডাউনলোড ছাড়াই সরাসরি আসল ফাইলে "${fileMetadata.filename}" ৫-স্টার মেটাডাটা সেভ হয়েছে!`, 'success');
+      showNotification(`✓ সরাসরি ফাইলে ৫-স্টার মেটাডাটা ও রিনেম সেভ হয়েছে: "${targetFilename}"!`, 'success');
     }
   };
 
