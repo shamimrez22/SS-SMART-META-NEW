@@ -35,12 +35,20 @@ export interface ApiStatus {
   [key: string]: ApiConnectionStatus;
 }
 
+export type StockMarketplace = 'universal' | 'adobe' | 'shutterstock' | 'freepik' | 'getty' | 'alamy' | 'vecteezy' | '123rf' | 'dreamstime';
+
 export interface GeneratorSettings {
   titleLength: [number, number];
   descriptionLength: [number, number];
   keywordsCount: number;
   autoDownload: boolean;
   promptMode: 'default' | 'adobe' | 'shutterstock' | 'custom';
+  marketplace: StockMarketplace;
+  aiModel: string;
+  titlePrefix: string;
+  titleSuffix: string;
+  keywordsPrefix: string;
+  keywordsSuffix: string;
   customPrompt: string;
   optimizeKeywords: boolean;
   minTitleWords: number;
@@ -59,6 +67,8 @@ export interface GeneratorSettings {
   customPromptEnabled: boolean;
   autoGenerateOnAdd: boolean;
   savedKeywords: string[];
+  autoSyncFilenameWithTitle?: boolean;
+  filenameFormat?: 'exact_title' | 'kebab_case' | 'snake_case';
 }
 
 export interface HistoryItem {

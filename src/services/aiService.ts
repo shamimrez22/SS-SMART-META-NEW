@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import UTIF from "utif";
+import { sanitizeStockTitle, sanitizeStockKeywords } from "./marketplaceSanitizer";
 
 export async function testApiConnection(provider: 'gemini' | 'groq' | 'mistral', apiKey: string): Promise<{ success: boolean; message?: string }> {
   try {
@@ -858,9 +859,10 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
     "gemini-3.8-flash"
   ];
 
-  // Put cached successful model first to prevent wasted attempts
-  const modelsToTry = cachedWorkingModel 
-    ? [cachedWorkingModel, ...baseModels.filter(m => m !== cachedWorkingModel)]
+  // If user selected a specific AI model in settings, try it first
+  const preferredModel = settings.aiModel && baseModels.includes(settings.aiModel) ? settings.aiModel : cachedWorkingModel;
+  const modelsToTry = preferredModel 
+    ? [preferredModel, ...baseModels.filter(m => m !== preferredModel)]
     : baseModels;
 
   let lastError: any = null;
@@ -960,6 +962,21 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
       targetKWCount,
       settings.singleWordKeywords
     );
+
+    const affixed = applyTitleAndKeywordsAffixes(result.title, result.keywords, settings);
+    
+    // Strict Marketplace Safety & Compliance Sanitization (eliminates trademarks, buzzwords, format errors)
+    const sanitizedTitleObj = sanitizeStockTitle(affixed.title, settings.marketplace || 'universal');
+    const sanitizedKwObj = sanitizeStockKeywords(
+      affixed.keywords,
+      sanitizedTitleObj.title,
+      targetKWCount,
+      settings.singleWordKeywords
+    );
+
+    result.title = sanitizedTitleObj.title;
+    result.keywords = sanitizedKwObj.keywords;
+
     result.keywordScore = calculateKeywordScore(result.keywords, settings.minKeywords || 20, targetKWCount);
     return result;
   } catch (error: any) {
@@ -1117,6 +1134,21 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
       targetKWCount,
       settings.singleWordKeywords
     );
+
+    const affixed = applyTitleAndKeywordsAffixes(result.title, result.keywords, settings);
+    
+    // Strict Marketplace Safety & Compliance Sanitization
+    const sanitizedTitleObj = sanitizeStockTitle(affixed.title, settings.marketplace || 'universal');
+    const sanitizedKwObj = sanitizeStockKeywords(
+      affixed.keywords,
+      sanitizedTitleObj.title,
+      targetKWCount,
+      settings.singleWordKeywords
+    );
+
+    result.title = sanitizedTitleObj.title;
+    result.keywords = sanitizedKwObj.keywords;
+
     result.keywordScore = calculateKeywordScore(result.keywords, settings.minKeywords || 20, targetKWCount);
     return result;
   } catch (error: any) {
@@ -1204,6 +1236,50 @@ function calculateKeywordScore(keywords: string, min: number = 20, max: number =
   return 40;
 }
 
+export function applyTitleAndKeywordsAffixes(
+  title: string,
+  keywords: string,
+  settings: {
+    titlePrefix?: string;
+    titleSuffix?: string;
+    keywordsPrefix?: string;
+    keywordsSuffix?: string;
+  }
+): { title: string; keywords: string } {
+  let finalTitle = (title || '').trim();
+  if (settings.titlePrefix && settings.titlePrefix.trim()) {
+    const pre = settings.titlePrefix.trim();
+    if (!finalTitle.toLowerCase().startsWith(pre.toLowerCase())) {
+      finalTitle = `${pre} ${finalTitle}`.trim();
+    }
+  }
+  if (settings.titleSuffix && settings.titleSuffix.trim()) {
+    const suf = settings.titleSuffix.trim();
+    if (!finalTitle.toLowerCase().endsWith(suf.toLowerCase())) {
+      finalTitle = `${finalTitle} ${suf}`.trim();
+    }
+  }
+
+  let kwList = (keywords || '').split(',').map(k => k.trim()).filter(Boolean);
+  if (settings.keywordsPrefix && settings.keywordsPrefix.trim()) {
+    const preList = settings.keywordsPrefix.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+    const existingLowers = new Set(kwList.map(k => k.toLowerCase()));
+    const toAdd = preList.filter(p => !existingLowers.has(p));
+    kwList = [...toAdd, ...kwList];
+  }
+  if (settings.keywordsSuffix && settings.keywordsSuffix.trim()) {
+    const sufList = settings.keywordsSuffix.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+    const existingLowers = new Set(kwList.map(k => k.toLowerCase()));
+    const toAdd = sufList.filter(s => !existingLowers.has(s));
+    kwList = [...kwList, ...toAdd];
+  }
+
+  return {
+    title: finalTitle,
+    keywords: kwList.join(', ')
+  };
+}
+
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1249,9 +1325,49 @@ async function resizeImage(file: File, maxWidth: number, maxHeight: number, qual
   });
 }
 
+function getMarketplaceDirectives(marketplace: string = 'universal'): string {
+  switch (marketplace) {
+    case 'adobe':
+      return `=== TARGET MARKETPLACE: ADOBE STOCK ===
+- Top 10 Keywords Priority: Adobe Stock's search algorithm heavily weighs the first 10 keywords. Ensure keywords 1-10 are the most direct, literal visual nouns and main subject.
+- Titles: Clear, literal, no trademarked brand names, 8-15 words.
+- Category: Pick the single most accurate Adobe Stock category.`;
+    case 'shutterstock':
+      return `=== TARGET MARKETPLACE: SHUTTERSTOCK ===
+- Title: Clear, literal description of action and primary subject. Strictly no trademarks, brand names, or editorial dates.
+- Keywords: 40-50 high-search volume commercial keywords. No repetitive spam or punctuation.`;
+    case 'freepik':
+      return `=== TARGET MARKETPLACE: FREEPIK & FLATICON ===
+- Vector / Graphic focus: If graphic or vector, emphasize format (isolated, banner, background, template, design element, graphic style).
+- Keywords: High commercial search volume, trending microstock tags.`;
+    case 'getty':
+      return `=== TARGET MARKETPLACE: GETTY IMAGES / ISTOCK ===
+- Vocabulary standard: Adhere to controlled taxonomy. Blend conceptual keywords (freedom, success, ambition) with physical nouns.
+- No keyword stuffing or duplicate word variants.`;
+    case 'alamy':
+      return `=== TARGET MARKETPLACE: ALAMY ===
+- Caption: Provide a rich, informative caption (who, what, where, when, why) up to 25 words.
+- Keywords: Essential search tags first, followed by broader secondary tags.`;
+    case 'vecteezy':
+      return `=== TARGET MARKETPLACE: VECTEEZY ===
+- Clean vector/photo metadata with high buyer utility tags (copy space, background, graphic, creative).`;
+    case '123rf':
+    case 'dreamstime':
+      return `=== TARGET MARKETPLACE: MICROSTOCK STANDARD (123RF / DREAMSTIME) ===
+- Clean English keywords without symbols, direct literal title.`;
+    case 'universal':
+    default:
+      return `=== TARGET MARKETPLACE: UNIVERSAL (100% COMPATIBLE WITH ALL STOCK SITES) ===
+- Universal compatibility across Adobe Stock, Shutterstock, Freepik, Getty Images, Alamy, Vecteezy, 123RF, Dreamstime.
+- Strict 50 comma-separated keywords with zero special characters or trademarks.
+- Direct literal title (8-15 words) readable and approved by all automated agency review bots.`;
+  }
+}
+
 function getPrompt(settings: any, filename: string, isVideo: boolean = false) {
   const { 
     metadataFor, 
+    marketplace = 'universal',
     titleChoice, 
     minTitleWords = 7, 
     maxTitleWords = 15, 
@@ -1268,9 +1384,18 @@ function getPrompt(settings: any, filename: string, isVideo: boolean = false) {
   } = settings;
 
   const targetCount = maxKeywords || 50;
+  const marketplaceRules = getMarketplaceDirectives(marketplace);
 
   return `You are a World-Class Senior Stock Agency Inspector & Metadata SEO Specialist (for Adobe Stock, Shutterstock, Getty Images, Freepik).
 Your highest priority is to inspect this asset with 100% surgical accuracy and output 100% COMPLETE, HIGH-CONVERTING, COMMERCIAL-GRADE METADATA that strictly matches the EXACT subject matter shown in this file.
+
+${marketplaceRules}
+
+=== CRITICAL MARKETPLACE SAFETY & COMPLIANCE (ZERO ACCOUNT RISK) ===
+- ZERO TRADEMARKS: Absolutely NEVER include brand names or registered trademarks (e.g. Apple, Nike, BMW, Tesla, Gucci, Sony, Microsoft, Google, etc.).
+- ZERO BUZZWORDS OR PROMOTIONAL HYPE: Absolutely NEVER use "best", "masterpiece", "award winning", "trending", "photorealistic", "8k", "ultra realistic", or "stock photo". Automated inspection bots immediately flag and reject assets with these words!
+- ZERO KEYWORD STUFFING IN TITLE: The title must be a natural, flowing English descriptive phrase (7-15 words). Never output a comma-separated list or keyword dump as a title.
+- 100% VISUAL ACCURACY (NO IRRELEVANT SPAM): Every keyword must accurately match what is visually present in the asset. Irrelevant tags violate marketplace policies and risk contributor account suspension.
 
 === MANDATORY SUBJECT INSPECTION DIRECTIVES ===
 1. 100% EXACT SUBJECT MATCH (ZERO GENERIC GUESSING):

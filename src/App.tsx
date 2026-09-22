@@ -45,7 +45,14 @@ import {
   ExternalLink,
   Save,
   Edit3,
-  Maximize2
+  Maximize2,
+  Globe,
+  Cpu,
+  SlidersHorizontal,
+  Bookmark,
+  Minus,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 import Papa from 'papaparse';
 import * as piexif from "piexifjs";
@@ -59,13 +66,22 @@ import {
   generatePhotoshopScript, 
   generateIllustratorScript 
 } from './services/embedService';
-import { StockMetadata, ApiConfig, GeneratorSettings, ApiStatus, HistoryItem } from './types';
-import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail } from './services/aiService';
+import { StockMetadata, ApiConfig, GeneratorSettings, ApiStatus, HistoryItem, StockMarketplace } from './types';
+import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail, applyTitleAndKeywordsAffixes } from './services/aiService';
 import { AssetInspector } from './components/AssetInspector';
+import { ExtensionsModal } from './components/ExtensionsModal';
 import { cn, sanitizeFilenameForFs, sanitizeStockFilename } from './lib/utils';
 
 const STORAGE_KEY = 'ai-metadata-pro-config';
 const HISTORY_KEY = 'ai-metadata-pro-history';
+
+export interface BulkUndoSnapshot {
+  id: string;
+  actionName: string;
+  timestamp: number;
+  files: StockMetadata[];
+  fileObjects?: Record<string, File>;
+}
 
 // Optimized Copyable Cell Component with readable typography and slim borders
 const CopyableCell = React.memo(({ value, onChange, placeholder, colorClass, isGenerating, onCopy }: any) => {
@@ -176,7 +192,7 @@ const FileRow = React.memo(({ index, style, data }: any) => {
             value={file.filename}
             onChange={(e) => updateFile(file.id, { filename: e.target.value })}
             onClick={(e) => e.stopPropagation()}
-            className="text-[10px] font-bold text-foreground truncate leading-tight uppercase tracking-tight bg-transparent hover:bg-muted/40 focus:bg-background focus:ring-1 focus:ring-primary rounded-xs px-1 py-0.5 w-full outline-none transition-all cursor-text border border-transparent hover:border-border/40"
+            className="text-[10px] font-bold text-foreground truncate leading-tight tracking-tight bg-transparent hover:bg-muted/40 focus:bg-background focus:ring-1 focus:ring-primary rounded-xs px-1 py-0.5 w-full outline-none transition-all cursor-text border border-transparent hover:border-border/40"
             title={file.filename}
           />
           <div className="flex items-center gap-1 mt-0.5">
@@ -386,13 +402,19 @@ export default function App() {
       keywordsCount: 30,
       autoDownload: false,
       promptMode: 'default',
+      marketplace: 'universal',
+      aiModel: 'gemini-2.5-flash',
+      titlePrefix: '',
+      titleSuffix: '',
+      keywordsPrefix: '',
+      keywordsSuffix: '',
       customPrompt: '',
       optimizeKeywords: true,
-      minTitleWords: 5,
+      minTitleWords: 7,
       maxTitleWords: 15,
-      minDescriptionWords: 15,
-      maxDescriptionWords: 30,
-      minKeywords: 10,
+      minDescriptionWords: 20,
+      maxDescriptionWords: 45,
+      minKeywords: 20,
       maxKeywords: 50,
       titleChoice: 1,
       metadataFor: 'all',
@@ -403,7 +425,9 @@ export default function App() {
       customPromptEnabled: false,
       autoGenerateOnAdd: false,
       savedKeywords: [],
-      concurrency: 2
+      concurrency: 2,
+      autoSyncFilenameWithTitle: true,
+      filenameFormat: 'exact_title'
     };
     return initialSaved?.settings ? { ...defaultSettings, ...initialSaved.settings } : defaultSettings;
   });
@@ -411,6 +435,11 @@ export default function App() {
   const [files, setFiles] = useState<StockMetadata[]>([]);
   const [fileObjects, setFileObjects] = useState<Record<string, File>>({});
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  
+  // Bulk Undo / Redo Snapshots for Reverting Accidental Metadata Changes
+  const [undoSnapshots, setUndoSnapshots] = useState<BulkUndoSnapshot[]>([]);
+  const [redoSnapshots, setRedoSnapshots] = useState<BulkUndoSnapshot[]>([]);
+  const lastSnapshotTimeRef = useRef<number>(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [cooldownTimer, setCooldownTimer] = useState(0);
@@ -468,10 +497,12 @@ export default function App() {
   }, [notification]);
 
   const formatFilename = useCallback((text: string, originalName?: string, fallbackExt: string = 'jpg') => {
-    return sanitizeStockFilename(text, originalName, fallbackExt);
-  }, []);
+    return sanitizeStockFilename(text, originalName, fallbackExt, settings.filenameFormat || 'exact_title');
+  }, [settings.filenameFormat]);
 
   const updateFile = useCallback((id: string, updates: Partial<StockMetadata>) => {
+    let computedNewFilename: string | undefined;
+
     setFiles(prev => {
       const exists = prev.find(f => f.id === id);
       if (!exists) return prev;
@@ -483,11 +514,25 @@ export default function App() {
           if (!newMetadata.originalFilename) {
             newMetadata.originalFilename = f.originalFilename || f.filename;
           }
-          if (updates.title !== undefined && updates.filename === undefined && updates.title.trim()) {
-            const newName = sanitizeStockFilename(updates.title, f.originalFilename || f.filename, f.fileType || 'jpg');
-            if (newName) {
-              newMetadata.filename = newName;
+          // Automatic filename synchronization whenever title changes
+          if (updates.title !== undefined && updates.filename === undefined) {
+            if (settings.autoSyncFilenameWithTitle !== false && updates.title.trim()) {
+              const newName = sanitizeStockFilename(
+                updates.title, 
+                f.originalFilename || f.filename, 
+                f.fileType || 'jpg',
+                settings.filenameFormat || 'exact_title'
+              );
+              if (newName) {
+                newMetadata.filename = newName;
+                computedNewFilename = newName;
+              }
+            } else if (!updates.title?.trim() && (f.originalFilename || f.filename)) {
+              newMetadata.filename = f.originalFilename || f.filename;
+              computedNewFilename = newMetadata.filename;
             }
+          } else if (updates.filename !== undefined) {
+            computedNewFilename = updates.filename;
           }
           if (updates.keywords !== undefined || updates.title !== undefined) {
             const kwCount = (newMetadata.keywords || '').split(',').map(k => k.trim()).filter(Boolean).length;
@@ -506,7 +551,21 @@ export default function App() {
         return f;
       });
     });
-  }, []);
+
+    if (computedNewFilename) {
+      const targetName = computedNewFilename;
+      setFileObjects(prev => {
+        const file = prev[id];
+        if (!file || file.name === targetName) return prev;
+        try {
+          const renamed = new File([file], targetName, { type: file.type, lastModified: file.lastModified });
+          return { ...prev, [id]: renamed };
+        } catch {
+          return prev;
+        }
+      });
+    }
+  }, [settings.autoSyncFilenameWithTitle, settings.filenameFormat]);
 
   const deleteFile = useCallback((id: string) => {
     setFiles(prev => prev.filter(f => f.id !== id));
@@ -520,7 +579,168 @@ export default function App() {
   const showNotification = (message: string, type: 'info' | 'error' | 'success' = 'info') => {
     setNotification({ message, type });
   };
+
+  // Push a snapshot to the Undo stack before performing bulk metadata modifications
+  const pushUndoSnapshot = useCallback((actionName: string, customFiles?: StockMetadata[], customFileObjects?: Record<string, File>) => {
+    const now = Date.now();
+    // Debounce duplicate snapshots within 600ms
+    if (now - lastSnapshotTimeRef.current < 600) {
+      return;
+    }
+    lastSnapshotTimeRef.current = now;
+
+    const currentFiles = customFiles || filesRef.current;
+    if (!currentFiles || currentFiles.length === 0) return;
+
+    // Deep clone to ensure mutations during subsequent generation do not alter snapshot
+    const snapshotFiles: StockMetadata[] = JSON.parse(JSON.stringify(currentFiles));
+    const newSnapshot: BulkUndoSnapshot = {
+      id: Math.random().toString(36).substring(2, 9),
+      actionName,
+      timestamp: now,
+      files: snapshotFiles,
+      fileObjects: customFileObjects ? { ...customFileObjects } : undefined
+    };
+
+    setUndoSnapshots(prev => [...prev.slice(-19), newSnapshot]); // Keep up to 20 states
+    setRedoSnapshots([]); // Clear redo stack on fresh action
+  }, []);
+
+  // Undo the last bulk metadata generation or modification operation
+  const handleUndoBulk = useCallback(() => {
+    if (undoSnapshots.length === 0) {
+      showNotification("No bulk actions to undo.", "info");
+      return;
+    }
+
+    const snapshotToRestore = undoSnapshots[undoSnapshots.length - 1];
+    const remainingSnapshots = undoSnapshots.slice(0, -1);
+
+    // Save current state into Redo stack before restoring
+    const currentFilesClone: StockMetadata[] = JSON.parse(JSON.stringify(filesRef.current));
+    const redoSnapshot: BulkUndoSnapshot = {
+      id: Math.random().toString(36).substring(2, 9),
+      actionName: snapshotToRestore.actionName,
+      timestamp: Date.now(),
+      files: currentFilesClone,
+      fileObjects: { ...fileObjects }
+    };
+    setRedoSnapshots(prev => [...prev.slice(-19), redoSnapshot]);
+
+    // Restore files
+    setFiles(snapshotToRestore.files);
+    if (snapshotToRestore.fileObjects) {
+      setFileObjects(snapshotToRestore.fileObjects);
+    }
+    setUndoSnapshots(remainingSnapshots);
+
+    showNotification(
+      `✓ Reverted "${snapshotToRestore.actionName}"! Restored ${snapshotToRestore.files.length} file(s) to previous state.`,
+      "success"
+    );
+  }, [undoSnapshots, fileObjects]);
+
+  // Redo the last undone bulk action
+  const handleRedoBulk = useCallback(() => {
+    if (redoSnapshots.length === 0) return;
+
+    const snapshotToRestore = redoSnapshots[redoSnapshots.length - 1];
+    const remainingRedo = redoSnapshots.slice(0, -1);
+
+    // Push current state into undo stack
+    const currentFilesClone: StockMetadata[] = JSON.parse(JSON.stringify(filesRef.current));
+    const undoSnapshot: BulkUndoSnapshot = {
+      id: Math.random().toString(36).substring(2, 9),
+      actionName: snapshotToRestore.actionName,
+      timestamp: Date.now(),
+      files: currentFilesClone,
+      fileObjects: { ...fileObjects }
+    };
+    setUndoSnapshots(prev => [...prev.slice(-19), undoSnapshot]);
+
+    // Apply redone state
+    setFiles(snapshotToRestore.files);
+    if (snapshotToRestore.fileObjects) {
+      setFileObjects(snapshotToRestore.fileObjects);
+    }
+    setRedoSnapshots(remainingRedo);
+
+    showNotification(
+      `✓ Redone "${snapshotToRestore.actionName}"! Restored ${snapshotToRestore.files.length} file(s).`,
+      "success"
+    );
+  }, [redoSnapshots, fileObjects]);
+
+  // Keyboard shortcut listener for Ctrl+Z (Undo) and Ctrl+Y / Ctrl+Shift+Z (Redo)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept native text field undo/redo while actively editing inputs
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedoBulk();
+        } else {
+          handleUndoBulk();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedoBulk();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndoBulk, handleRedoBulk]);
+
+  const handleApplyAffixesToAllFiles = useCallback(() => {
+    if (!settings.titlePrefix?.trim() && !settings.titleSuffix?.trim() && !settings.keywordsPrefix?.trim() && !settings.keywordsSuffix?.trim()) {
+      showNotification("Please enter a Title Prefix/Suffix or Keywords Prefix/Suffix first.", "error");
+      return;
+    }
+    pushUndoSnapshot("Bulk Title/Keywords Affixes", filesRef.current);
+    const renamedMap: Record<string, string> = {};
+    setFiles(prev => prev.map(f => {
+      const affixed = applyTitleAndKeywordsAffixes(f.title, f.keywords, settings);
+      const kwCount = (affixed.keywords || '').split(',').map(k => k.trim()).filter(Boolean).length;
+      let newFilename = f.filename;
+      if (settings.autoSyncFilenameWithTitle !== false && affixed.title?.trim()) {
+        newFilename = sanitizeStockFilename(affixed.title, f.originalFilename || f.filename, f.fileType || 'jpg', settings.filenameFormat || 'exact_title');
+        if (newFilename !== f.filename) {
+          renamedMap[f.id] = newFilename;
+        }
+      }
+      return {
+        ...f,
+        title: affixed.title,
+        filename: newFilename,
+        keywords: affixed.keywords,
+        keywordScore: kwCount >= 35 ? 100 : kwCount >= 25 ? 90 : Math.min(100, kwCount * 3)
+      };
+    }));
+
+    if (Object.keys(renamedMap).length > 0) {
+      setFileObjects(prev => {
+        const next = { ...prev };
+        for (const [id, newName] of Object.entries(renamedMap)) {
+          if (next[id] && next[id].name !== newName) {
+            try {
+              next[id] = new File([next[id]], newName, { type: next[id].type, lastModified: next[id].lastModified });
+            } catch {}
+          }
+        }
+        return next;
+      });
+    }
+
+    showNotification("Applied Title & Keywords Prefix/Suffix to all current files!", "success");
+  }, [settings, pushUndoSnapshot]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isExtensionsOpen, setIsExtensionsOpen] = useState(false);
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean; message: string; filename: string }>({ isOpen: false, message: '', filename: '' });
 
   const openErrorModal = useCallback((message: string, filename: string) => {
@@ -1306,12 +1526,15 @@ export default function App() {
   };
 
   const renameAllByTitle = () => {
+    pushUndoSnapshot("Bulk Rename All by Title", filesRef.current);
     let count = 0;
+    const renamedMap: Record<string, string> = {};
     setFiles(prev => prev.map(f => {
       if (f.title && f.title.trim()) {
-        const newName = sanitizeStockFilename(f.title, f.originalFilename || f.filename, f.fileType || 'jpg');
+        const newName = sanitizeStockFilename(f.title, f.originalFilename || f.filename, f.fileType || 'jpg', settings.filenameFormat || 'exact_title');
         if (newName && newName !== f.filename) {
           count++;
+          renamedMap[f.id] = newName;
           return {
             ...f,
             filename: newName
@@ -1320,12 +1543,27 @@ export default function App() {
       }
       return f;
     }));
-    showNotification(`✓ ${count}টি ফাইলের নাম টাইটেল অনুযায়ী রিনেম হয়েছে! সরাসরি আসল ফোল্ডারে সেভ করতে "Embed All" বা সেভ আইকন ক্লিক করুন।`, 'success');
+    if (Object.keys(renamedMap).length > 0) {
+      setFileObjects(prev => {
+        const next = { ...prev };
+        for (const [id, newName] of Object.entries(renamedMap)) {
+          if (next[id] && next[id].name !== newName) {
+            try {
+              next[id] = new File([next[id]], newName, { type: next[id].type, lastModified: next[id].lastModified });
+            } catch {}
+          }
+        }
+        return next;
+      });
+    }
+    showNotification(`✓ ${count}টি ফাইলের নাম টাইটেল অনুযায়ী রিনেম হয়েছে! সরাসরি আসল ফোল্ডারে সেভ করতে "Embed All" বা সেভ আইকন ক্লিক করুন। (Undo করতে Ctrl+Z চাপুন)`, 'success');
   };
 
   const regenerateSingleFile = async (id: string) => {
     const fileMetadata = files.find(f => f.id === id);
     if (!fileMetadata || fileMetadata.status === 'generating') return;
+
+    pushUndoSnapshot(`Regenerate "${fileMetadata.filename}"`, filesRef.current);
 
     const currentKey = apiConfig[activeKey.provider][activeKey.index];
     if (!currentKey && activeKey.provider !== 'gemini') {
@@ -1343,7 +1581,7 @@ export default function App() {
 
     try {
       const result = await generateMetadata(actualFile, settings, { [activeKey.provider]: currentKey }, activeKey.provider);
-      const newFilename = sanitizeStockFilename(result.title, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg');
+      const newFilename = sanitizeStockFilename(result.title, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg', settings.filenameFormat || 'exact_title');
 
       const updatedMetadata: StockMetadata = { 
         ...fileMetadata, 
@@ -1405,12 +1643,15 @@ export default function App() {
     let pendingFiles = filesRef.current.filter(f => f.status === 'pending');
     
     if (pendingFiles.length === 0 && filesRef.current.length > 0) {
+      pushUndoSnapshot("Bulk Metadata Generation", filesRef.current);
       setFiles(prev => prev.map(f => ({ ...f, status: 'pending' })));
       setTimeout(startGeneration, 100);
       return;
     }
 
     if (pendingFiles.length === 0) return;
+
+    pushUndoSnapshot("Bulk Metadata Generation", filesRef.current);
 
     const currentKey = apiConfig[activeKey.provider][activeKey.index];
     if (!currentKey && activeKey.provider !== 'gemini') {
@@ -1468,7 +1709,7 @@ export default function App() {
               timeoutPromise
             ]) as any;
             
-            const newFilename = sanitizeStockFilename(result.title, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg');
+            const newFilename = sanitizeStockFilename(result.title, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg', settings.filenameFormat || 'exact_title');
             
             const updatedMetadata = { 
               ...fileMetadata, 
@@ -1566,6 +1807,7 @@ export default function App() {
       files: [...finalFiles]
     };
     setHistory(prev => [newHistoryItem, ...prev].slice(0, 50));
+    showNotification("✓ Bulk metadata generation finished! Click 'Undo' (Ctrl+Z) anytime to revert changes.", "success");
   };
 
   const handleTestConnection = async (provider: keyof ApiConfig, index: number) => {
@@ -1930,6 +2172,7 @@ export default function App() {
       stopRef.current = true;
       setIsGenerating(false);
     }
+    pushUndoSnapshot("Clear All Files", filesRef.current, fileObjects);
     const idsToRemove = filteredFiles.map(f => f.id);
     setFiles(prev => prev.filter(f => !idsToRemove.includes(f.id)));
     setFileObjects(prev => {
@@ -1937,6 +2180,7 @@ export default function App() {
       idsToRemove.forEach(id => delete newObjs[id]);
       return newObjs;
     });
+    showNotification("Cleared workspace files. Click Undo (Ctrl+Z) to restore.", "info");
   };
 
   const exportCsv = () => {
@@ -2103,16 +2347,32 @@ export default function App() {
       {/* Notification Toast */}
       {notification && (
         <div className={cn(
-          "fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-lg shadow-2xl border flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300",
-          notification.type === 'error' ? "bg-rose-900/90 border-rose-500 text-rose-100" :
-          notification.type === 'success' ? "bg-emerald-900/90 border-emerald-500 text-emerald-100" :
-          "bg-secondary/90 border-border text-foreground"
+          "fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] px-5 py-2.5 rounded-lg shadow-2xl border flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300 max-w-xl",
+          notification.type === 'error' ? "bg-rose-950/95 border-rose-500 text-rose-100" :
+          notification.type === 'success' ? "bg-emerald-950/95 border-emerald-500 text-emerald-100" :
+          "bg-secondary/95 border-border text-foreground"
         )}>
-          {notification.type === 'error' ? <AlertCircle size={18} /> : 
-           notification.type === 'success' ? <CheckCircle2 size={18} /> : 
-           <Info size={18} />}
+          {notification.type === 'error' ? <AlertCircle size={18} className="shrink-0 text-rose-400" /> : 
+           notification.type === 'success' ? <CheckCircle2 size={18} className="shrink-0 text-emerald-400" /> : 
+           <Info size={18} className="shrink-0 text-blue-400" />}
           <span className="text-xs font-bold uppercase tracking-wider">{notification.message}</span>
-          <button onClick={() => setNotification(null)} className="ml-4 hover:opacity-70">
+          
+          {/* Quick Undo in Toast if undo snapshot available */}
+          {undoSnapshots.length > 0 && !isGenerating && notification.type === 'success' && (
+            <button
+              onClick={() => {
+                handleUndoBulk();
+                setNotification(null);
+              }}
+              className="ml-2 px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] uppercase rounded shadow-xs transition-all flex items-center gap-1 cursor-pointer shrink-0 active:scale-95"
+              title="Undo this action now (Ctrl+Z)"
+            >
+              <Undo2 size={11} strokeWidth={2.5} />
+              <span>Undo</span>
+            </button>
+          )}
+
+          <button onClick={() => setNotification(null)} className="ml-3 hover:opacity-70 p-1 text-muted-foreground hover:text-foreground cursor-pointer">
             <X size={14} />
           </button>
         </div>
@@ -2193,6 +2453,7 @@ export default function App() {
             {/* Regen All */}
             <button 
               onClick={() => {
+                pushUndoSnapshot("Regenerate All Metadata", filesRef.current);
                 setFiles(prev => prev.map(f => ({ ...f, status: 'pending' })));
                 setTimeout(startGeneration, 100);
               }}
@@ -2207,6 +2468,7 @@ export default function App() {
             {files.some(f => f.status === 'error') && (
               <button 
                 onClick={() => {
+                  pushUndoSnapshot("Retry Failed Files", filesRef.current);
                   setFiles(prev => prev.map(f => f.status === 'error' ? { ...f, status: 'pending' } : f));
                   setTimeout(startGeneration, 100);
                 }}
@@ -2230,6 +2492,44 @@ export default function App() {
               >
                 <Square size={11} className="fill-current" />
                 <span>Stop</span>
+              </button>
+            )}
+
+            {/* Bulk Undo Action */}
+            <button 
+              onClick={handleUndoBulk}
+              disabled={undoSnapshots.length === 0 || isGenerating}
+              className={cn(
+                "flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition-all cursor-pointer whitespace-nowrap shadow-xs active:scale-95 border",
+                undoSnapshots.length > 0 && !isGenerating
+                  ? "bg-amber-600 hover:bg-amber-500 text-white border-amber-400/80 shadow-amber-600/30"
+                  : "bg-slate-800/80 text-slate-500 border-slate-700 opacity-40 cursor-not-allowed pointer-events-none"
+              )}
+              title={
+                undoSnapshots.length > 0
+                  ? `Undo "${undoSnapshots[undoSnapshots.length - 1]?.actionName}" (Ctrl+Z) - Revert changes to ${undoSnapshots[undoSnapshots.length - 1]?.files.length} files`
+                  : "Undo (Ctrl+Z) - No recent bulk changes"
+              }
+            >
+              <Undo2 size={12} strokeWidth={2.5} />
+              <span>Undo</span>
+              {undoSnapshots.length > 0 && (
+                <span className="text-[10px] bg-amber-950/90 text-amber-200 px-1.5 py-0.2 rounded-full font-black border border-amber-400/50">
+                  {undoSnapshots.length}
+                </span>
+              )}
+            </button>
+
+            {/* Redo Action */}
+            {redoSnapshots.length > 0 && (
+              <button 
+                onClick={handleRedoBulk}
+                disabled={isGenerating}
+                className="flex items-center gap-1 px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded text-xs font-bold transition-all cursor-pointer shadow-xs active:scale-95 whitespace-nowrap"
+                title={`Redo "${redoSnapshots[redoSnapshots.length - 1]?.actionName}" (Ctrl+Y)`}
+              >
+                <Redo2 size={12} strokeWidth={2.5} />
+                <span>Redo</span>
               </button>
             )}
 
@@ -2322,6 +2622,45 @@ export default function App() {
               </select>
             </div>
 
+            {/* AI Model Quick Select (when Gemini is active) */}
+            {activeKey.provider === 'gemini' && (
+              <div className="flex items-center gap-1.5 bg-slate-800/90 border border-emerald-400/60 px-2 py-0.5 rounded shadow-xs" title="Select Gemini Vision Model">
+                <Cpu size={11} className="text-emerald-400" />
+                <span className="text-[10px] font-black text-emerald-300 uppercase">MODEL:</span>
+                <select 
+                  value={settings.aiModel || 'gemini-2.5-flash'}
+                  onChange={(e) => setSettings(prev => ({ ...prev, aiModel: e.target.value as any }))}
+                  className="bg-transparent text-slate-100 text-xs font-black focus:outline-none cursor-pointer"
+                >
+                  <option value="gemini-2.5-flash">2.5 Flash (⚡ Fast)</option>
+                  <option value="gemini-2.5-flash-lite">2.5 Lite (🚀 Quota)</option>
+                  <option value="gemini-3.1-flash-lite">3.1 Lite (🌟 New)</option>
+                  <option value="gemini-3.8-flash">3.8 Flash (🧠 Deep)</option>
+                </select>
+              </div>
+            )}
+
+            {/* Target Stock Agency Marketplace Quick Select */}
+            <div className="flex items-center gap-1.5 bg-slate-800/90 border border-blue-400/60 px-2 py-0.5 rounded shadow-xs" title="Target Stock Agency SEO Mode">
+              <Globe size={11} className="text-blue-400" />
+              <span className="text-[10px] font-black text-blue-300 uppercase">MARKET:</span>
+              <select 
+                value={settings.marketplace || 'universal'}
+                onChange={(e) => setSettings(prev => ({ ...prev, marketplace: e.target.value as any }))}
+                className="bg-transparent text-slate-100 text-xs font-black focus:outline-none cursor-pointer uppercase"
+              >
+                <option value="universal">Universal (All)</option>
+                <option value="adobe">Adobe Stock</option>
+                <option value="shutterstock">Shutterstock</option>
+                <option value="freepik">Freepik</option>
+                <option value="getty">Getty / iStock</option>
+                <option value="alamy">Alamy</option>
+                <option value="vecteezy">Vecteezy</option>
+                <option value="123rf">123RF</option>
+                <option value="dreamstime">Dreamstime</option>
+              </select>
+            </div>
+
             {/* Theme Select */}
             <div className="flex items-center gap-1.5 bg-slate-800/90 border border-slate-500/70 px-2 py-0.5 rounded shadow-xs">
               <span className="text-[10px] font-black text-slate-300 uppercase">THEME:</span>
@@ -2344,6 +2683,16 @@ export default function App() {
             >
               <ExternalLink size={12} strokeWidth={2.5} />
               <span>New Window</span>
+            </button>
+
+            <button 
+              onClick={() => setIsExtensionsOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black rounded text-xs transition-all cursor-pointer shadow-xs whitespace-nowrap active:scale-95 border border-blue-400/50"
+              title="Extensions Studio - Image to Prompt Generator & AI Tools"
+            >
+              <Layers size={13} strokeWidth={2.5} />
+              <span>Extensions</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             </button>
 
             <button 
@@ -2610,7 +2959,7 @@ export default function App() {
       </div>
 
       {/* Windows Style Footer */}
-      <footer className="bg-secondary border-t border-border px-4 py-1 flex items-center justify-between text-[9px] font-bold text-muted-foreground uppercase tracking-widest">
+      <footer className="bg-secondary border-t border-border px-4 py-1.5 flex items-center justify-between text-[9px] font-bold text-muted-foreground uppercase tracking-widest">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]" />
@@ -2621,6 +2970,19 @@ export default function App() {
             <Database size={10} />
             <span>API: Connected</span>
           </div>
+          <div className="w-px h-3 bg-border" />
+          {/* Bottom Extension Option Button */}
+          <button
+            type="button"
+            id="bottom-extensions-option"
+            onClick={() => setIsExtensionsOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-extrabold tracking-wider text-[10px] uppercase shadow-sm border border-blue-400/50 transition-all cursor-pointer active:scale-95"
+            title="Open Extensions Full-Screen Hub (Image to Prompt Generator & AI Tools)"
+          >
+            <Layers size={12} className="shrink-0 text-white" />
+            <span>Extension (এক্সটেনশন)</span>
+            <span className="bg-white/20 text-white text-[9px] px-1.5 py-0.2 rounded font-black">HUB</span>
+          </button>
         </div>
 
         <div className="flex items-center gap-6">
@@ -2850,154 +3212,1004 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Generation Parameters */}
-                <div className="space-y-4 border border-border p-5 rounded-md bg-muted/20 shadow-sm">
-                  <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2 border-b border-border pb-2">
-                    <Zap size={16} className="text-primary" />
-                    Metadata & Generation Range Parameters
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    {/* Preset */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-black text-muted-foreground uppercase tracking-wider">Platform Preset</label>
-                      <div className="flex bg-secondary rounded-md overflow-hidden border border-border p-1 gap-1">
+                {/* Stock Agency Marketplace & AI Model Architecture */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Stock Marketplace Selection */}
+                  <div className="space-y-3 border border-border p-4 rounded-md bg-muted/20 shadow-sm">
+                    <div className="flex items-center justify-between border-b border-border pb-2">
+                      <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2">
+                        <Globe size={16} className="text-primary" />
+                        Target Stock Agency Marketplace
+                      </h4>
+                      <span className="text-[10px] font-mono font-bold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded">
+                        100% COMPLIANT
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">
+                      Choose your primary target agency. The AI inspector strictly tailors metadata formatting, keyword tiers, and title rules to guarantee approval.
+                    </p>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {[
+                        { id: 'universal', label: 'Universal', badge: 'All Agencies', desc: '100% Cross-Platform' },
+                        { id: 'adobe', label: 'Adobe Stock', badge: 'Top 10 Heavy', desc: 'Visual Nouns First' },
+                        { id: 'shutterstock', label: 'Shutterstock', badge: 'Commercial', desc: 'Literal & Trademark-Free' },
+                        { id: 'freepik', label: 'Freepik / Flaticon', badge: 'Graphic Focus', desc: 'Vector & Isolated Tags' },
+                        { id: 'getty', label: 'Getty / iStock', badge: 'Taxonomy', desc: 'Concept + Literal Mix' },
+                        { id: 'alamy', label: 'Alamy', badge: 'Editorial', desc: 'Rich 25-Word Caption' },
+                        { id: 'vecteezy', label: 'Vecteezy', badge: 'Utility Tags', desc: 'Design & Background' },
+                        { id: '123rf', label: '123RF', badge: 'Microstock', desc: 'Clean Punctuation' },
+                        { id: 'dreamstime', label: 'Dreamstime', badge: 'Keywords', desc: 'Direct Search Terms' }
+                      ].map(m => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setSettings(prev => ({ ...prev, marketplace: m.id as any }))}
+                          className={cn(
+                            "flex flex-col items-start p-2.5 rounded-md border text-left transition-all relative",
+                            settings.marketplace === m.id 
+                              ? "bg-primary/10 border-primary text-foreground shadow-sm ring-1 ring-primary/30" 
+                              : "bg-secondary/60 hover:bg-secondary border-border text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          <div className="flex items-center justify-between w-full">
+                            <span className="text-xs font-bold text-foreground">{m.label}</span>
+                            {settings.marketplace === m.id && (
+                              <Check size={13} className="text-primary shrink-0" />
+                            )}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground font-medium mt-0.5">{m.desc}</span>
+                          <span className="text-[9px] font-mono mt-1 text-primary/80 uppercase font-semibold">{m.badge}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* AI Model Selection */}
+                  <div className="space-y-3 border border-border p-4 rounded-md bg-muted/20 shadow-sm flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between border-b border-border pb-2">
+                        <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2">
+                          <Cpu size={16} className="text-primary" />
+                          AI Vision Model Selection
+                        </h4>
+                        <span className="text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded">
+                          MULTIMODAL 2026
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Select which Gemini AI model processes your assets. Choose faster turnaround or deeper reasoning for complex subjects.
+                      </p>
+
+                      <div className="space-y-2 mt-3">
                         {[
-                          { id: 'default', label: 'Standard' },
-                          { id: 'adobe', label: 'Adobe Stock' },
-                          { id: 'shutterstock', label: 'Shutterstock' }
-                        ].map(mode => (
-                          <button 
-                            key={mode.id}
-                            onClick={() => setSettings(prev => ({ ...prev, promptMode: mode.id as any }))}
+                          { 
+                            id: 'gemini-2.5-flash', 
+                            name: 'Gemini 2.5 Flash', 
+                            tag: 'RECOMMENDED', 
+                            speed: '⚡ Lightning Fast (1.2s)', 
+                            desc: 'Best overall performance, generous quota, and surgical stock accuracy.' 
+                          },
+                          { 
+                            id: 'gemini-2.5-flash-lite', 
+                            name: 'Gemini 2.5 Flash-Lite', 
+                            tag: 'HIGH QUOTA', 
+                            speed: '🚀 Ultra Fast (0.8s)', 
+                            desc: 'Lightweight model ideal for massive batches and rapid processing.' 
+                          },
+                          { 
+                            id: 'gemini-3.1-flash-lite', 
+                            name: 'Gemini 3.1 Flash-Lite', 
+                            tag: 'NEXT-GEN', 
+                            speed: '🌟 Fast & Balanced (1.5s)', 
+                            desc: 'Modern multimodal vision pipeline with excellent visual nuances.' 
+                          },
+                          { 
+                            id: 'gemini-3.8-flash', 
+                            name: 'Gemini 3.8 Flash', 
+                            tag: 'DEEP REASONING', 
+                            speed: '🧠 Thorough (2.1s)', 
+                            desc: 'Maximum depth for complex conceptual themes, numbers, and signs.' 
+                          }
+                        ].map(model => (
+                          <div
+                            key={model.id}
+                            onClick={() => setSettings(prev => ({ ...prev, aiModel: model.id as any }))}
                             className={cn(
-                              "flex-1 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition-all", 
-                              settings.promptMode === mode.id ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-accent text-muted-foreground hover:text-foreground"
+                              "flex items-center justify-between p-2.5 rounded-md border cursor-pointer transition-all",
+                              settings.aiModel === model.id
+                                ? "bg-primary/10 border-primary shadow-sm ring-1 ring-primary/30"
+                                : "bg-secondary/60 hover:bg-secondary border-border"
                             )}
                           >
-                            {mode.label}
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-foreground">{model.name}</span>
+                                <span className={cn(
+                                  "text-[9px] font-mono px-1.5 py-0.2 rounded font-bold uppercase",
+                                  model.tag === 'RECOMMENDED' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                                )}>
+                                  {model.tag}
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground mt-0.5">{model.desc}</span>
+                            </div>
+                            <div className="text-right shrink-0 ml-3">
+                              <span className="text-[10px] font-mono text-muted-foreground block">{model.speed}</span>
+                              {settings.aiModel === model.id ? (
+                                <span className="text-[10px] font-black text-primary">SELECTED</span>
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground">CLICK TO USE</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Title & Keywords Prefix / Suffix Engine */}
+                <div className="space-y-4 border border-border p-5 rounded-md bg-muted/20 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+                    <div>
+                      <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2">
+                        <SlidersHorizontal size={16} className="text-primary" />
+                        Title & Keywords Custom Affixes (Prefix / Suffix Engine)
+                      </h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Automatically append or prepend custom words or tags to titles and keywords on generation, or apply them to all loaded files.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleApplyAffixesToAllFiles}
+                      className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-black uppercase tracking-wider rounded-md transition-all shadow-sm flex items-center gap-2 shrink-0 self-start sm:self-auto cursor-pointer"
+                    >
+                      <Zap size={14} />
+                      Apply Affixes to All Current Files
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Title Prefix & Suffix */}
+                    <div className="space-y-3 p-3.5 bg-secondary rounded-md border border-border">
+                      <span className="text-xs font-black text-primary uppercase tracking-wider block">
+                        Title Customization (Beginning & End)
+                      </span>
+                      
+                      <div className="space-y-2">
+                        <div>
+                          <label className="text-[11px] font-bold text-muted-foreground uppercase">Title Prefix (Adds to beginning):</label>
+                          <input
+                            type="text"
+                            value={settings.titlePrefix || ''}
+                            onChange={(e) => setSettings(prev => ({ ...prev, titlePrefix: e.target.value }))}
+                            placeholder="e.g., Aerial view of, Isolated, Scenic panorama of..."
+                            className="w-full bg-background border border-border text-xs h-9 rounded-md px-3 mt-1 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-medium"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-bold text-muted-foreground uppercase">Title Suffix (Adds to end):</label>
+                          <input
+                            type="text"
+                            value={settings.titleSuffix || ''}
+                            onChange={(e) => setSettings(prev => ({ ...prev, titleSuffix: e.target.value }))}
+                            placeholder="e.g., with copy space, 4k background, vector illustration..."
+                            className="w-full bg-background border border-border text-xs h-9 rounded-md px-3 mt-1 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-medium"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Live Title Preview */}
+                      <div className="mt-2 p-2.5 bg-muted/60 rounded border border-border text-[11px]">
+                        <span className="font-bold text-muted-foreground block mb-0.5">Live Title Preview:</span>
+                        <span className="font-medium text-foreground">
+                          <strong className="text-primary">{settings.titlePrefix?.trim() ? `${settings.titlePrefix.trim()} ` : ''}</strong>
+                          <span className="text-muted-foreground italic">Asphalt Road Winding Through Pine Forest</span>
+                          <strong className="text-primary">{settings.titleSuffix?.trim() ? ` ${settings.titleSuffix.trim()}` : ''}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Keywords Prefix & Suffix */}
+                    <div className="space-y-3 p-3.5 bg-secondary rounded-md border border-border">
+                      <span className="text-xs font-black text-primary uppercase tracking-wider block">
+                        Keywords / Tags Customization (Beginning & End)
+                      </span>
+                      
+                      <div className="space-y-2">
+                        <div>
+                          <label className="text-[11px] font-bold text-muted-foreground uppercase">Keywords Prefix (Prepends to tags list):</label>
+                          <input
+                            type="text"
+                            value={settings.keywordsPrefix || ''}
+                            onChange={(e) => setSettings(prev => ({ ...prev, keywordsPrefix: e.target.value }))}
+                            placeholder="e.g., aerial, highway, nature, landscape (comma-separated)..."
+                            className="w-full bg-background border border-border text-xs h-9 rounded-md px-3 mt-1 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-medium"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-bold text-muted-foreground uppercase">Keywords Suffix (Appends to tags list):</label>
+                          <input
+                            type="text"
+                            value={settings.keywordsSuffix || ''}
+                            onChange={(e) => setSettings(prev => ({ ...prev, keywordsSuffix: e.target.value }))}
+                            placeholder="e.g., 4k resolution, high quality, commercial, modern..."
+                            className="w-full bg-background border border-border text-xs h-9 rounded-md px-3 mt-1 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-medium"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Live Keywords Preview */}
+                      <div className="mt-2 p-2.5 bg-muted/60 rounded border border-border text-[11px]">
+                        <span className="font-bold text-muted-foreground block mb-0.5">Live Keywords Preview:</span>
+                        <span className="font-medium text-foreground">
+                          <strong className="text-primary">{settings.keywordsPrefix?.trim() ? `${settings.keywordsPrefix.trim()}, ` : ''}</strong>
+                          <span className="text-muted-foreground italic">road, forest, journey, trees, 2027</span>
+                          <strong className="text-primary">{settings.keywordsSuffix?.trim() ? `, ${settings.keywordsSuffix.trim()}` : ''}</strong>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Automatic Filename & Title Synchronization Section */}
+                <div className="space-y-4 border border-border p-5 rounded-xl bg-card/60 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+                        <FileText size={18} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider">
+                            Automatic Filename & Title Synchronization
+                          </h4>
+                          <span className="text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded">
+                            STOCK SEO COMPLIANT
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Automatically synchronizes physical filenames with generated or edited titles for seamless marketplace indexing.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={renameAllByTitle}
+                      className="px-3.5 py-1.5 bg-secondary hover:bg-accent text-foreground border border-border hover:border-primary/40 text-xs font-bold uppercase tracking-wider rounded-md transition-all shadow-xs flex items-center gap-2 shrink-0 self-start sm:self-auto cursor-pointer"
+                      title="Rename all current files using their respective titles"
+                    >
+                      <RefreshCw size={13} className="text-primary" />
+                      Apply to All Current Files Now
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    {/* Auto-Sync Toggle */}
+                    <div className="p-3.5 bg-secondary/50 rounded-lg border border-border flex flex-col justify-between">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <span className="text-xs font-black text-foreground uppercase tracking-wider block">
+                            Auto-Sync Filename With Title
+                          </span>
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            When enabled, generating new metadata, editing title cells, or applying affixes immediately updates filenames.
+                          </p>
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => setSettings(prev => ({ ...prev, autoSyncFilenameWithTitle: prev.autoSyncFilenameWithTitle === false ? true : false }))}
+                          className={cn(
+                            "w-11 h-6 rounded-full transition-all relative border border-border shrink-0 cursor-pointer",
+                            settings.autoSyncFilenameWithTitle !== false ? "bg-primary border-primary" : "bg-muted"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-0.5 w-4.5 h-4.5 rounded-full bg-white transition-all shadow-sm",
+                            settings.autoSyncFilenameWithTitle !== false ? "left-5.5" : "left-0.5"
+                          )} />
+                        </button>
+                      </div>
+
+                      <div className="mt-3 pt-2.5 border-t border-border/60 flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>Current Status:</span>
+                        <span className={cn("font-bold font-mono", settings.autoSyncFilenameWithTitle !== false ? "text-emerald-500" : "text-amber-500")}>
+                          {settings.autoSyncFilenameWithTitle !== false ? "✓ ACTIVE (Automatic)" : "⏸ PAUSED (Manual Only)"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Format Selector */}
+                    <div className="p-3.5 bg-secondary/50 rounded-lg border border-border space-y-2">
+                      <span className="text-xs font-black text-foreground uppercase tracking-wider block">
+                        Filename Formatting Style
+                      </span>
+                      <p className="text-[11px] text-muted-foreground">
+                        Choose how sanitized filenames are formatted for agency guidelines:
+                      </p>
+
+                      <div className="grid grid-cols-3 gap-2 pt-1">
+                        {[
+                          { id: 'exact_title', label: 'Exact Title Case', preview: 'Forest Road.jpg', badge: 'Recommended' },
+                          { id: 'kebab_case', label: 'Hyphenated (SEO)', preview: 'forest-road.jpg', badge: 'Web Standard' },
+                          { id: 'snake_case', label: 'Underscore', preview: 'forest_road.jpg', badge: 'Microstock' }
+                        ].map(fmt => (
+                          <button
+                            key={fmt.id}
+                            type="button"
+                            onClick={() => setSettings(prev => ({ ...prev, filenameFormat: fmt.id as any }))}
+                            className={cn(
+                              "flex flex-col p-2 rounded-md border text-left transition-all cursor-pointer",
+                              (settings.filenameFormat || 'exact_title') === fmt.id
+                                ? "bg-primary/10 border-primary text-foreground shadow-xs ring-1 ring-primary/30"
+                                : "bg-card/70 hover:bg-accent border-border text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            <div className="flex items-center justify-between w-full">
+                              <span className="text-[11px] font-bold text-foreground truncate">{fmt.label}</span>
+                              {(settings.filenameFormat || 'exact_title') === fmt.id && (
+                                <Check size={12} className="text-primary shrink-0" />
+                              )}
+                            </div>
+                            <span className="text-[10px] font-mono text-muted-foreground truncate mt-0.5">{fmt.preview}</span>
+                            <span className="text-[9px] font-semibold text-primary/80 uppercase mt-1">{fmt.badge}</span>
                           </button>
                         ))}
                       </div>
                     </div>
+                  </div>
 
-                    {/* Title Word Range */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <label className="text-xs font-black text-muted-foreground uppercase tracking-wider">Title Word Range</label>
-                        <span className="text-xs font-black text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">{settings.minTitleWords} - {settings.maxTitleWords} words</span>
+                  {/* Live Filename Preview Box */}
+                  <div className="p-3 bg-muted/40 rounded-lg border border-border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-muted-foreground uppercase text-[10px] tracking-wider shrink-0">
+                        Live Filename Output:
+                      </span>
+                      <span className="font-mono text-foreground font-semibold bg-background px-2.5 py-1 rounded border border-border/80 truncate max-w-xl">
+                        {sanitizeStockFilename(
+                          `${settings.titlePrefix?.trim() ? `${settings.titlePrefix.trim()} ` : ''}Sunset Over Majestic Mountain Valley with Lake Reflection${settings.titleSuffix?.trim() ? ` ${settings.titleSuffix.trim()}` : ''}`,
+                          'image.jpg',
+                          'jpg',
+                          settings.filenameFormat || 'exact_title'
+                        )}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground font-mono shrink-0">
+                      Filesystem-Safe • 150 Max Chars Limit
+                    </span>
+                  </div>
+                </div>
+
+                {/* Generation Parameters - Studio Calibrator */}
+                <div className="space-y-6 border-2 border-primary/30 p-6 md:p-7 rounded-2xl bg-gradient-to-br from-card/90 via-card to-secondary/30 shadow-xl relative overflow-hidden">
+                  {/* Subtle decorative glow */}
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
+
+                  {/* Header Row */}
+                  <div className="flex items-center justify-between flex-wrap gap-4 pb-4 border-b border-border/80 relative z-10">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-primary/15 border border-primary/40 flex items-center justify-center shadow-inner">
+                        <Zap size={22} className="text-primary fill-primary/30" />
                       </div>
-                      <div className="space-y-2.5 p-3 bg-secondary rounded-md border border-border">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-bold text-muted-foreground w-8">MIN</span>
-                          <input 
-                            type="range" 
-                            min="1" 
-                            max="50" 
-                            value={settings.minTitleWords}
-                            onChange={(e) => setSettings(prev => ({ ...prev, minTitleWords: Math.min(parseInt(e.target.value), prev.maxTitleWords) }))}
-                            className="modern-slider slider-blue h-1.5 flex-1"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-bold text-muted-foreground w-8">MAX</span>
-                          <input 
-                            type="range" 
-                            min="1" 
-                            max="50" 
-                            value={settings.maxTitleWords}
-                            onChange={(e) => setSettings(prev => ({ ...prev, maxTitleWords: Math.max(parseInt(e.target.value), prev.minTitleWords) }))}
-                            className="modern-slider slider-blue h-1.5 flex-1"
-                          />
-                        </div>
+                      <div>
+                        <h4 className="text-sm md:text-base font-black text-foreground uppercase tracking-wider flex items-center gap-2">
+                          Metadata & Generation Range Parameters
+                          <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30">
+                            Studio Pro
+                          </span>
+                        </h4>
+                        <p className="text-xs font-medium text-muted-foreground mt-0.5">
+                          Fine-tune exact word counts, tag density, and algorithmic requirements for stock marketplaces.
+                        </p>
                       </div>
                     </div>
 
-                    {/* Description Word Range */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <label className="text-xs font-black text-muted-foreground uppercase tracking-wider">Description Word Range</label>
-                        <span className="text-xs font-black text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">{settings.minDescriptionWords} - {settings.maxDescriptionWords} words</span>
-                      </div>
-                      <div className="space-y-2.5 p-3 bg-secondary rounded-md border border-border">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-bold text-muted-foreground w-8">MIN</span>
-                          <input 
-                            type="range" 
-                            min="5" 
-                            max="100" 
-                            value={settings.minDescriptionWords}
-                            onChange={(e) => setSettings(prev => ({ ...prev, minDescriptionWords: Math.min(parseInt(e.target.value), prev.maxDescriptionWords) }))}
-                            className="modern-slider slider-cyan h-1.5 flex-1"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-bold text-muted-foreground w-8">MAX</span>
-                          <input 
-                            type="range" 
-                            min="5" 
-                            max="100" 
-                            value={settings.maxDescriptionWords}
-                            onChange={(e) => setSettings(prev => ({ ...prev, maxDescriptionWords: Math.max(parseInt(e.target.value), prev.minDescriptionWords) }))}
-                            className="modern-slider slider-cyan h-1.5 flex-1"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Keyword Range */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <label className="text-xs font-black text-muted-foreground uppercase tracking-wider">Keyword Count Range</label>
-                        <span className="text-xs font-black text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">{settings.minKeywords} - {settings.maxKeywords} tags</span>
-                      </div>
-                      <div className="space-y-2.5 p-3 bg-secondary rounded-md border border-border">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-bold text-muted-foreground w-8">MIN</span>
-                          <input 
-                            type="range" 
-                            min="5" 
-                            max="50" 
-                            value={settings.minKeywords}
-                            onChange={(e) => setSettings(prev => ({ ...prev, minKeywords: Math.min(parseInt(e.target.value), prev.maxKeywords) }))}
-                            className="modern-slider slider-emerald h-1.5 flex-1"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-bold text-muted-foreground w-8">MAX</span>
-                          <input 
-                            type="range" 
-                            min="5" 
-                            max="50" 
-                            value={settings.maxKeywords}
-                            onChange={(e) => setSettings(prev => ({ ...prev, maxKeywords: Math.max(parseInt(e.target.value), prev.minKeywords) }))}
-                            className="modern-slider slider-emerald h-1.5 flex-1"
-                          />
-                        </div>
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettings(prev => ({
+                            ...prev,
+                            promptMode: 'default',
+                            minTitleWords: 7,
+                            maxTitleWords: 15,
+                            minDescriptionWords: 20,
+                            maxDescriptionWords: 45,
+                            minKeywords: 35,
+                            maxKeywords: 50
+                          }));
+                          showNotification("রেন্জ প্যারামিটার স্টক রিকমেন্ডেড ডিফল্টে রিসেট করা হয়েছে", 'info');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-accent text-xs font-bold text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-xs active:scale-95"
+                        title="Reset word and keyword ranges to recommended stock defaults"
+                      >
+                        <RefreshCw size={13} />
+                        <span>Recommended Defaults</span>
+                      </button>
                     </div>
                   </div>
 
-                  {/* Concurrency Slider */}
-                  <div className="pt-2">
-                    <div className="flex justify-between items-center mb-2">
-                      <label className="text-xs font-black text-muted-foreground uppercase tracking-wider">Batch Processing Concurrency (Parallel Requests)</label>
-                      <span className="text-xs font-black text-primary bg-primary/10 px-3 py-1 rounded border border-primary/20">{settings.concurrency} Simultaneous Files</span>
+                  {/* 4 Major Studio Controllers Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 relative z-10">
+                    
+                    {/* 1. PLATFORM PRESET & PROFILE */}
+                    <div className="space-y-3 p-4 rounded-xl bg-secondary/70 border border-border flex flex-col justify-between shadow-xs">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-xs font-black text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                            <Bookmark size={13} className="text-primary" />
+                            <span>Platform Preset</span>
+                          </label>
+                          <span className="text-[10px] font-black uppercase text-primary tracking-wider">
+                            {settings.promptMode === 'adobe' ? 'Adobe Spec' : settings.promptMode === 'shutterstock' ? 'Shutter Spec' : 'Universal'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground font-medium mb-3">
+                          Select preset to auto-align prompts and metadata lengths with specific agency submission algorithms.
+                        </p>
+
+                        <div className="flex flex-col gap-2">
+                          {[
+                            { 
+                              id: 'default', 
+                              label: 'Standard', 
+                              desc: 'Universal Balanced SEO (All Sites)', 
+                              minT: 7, maxT: 15, minD: 20, maxD: 45, minK: 35, maxK: 50 
+                            },
+                            { 
+                              id: 'adobe', 
+                              label: 'Adobe Stock', 
+                              desc: '7-14 Words • 1st-10 Focus • 40-50 Tags', 
+                              minT: 7, maxT: 14, minD: 20, maxD: 40, minK: 40, maxK: 50 
+                            },
+                            { 
+                              id: 'shutterstock', 
+                              label: 'Shutterstock', 
+                              desc: '10-18 Words • No Trademarks • 50 Tags', 
+                              minT: 10, maxT: 18, minD: 25, maxD: 50, minK: 45, maxK: 50 
+                            }
+                          ].map(mode => {
+                            const isSelected = settings.promptMode === mode.id;
+                            return (
+                              <button 
+                                key={mode.id}
+                                type="button"
+                                onClick={() => {
+                                  setSettings(prev => ({ 
+                                    ...prev, 
+                                    promptMode: mode.id as any,
+                                    minTitleWords: mode.minT,
+                                    maxTitleWords: mode.maxT,
+                                    minDescriptionWords: mode.minD,
+                                    maxDescriptionWords: mode.maxD,
+                                    minKeywords: mode.minK,
+                                    maxKeywords: mode.maxK
+                                  }));
+                                  showNotification(`Applied ${mode.label} preset specifications!`, 'success');
+                                }}
+                                className={cn(
+                                  "w-full text-left p-2.5 rounded-lg border transition-all cursor-pointer group flex flex-col gap-0.5",
+                                  isSelected 
+                                    ? "bg-primary text-primary-foreground border-primary shadow-md shadow-primary/20 scale-[1.01]" 
+                                    : "bg-background/80 hover:bg-accent border-border text-foreground hover:border-primary/50"
+                                )}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-black uppercase tracking-wider">{mode.label}</span>
+                                  {isSelected && <CheckCircle2 size={13} className="shrink-0" />}
+                                </div>
+                                <span className={cn(
+                                  "text-[10px] font-medium leading-tight",
+                                  isSelected ? "text-primary-foreground/90 font-semibold" : "text-muted-foreground"
+                                )}>
+                                  {mode.desc}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Small Tip Box */}
+                      <div className="p-2.5 rounded-lg bg-background/60 border border-border text-[10px] text-muted-foreground mt-2">
+                        <span className="font-bold text-foreground block mb-0.5">💡 Agency Best Practice:</span>
+                        Titles under 15 words ensure Google Images and Adobe search algorithms display full titles without truncating.
+                      </div>
                     </div>
-                    <div className="p-3 bg-secondary rounded-md border border-border">
-                      <input 
-                        type="range" 
-                        min="1" 
-                        max="10" 
-                        step="1" 
-                        value={settings.concurrency}
-                        onChange={(e) => setSettings(prev => ({ ...prev, concurrency: parseInt(e.target.value) }))}
-                        className="modern-slider slider-blue h-2 w-full"
-                      />
-                      <div className="flex justify-between text-xs font-bold text-muted-foreground mt-2 px-1">
-                        <span>1 File (Safe)</span>
-                        <span>3 Files (Recommended)</span>
-                        <span>6 Files (Fast)</span>
-                        <span>10 Files (Maximum)</span>
+
+                    {/* 2. TITLE WORD RANGE (Blue Theme) */}
+                    <div className="p-4 rounded-xl bg-blue-950/20 border-2 border-blue-500/40 flex flex-col justify-between shadow-xs space-y-4">
+                      <div>
+                        {/* Header & Large Glowing Digital Badge */}
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <label className="text-xs font-black text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <FileText size={14} className="text-blue-400" />
+                            <span>Title Word Range</span>
+                          </label>
+                          <div className="px-2.5 py-1 rounded-md bg-blue-500/20 border border-blue-400/50 text-blue-300 font-mono font-black text-xs shadow-xs">
+                            {settings.minTitleWords} - {settings.maxTitleWords} words
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-muted-foreground font-medium mb-3">
+                          Controls the minimum and maximum words in the SEO file title.
+                        </p>
+
+                        {/* Visual Range Indicator Bar */}
+                        <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden mb-4 relative flex items-center">
+                          <div 
+                            className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all"
+                            style={{
+                              marginLeft: `${Math.min(100, (settings.minTitleWords / 60) * 100)}%`,
+                              width: `${Math.max(4, Math.min(100, ((settings.maxTitleWords - settings.minTitleWords) / 60) * 100))}%`
+                            }}
+                          />
+                        </div>
+
+                        {/* Interactive Steppers & Sliders */}
+                        <div className="space-y-3.5 bg-background/70 p-3 rounded-lg border border-blue-500/20">
+                          {/* MIN Word Control */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-black text-blue-300 uppercase">Min Words:</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, minTitleWords: Math.max(1, prev.minTitleWords - 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-blue-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Minus size={11} />
+                                </button>
+                                <input 
+                                  type="number" 
+                                  min="1" 
+                                  max={settings.maxTitleWords} 
+                                  value={settings.minTitleWords}
+                                  onChange={(e) => {
+                                    const val = Math.max(1, Math.min(parseInt(e.target.value) || 1, settings.maxTitleWords));
+                                    setSettings(prev => ({ ...prev, minTitleWords: val }));
+                                  }}
+                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-blue-400/40 rounded text-foreground focus:outline-none focus:border-blue-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, minTitleWords: Math.min(prev.maxTitleWords, prev.minTitleWords + 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-blue-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Plus size={11} />
+                                </button>
+                              </div>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="1" 
+                              max="60" 
+                              value={settings.minTitleWords}
+                              onChange={(e) => setSettings(prev => ({ ...prev, minTitleWords: Math.min(parseInt(e.target.value), prev.maxTitleWords) }))}
+                              className="modern-slider slider-blue"
+                            />
+                          </div>
+
+                          {/* MAX Word Control */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-black text-blue-300 uppercase">Max Words:</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, maxTitleWords: Math.max(prev.minTitleWords, prev.maxTitleWords - 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-blue-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Minus size={11} />
+                                </button>
+                                <input 
+                                  type="number" 
+                                  min={settings.minTitleWords} 
+                                  max="60" 
+                                  value={settings.maxTitleWords}
+                                  onChange={(e) => {
+                                    const val = Math.max(settings.minTitleWords, Math.min(parseInt(e.target.value) || settings.minTitleWords, 60));
+                                    setSettings(prev => ({ ...prev, maxTitleWords: val }));
+                                  }}
+                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-blue-400/40 rounded text-foreground focus:outline-none focus:border-blue-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, maxTitleWords: Math.min(60, prev.maxTitleWords + 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-blue-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Plus size={11} />
+                                </button>
+                              </div>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="1" 
+                              max="60" 
+                              value={settings.maxTitleWords}
+                              onChange={(e) => setSettings(prev => ({ ...prev, maxTitleWords: Math.max(parseInt(e.target.value), prev.minTitleWords) }))}
+                              className="modern-slider slider-blue"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Quick Presets Pills */}
+                      <div className="pt-2 border-t border-blue-500/20">
+                        <span className="text-[10px] font-bold text-muted-foreground block mb-1.5 uppercase tracking-wider">Quick Presets:</span>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[
+                            { label: '5 - 10 words', min: 5, max: 10 },
+                            { label: '8 - 15 words', min: 8, max: 15 },
+                            { label: '15 - 25 words', min: 15, max: 25 },
+                            { label: '30 - 50 words', min: 30, max: 50 },
+                          ].map(preset => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() => setSettings(prev => ({ ...prev, minTitleWords: preset.min, maxTitleWords: preset.max }))}
+                              className={cn(
+                                "text-[10px] font-bold py-1 px-1.5 rounded text-center transition-all cursor-pointer border",
+                                settings.minTitleWords === preset.min && settings.maxTitleWords === preset.max
+                                  ? "bg-blue-600 text-white border-blue-400 font-black shadow-xs"
+                                  : "bg-background/80 hover:bg-accent text-muted-foreground hover:text-foreground border-border"
+                              )}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 3. DESCRIPTION WORD RANGE (Cyan Theme) */}
+                    <div className="p-4 rounded-xl bg-cyan-950/20 border-2 border-cyan-500/40 flex flex-col justify-between shadow-xs space-y-4">
+                      <div>
+                        {/* Header & Large Glowing Digital Badge */}
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <label className="text-xs font-black text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <FileText size={14} className="text-cyan-400" />
+                            <span>Description Range</span>
+                          </label>
+                          <div className="px-2.5 py-1 rounded-md bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 font-mono font-black text-xs shadow-xs">
+                            {settings.minDescriptionWords} - {settings.maxDescriptionWords} words
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-muted-foreground font-medium mb-3">
+                          Controls descriptive context & caption depth.
+                        </p>
+
+                        {/* Visual Range Indicator Bar */}
+                        <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden mb-4 relative flex items-center">
+                          <div 
+                            className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full transition-all"
+                            style={{
+                              marginLeft: `${Math.min(100, (settings.minDescriptionWords / 150) * 100)}%`,
+                              width: `${Math.max(4, Math.min(100, ((settings.maxDescriptionWords - settings.minDescriptionWords) / 150) * 100))}%`
+                            }}
+                          />
+                        </div>
+
+                        {/* Interactive Steppers & Sliders */}
+                        <div className="space-y-3.5 bg-background/70 p-3 rounded-lg border border-cyan-500/20">
+                          {/* MIN Word Control */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-black text-cyan-300 uppercase">Min Words:</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, minDescriptionWords: Math.max(5, prev.minDescriptionWords - 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-cyan-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Minus size={11} />
+                                </button>
+                                <input 
+                                  type="number" 
+                                  min="5" 
+                                  max={settings.maxDescriptionWords} 
+                                  value={settings.minDescriptionWords}
+                                  onChange={(e) => {
+                                    const val = Math.max(5, Math.min(parseInt(e.target.value) || 5, settings.maxDescriptionWords));
+                                    setSettings(prev => ({ ...prev, minDescriptionWords: val }));
+                                  }}
+                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-cyan-400/40 rounded text-foreground focus:outline-none focus:border-cyan-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, minDescriptionWords: Math.min(prev.maxDescriptionWords, prev.minDescriptionWords + 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-cyan-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Plus size={11} />
+                                </button>
+                              </div>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="5" 
+                              max="150" 
+                              value={settings.minDescriptionWords}
+                              onChange={(e) => setSettings(prev => ({ ...prev, minDescriptionWords: Math.min(parseInt(e.target.value), prev.maxDescriptionWords) }))}
+                              className="modern-slider slider-cyan"
+                            />
+                          </div>
+
+                          {/* MAX Word Control */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-black text-cyan-300 uppercase">Max Words:</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, maxDescriptionWords: Math.max(prev.minDescriptionWords, prev.maxDescriptionWords - 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-cyan-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Minus size={11} />
+                                </button>
+                                <input 
+                                  type="number" 
+                                  min={settings.minDescriptionWords} 
+                                  max="150" 
+                                  value={settings.maxDescriptionWords}
+                                  onChange={(e) => {
+                                    const val = Math.max(settings.minDescriptionWords, Math.min(parseInt(e.target.value) || settings.minDescriptionWords, 150));
+                                    setSettings(prev => ({ ...prev, maxDescriptionWords: val }));
+                                  }}
+                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-cyan-400/40 rounded text-foreground focus:outline-none focus:border-cyan-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, maxDescriptionWords: Math.min(150, prev.maxDescriptionWords + 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-cyan-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Plus size={11} />
+                                </button>
+                              </div>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="5" 
+                              max="150" 
+                              value={settings.maxDescriptionWords}
+                              onChange={(e) => setSettings(prev => ({ ...prev, maxDescriptionWords: Math.max(parseInt(e.target.value), prev.minDescriptionWords) }))}
+                              className="modern-slider slider-cyan"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Quick Presets Pills */}
+                      <div className="pt-2 border-t border-cyan-500/20">
+                        <span className="text-[10px] font-bold text-muted-foreground block mb-1.5 uppercase tracking-wider">Quick Presets:</span>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[
+                            { label: '15 - 25 words', min: 15, max: 25 },
+                            { label: '25 - 45 words', min: 25, max: 45 },
+                            { label: '45 - 80 words', min: 45, max: 80 },
+                            { label: '80 - 120 words', min: 80, max: 120 },
+                          ].map(preset => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() => setSettings(prev => ({ ...prev, minDescriptionWords: preset.min, maxDescriptionWords: preset.max }))}
+                              className={cn(
+                                "text-[10px] font-bold py-1 px-1.5 rounded text-center transition-all cursor-pointer border",
+                                settings.minDescriptionWords === preset.min && settings.maxDescriptionWords === preset.max
+                                  ? "bg-cyan-600 text-white border-cyan-400 font-black shadow-xs"
+                                  : "bg-background/80 hover:bg-accent text-muted-foreground hover:text-foreground border-border"
+                              )}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 4. KEYWORD COUNT RANGE (Emerald Theme) */}
+                    <div className="p-4 rounded-xl bg-emerald-950/20 border-2 border-emerald-500/40 flex flex-col justify-between shadow-xs space-y-4">
+                      <div>
+                        {/* Header & Large Glowing Digital Badge */}
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <label className="text-xs font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Tag size={14} className="text-emerald-400" />
+                            <span>Keyword Count Range</span>
+                          </label>
+                          <div className="px-2.5 py-1 rounded-md bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-mono font-black text-xs shadow-xs flex items-center gap-1">
+                            <span>{settings.minKeywords} - {settings.maxKeywords} tags</span>
+                            {settings.maxKeywords === 50 && (
+                              <span className="text-[9px] bg-emerald-500 text-slate-950 px-1 py-0.2 rounded font-black tracking-tight">100%</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-muted-foreground font-medium mb-3">
+                          Controls the number of indexed keyword tags (Up to 50 max).
+                        </p>
+
+                        {/* Tag Capacity Meter */}
+                        <div className="space-y-1 mb-4">
+                          <div className="flex justify-between text-[10px] font-bold text-emerald-400">
+                            <span>Density Capacity</span>
+                            <span>{settings.maxKeywords} / 50 Tags ({Math.round((settings.maxKeywords / 50) * 100)}%)</span>
+                          </div>
+                          <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden relative flex items-center">
+                            <div 
+                              className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full transition-all"
+                              style={{ width: `${(settings.maxKeywords / 50) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Interactive Steppers & Sliders */}
+                        <div className="space-y-3.5 bg-background/70 p-3 rounded-lg border border-emerald-500/20">
+                          {/* MIN Tag Control */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-black text-emerald-300 uppercase">Min Tags:</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, minKeywords: Math.max(5, prev.minKeywords - 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-emerald-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Minus size={11} />
+                                </button>
+                                <input 
+                                  type="number" 
+                                  min="5" 
+                                  max={settings.maxKeywords} 
+                                  value={settings.minKeywords}
+                                  onChange={(e) => {
+                                    const val = Math.max(5, Math.min(parseInt(e.target.value) || 5, settings.maxKeywords));
+                                    setSettings(prev => ({ ...prev, minKeywords: val }));
+                                  }}
+                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-emerald-400/40 rounded text-foreground focus:outline-none focus:border-emerald-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, minKeywords: Math.min(prev.maxKeywords, prev.minKeywords + 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-emerald-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Plus size={11} />
+                                </button>
+                              </div>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="5" 
+                              max="50" 
+                              value={settings.minKeywords}
+                              onChange={(e) => setSettings(prev => ({ ...prev, minKeywords: Math.min(parseInt(e.target.value), prev.maxKeywords) }))}
+                              className="modern-slider slider-emerald"
+                            />
+                          </div>
+
+                          {/* MAX Tag Control */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-black text-emerald-300 uppercase">Max Tags:</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, maxKeywords: Math.max(prev.minKeywords, prev.maxKeywords - 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-emerald-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Minus size={11} />
+                                </button>
+                                <input 
+                                  type="number" 
+                                  min={settings.minKeywords} 
+                                  max="50" 
+                                  value={settings.maxKeywords}
+                                  onChange={(e) => {
+                                    const val = Math.max(settings.minKeywords, Math.min(parseInt(e.target.value) || settings.minKeywords, 50));
+                                    setSettings(prev => ({ ...prev, maxKeywords: val }));
+                                  }}
+                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-emerald-400/40 rounded text-foreground focus:outline-none focus:border-emerald-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setSettings(prev => ({ ...prev, maxKeywords: Math.min(50, prev.maxKeywords + 1) }))}
+                                  className="w-6 h-6 rounded bg-secondary hover:bg-emerald-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
+                                >
+                                  <Plus size={11} />
+                                </button>
+                              </div>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="5" 
+                              max="50" 
+                              value={settings.maxKeywords}
+                              onChange={(e) => setSettings(prev => ({ ...prev, maxKeywords: Math.max(parseInt(e.target.value), prev.minKeywords) }))}
+                              className="modern-slider slider-emerald"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Quick Presets Pills */}
+                      <div className="pt-2 border-t border-emerald-500/20">
+                        <span className="text-[10px] font-bold text-muted-foreground block mb-1.5 uppercase tracking-wider">Quick Presets:</span>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[
+                            { label: '25 - 35 tags', min: 25, max: 35 },
+                            { label: '35 - 45 tags', min: 35, max: 45 },
+                            { label: '40 - 50 tags', min: 40, max: 50 },
+                            { label: '50 - 50 (Max)', min: 50, max: 50 },
+                          ].map(preset => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() => setSettings(prev => ({ ...prev, minKeywords: preset.min, maxKeywords: preset.max }))}
+                              className={cn(
+                                "text-[10px] font-bold py-1 px-1.5 rounded text-center transition-all cursor-pointer border",
+                                settings.minKeywords === preset.min && settings.maxKeywords === preset.max
+                                  ? "bg-emerald-600 text-white border-emerald-400 font-black shadow-xs"
+                                  : "bg-background/80 hover:bg-accent text-muted-foreground hover:text-foreground border-border"
+                              )}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Batch Processing Concurrency Strip */}
+                  <div className="p-4 md:p-5 rounded-xl bg-purple-950/20 border-2 border-purple-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs relative z-10">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Cpu size={16} className="text-purple-400" />
+                        <label className="text-xs md:text-sm font-black text-purple-300 uppercase tracking-wider">
+                          Batch Processing Concurrency (Simultaneous Requests)
+                        </label>
+                      </div>
+                      <p className="text-xs text-muted-foreground font-medium">
+                        Higher concurrency speeds up bulk generation. Lower concurrency prevents 429 quota rate limits.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
+                      <div className="flex items-center gap-1.5 bg-background/80 border border-purple-500/30 px-3 py-1.5 rounded-lg shadow-xs">
+                        <span className="text-xs font-mono font-black text-purple-400 text-center w-24">
+                          {settings.concurrency} {settings.concurrency === 1 ? 'Worker' : 'Parallel Files'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {[
+                          { val: 1, label: '1 (Safe)' },
+                          { val: 3, label: '3 (Rec.)' },
+                          { val: 5, label: '5 (Fast)' },
+                          { val: 10, label: '10 (Turbo)' },
+                        ].map(speed => (
+                          <button
+                            key={speed.val}
+                            type="button"
+                            onClick={() => setSettings(prev => ({ ...prev, concurrency: speed.val }))}
+                            className={cn(
+                              "px-2.5 py-1 text-xs font-black rounded-md border transition-all cursor-pointer",
+                              settings.concurrency === speed.val
+                                ? "bg-purple-600 text-white border-purple-400 shadow-xs"
+                                : "bg-background/80 hover:bg-accent text-muted-foreground border-border hover:text-foreground"
+                            )}
+                          >
+                            {speed.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -3123,7 +4335,54 @@ export default function App() {
               </button>
             </div>
             <div className="p-6 max-h-[60vh] overflow-y-auto custom-scrollbar space-y-3 bg-background">
-              {history.length === 0 ? (
+              {/* Active Undo Snapshots */}
+              {undoSnapshots.length > 0 && (
+                <div className="mb-4 pb-4 border-b border-border/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-500 flex items-center gap-1.5">
+                      <Undo2 size={12} strokeWidth={2.5} />
+                      Active Undo Points ({undoSnapshots.length})
+                    </span>
+                    <button
+                      onClick={() => {
+                        handleUndoBulk();
+                        setIsHistoryOpen(false);
+                      }}
+                      className="text-[10px] font-bold text-amber-400 hover:text-amber-300 underline cursor-pointer"
+                    >
+                      Undo Latest (Ctrl+Z)
+                    </button>
+                  </div>
+                  <div className="space-y-1.5">
+                    {undoSnapshots.slice().reverse().map((snap, idx) => (
+                      <div key={snap.id} className="p-2.5 bg-amber-500/10 border border-amber-500/25 rounded-sm flex items-center justify-between text-xs">
+                        <div>
+                          <div className="font-bold text-amber-200 text-[11px] flex items-center gap-1.5">
+                            <span>#{undoSnapshots.length - idx}</span>
+                            <span>{snap.actionName}</span>
+                          </div>
+                          <div className="text-[10px] text-amber-400/80">
+                            {new Date(snap.timestamp).toLocaleTimeString()} • {snap.files.length} assets before modification
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setFiles(snap.files);
+                            if (snap.fileObjects) setFileObjects(snap.fileObjects);
+                            setIsHistoryOpen(false);
+                            showNotification(`✓ Reverted to snapshot "${snap.actionName}"! Restored ${snap.files.length} files.`, "success");
+                          }}
+                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-[10px] font-black uppercase tracking-wider cursor-pointer shadow-xs active:scale-95"
+                        >
+                          Revert Here
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {history.length === 0 && undoSnapshots.length === 0 ? (
                 <div className="py-20 flex flex-col items-center justify-center text-muted-foreground/30 space-y-4">
                   <Clock size={48} strokeWidth={1} className="opacity-10" />
                   <p className="text-[10px] font-bold uppercase tracking-widest">NO HISTORY FOUND</p>
@@ -3645,6 +4904,18 @@ export default function App() {
       )}
 
 
+
+      {/* Extensions Full Screen Studio */}
+      <ExtensionsModal
+        isOpen={isExtensionsOpen}
+        onClose={() => setIsExtensionsOpen(false)}
+        workspaceFiles={files}
+        fileObjects={fileObjects}
+        apiConfig={apiConfig}
+        activeKey={activeKey}
+        activeModel={settings.aiModel}
+        showNotification={showNotification}
+      />
 
       <input 
         type="file" 
