@@ -251,18 +251,16 @@ export function createXmpApp1Block(xmpString: string): Uint8Array {
   return app1;
 }
 
-// Insert custom APP segments into JPEG after SOI and APP0/Exif APP1
+// Insert custom APP segments into JPEG after SOI and APP0
 function insertSegmentsIntoJpeg(jpegBytes: Uint8Array, segmentsToInsert: Uint8Array[]): Uint8Array {
   if (jpegBytes[0] !== 0xFF || jpegBytes[1] !== 0xD8) {
     return jpegBytes; // Not a valid JPEG
   }
 
-  // Remove existing XMP APP1 or IPTC APP13 to prevent duplication
+  // Remove existing Exif APP1, XMP APP1 or IPTC APP13 to prevent duplication
   const cleanParts: Uint8Array[] = [];
   let cur = 0;
   let pos = 2;
-  const xmpHeader = 'http://ns.adobe.com/xap/1.0/';
-  const iptcHeader = 'Photoshop 3.0';
 
   while (pos < jpegBytes.length - 4) {
     if (jpegBytes[pos] === 0xFF) {
@@ -274,16 +272,24 @@ function insertSegmentsIntoJpeg(jpegBytes: Uint8Array, segmentsToInsert: Uint8Ar
       const segLen = (jpegBytes[pos + 2] << 8) | jpegBytes[pos + 3];
       const nextPos = pos + 2 + segLen;
 
-      let isOldXmpOrIptc = false;
-      if (marker === 0xE1 && segLen > 30) {
-        const str = String.fromCharCode(...jpegBytes.subarray(pos + 4, pos + 4 + 28));
-        if (str.startsWith(xmpHeader)) isOldXmpOrIptc = true;
+      let isOldMetadata = false;
+      if (marker === 0xE1) {
+        // Check for Exif APP1 or XMP APP1
+        const headerSub = jpegBytes.subarray(pos + 4, Math.min(jpegBytes.length, pos + 4 + 32));
+        const headerStr = String.fromCharCode(...headerSub);
+        if (headerStr.startsWith('Exif\0\0') || headerStr.startsWith('http://ns.adobe.com/xap/1.0/')) {
+          isOldMetadata = true;
+        }
       } else if (marker === 0xED && segLen > 15) {
-        const str = String.fromCharCode(...jpegBytes.subarray(pos + 4, pos + 4 + 14));
-        if (str.startsWith(iptcHeader)) isOldXmpOrIptc = true;
+        // IPTC APP13
+        const headerSub = jpegBytes.subarray(pos + 4, Math.min(jpegBytes.length, pos + 4 + 16));
+        const headerStr = String.fromCharCode(...headerSub);
+        if (headerStr.startsWith('Photoshop 3.0')) {
+          isOldMetadata = true;
+        }
       }
 
-      if (isOldXmpOrIptc) {
+      if (isOldMetadata) {
         cleanParts.push(jpegBytes.subarray(cur, pos));
         cur = nextPos;
       }
@@ -303,30 +309,11 @@ function insertSegmentsIntoJpeg(jpegBytes: Uint8Array, segmentsToInsert: Uint8Ar
     cPos += p.length;
   }
 
-  // Find insert position (after APP0 or after Exif APP1)
+  // Find insert position (immediately after APP0 JFIF if present, otherwise immediately after SOI)
   let targetInsert = 2;
-  pos = 2;
-  while (pos < cleanJpeg.length - 4) {
-    if (cleanJpeg[pos] === 0xFF) {
-      const marker = cleanJpeg[pos + 1];
-      if (marker === 0xE0) { // APP0 JFIF
-        const segLen = (cleanJpeg[pos + 2] << 8) | cleanJpeg[pos + 3];
-        pos += 2 + segLen;
-        targetInsert = pos;
-        continue;
-      }
-      if (marker === 0xE1) { // APP1 Exif
-        const segLen = (cleanJpeg[pos + 2] << 8) | cleanJpeg[pos + 3];
-        const id = String.fromCharCode(...cleanJpeg.subarray(pos + 4, pos + 10));
-        if (id.startsWith('Exif')) {
-          pos += 2 + segLen;
-          targetInsert = pos;
-          continue;
-        }
-      }
-      break;
-    }
-    pos++;
+  if (cleanJpeg[2] === 0xFF && cleanJpeg[3] === 0xE0) {
+    const jfifLen = (cleanJpeg[4] << 8) | cleanJpeg[5];
+    targetInsert = 2 + 2 + jfifLen;
   }
 
   const addedLen = segmentsToInsert.reduce((s, seg) => s + seg.length, 0);
@@ -369,32 +356,66 @@ export async function embedMetadataInImageBlob(
       .filter(Boolean)
       .join('; ');
 
-    // 1. Prepare Standard Exif 0th IFD tags (Windows Explorer Properties -> Details & Adobe)
-    let zeroth: any = {};
-    let exif: any = {};
+    // 1. Prepare Standard Exif tags (Windows Explorer Properties -> Details & Adobe)
+    let exifObj: any = { '0th': {}, Exif: {}, GPS: {} };
+    try {
+      let scanPos = 2;
+      while (scanPos < jpegBytes.length - 4) {
+        if (jpegBytes[scanPos] === 0xFF && jpegBytes[scanPos + 1] === 0xE1) {
+          const sLen = (jpegBytes[scanPos + 2] << 8) | jpegBytes[scanPos + 3];
+          const id = String.fromCharCode(...jpegBytes.subarray(scanPos + 4, scanPos + 10));
+          if (id.startsWith('Exif\0\0')) {
+            const rawExifBinary = String.fromCharCode(...jpegBytes.subarray(scanPos + 4, scanPos + 2 + sLen));
+            const loaded = piexif.load(rawExifBinary);
+            if (loaded && loaded['0th']) {
+              exifObj = loaded;
+            }
+            break;
+          }
+          scanPos += 2 + sLen;
+        } else if (jpegBytes[scanPos] === 0xFF && (jpegBytes[scanPos + 1] === 0xDA || jpegBytes[scanPos + 1] === 0xD9)) {
+          break;
+        } else {
+          scanPos++;
+        }
+      }
+    } catch {
+      // ignore parse errors, start fresh
+    }
 
-    zeroth[piexif.ImageIFD.ImageDescription] = description;
-    zeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
-    zeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
-    zeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
-    zeroth[piexif.ImageIFD.XPComment] = toUtf16Le(description);
-    zeroth[piexif.ImageIFD.XPAuthor] = toUtf16Le('Stock Contributor');
-    zeroth[piexif.ImageIFD.Rating] = rating;               // Tag 18246 (1-5 stars)
-    zeroth[piexif.ImageIFD.RatingPercent] = 99;           // Tag 18249 (99% = 5 stars in Windows Explorer)
-    zeroth[piexif.ImageIFD.Artist] = 'Stock Contributor';
-    zeroth[piexif.ImageIFD.Copyright] = `Copyright ${new Date().getFullYear()}`;
+    if (!exifObj['0th']) exifObj['0th'] = {};
+    if (!exifObj.Exif) exifObj.Exif = {};
+    if (!exifObj.GPS) exifObj.GPS = {};
+    delete exifObj['1st'];
+    delete exifObj.thumbnail;
+
+    exifObj['0th'][piexif.ImageIFD.ImageDescription] = description;
+    exifObj['0th'][piexif.ImageIFD.XPTitle] = toUtf16Le(title);
+    exifObj['0th'][piexif.ImageIFD.XPSubject] = toUtf16Le(title);
+    exifObj['0th'][piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
+    exifObj['0th'][piexif.ImageIFD.XPComment] = toUtf16Le(description);
+    exifObj['0th'][piexif.ImageIFD.XPAuthor] = toUtf16Le('Stock Contributor');
+    exifObj['0th'][piexif.ImageIFD.Rating] = rating;               // Tag 18246 (1-5 stars)
+    exifObj['0th'][piexif.ImageIFD.RatingPercent] = 99;           // Tag 18249 (99% = 5 stars in Windows Explorer)
+    exifObj['0th'][piexif.ImageIFD.Artist] = 'Stock Contributor';
+    exifObj['0th'][piexif.ImageIFD.Copyright] = `Copyright ${new Date().getFullYear()}`;
 
     let exifDump = '';
     try {
-      exifDump = piexif.dump({ '0th': zeroth, Exif: exif, GPS: {} });
+      exifDump = piexif.dump(exifObj);
     } catch (dumpErr) {
-      console.warn("Initial EXIF dump failed, retrying with minimal tags:", dumpErr);
+      console.warn("Existing EXIF dump failed, fallback to clean stock tags:", dumpErr);
       const cleanZeroth: any = {
         [piexif.ImageIFD.ImageDescription]: description,
         [piexif.ImageIFD.XPTitle]: toUtf16Le(title),
+        [piexif.ImageIFD.XPSubject]: toUtf16Le(title),
         [piexif.ImageIFD.XPKeywords]: toUtf16Le(windowsKeywords),
+        [piexif.ImageIFD.XPComment]: toUtf16Le(description),
+        [piexif.ImageIFD.XPAuthor]: toUtf16Le('Stock Contributor'),
         [piexif.ImageIFD.Rating]: rating,
-        [piexif.ImageIFD.RatingPercent]: 99
+        [piexif.ImageIFD.RatingPercent]: 99,
+        [piexif.ImageIFD.Artist]: 'Stock Contributor',
+        [piexif.ImageIFD.Copyright]: `Copyright ${new Date().getFullYear()}`
       };
       exifDump = piexif.dump({ '0th': cleanZeroth, Exif: {}, GPS: {} });
     }

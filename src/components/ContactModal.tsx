@@ -58,20 +58,6 @@ export const ContactModal: React.FC<ContactModalProps> = ({
                 <span className="text-[10px] text-slate-400">SS SMART META Studio</span>
               </div>
             </div>
-            {onOpenAdmin && (
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onOpenAdmin();
-                }}
-                className="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-[10px] uppercase flex items-center gap-1 cursor-pointer"
-                title="Admin Control"
-              >
-                <Shield size={11} />
-                <span>Admin</span>
-              </button>
-            )}
           </div>
 
           {/* Quick Channels */}

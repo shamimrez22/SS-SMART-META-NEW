@@ -428,7 +428,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   </div>
                   <div className="flex items-center justify-between pt-1">
                     <span className="text-[10px] text-slate-400">
-                      Default: <strong className="text-cyan-300 font-mono">SHAMIM</strong> / <strong className="text-cyan-300 font-mono">321</strong>
+                      Save new credentials to update Admin Login
                     </span>
                     <button
                       type="submit"
@@ -795,7 +795,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <div className="space-y-2.5">
                   {keysList.map(record => {
                     const isMasterAdmin = record.key === ADMIN_MASTER_LICENSE_KEY;
-                    const isExpired = (Date.now() > record.expiresAt && record.duration !== 'lifetime') || record.status === 'revoked';
+                    const isExpired = (record.duration !== 'lifetime' && Date.now() > record.expiresAt) || record.status === 'revoked';
                     return (
                       <div
                         key={record.id}
@@ -804,7 +804,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                           isMasterAdmin
                             ? "bg-gradient-to-r from-amber-950/40 to-[#0b1726] border-amber-500/60 shadow-md"
                             : isExpired
-                            ? "bg-rose-950/50 border-2 border-rose-500/80 text-rose-200 shadow-[0_0_15px_rgba(244,63,94,0.25)]"
+                            ? "bg-red-950/70 border-2 border-red-500 text-red-200 shadow-[0_0_20px_rgba(239,68,68,0.35)]"
                             : "bg-[#07121e] border-[#182c44] hover:border-blue-500/40"
                         )}
                       >
@@ -812,7 +812,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className={cn(
                               "font-mono font-black text-xs select-all",
-                              isMasterAdmin ? "text-amber-300 text-sm tracking-wider" : isExpired ? "text-rose-300 tracking-wider" : "text-white"
+                              isMasterAdmin ? "text-amber-300 text-sm tracking-wider" : isExpired ? "text-red-300 font-bold tracking-wider" : "text-white"
                             )}>
                               {record.key}
                             </span>
@@ -821,7 +821,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 👑 MASTER ADMIN (SHAMIM)
                               </span>
                             ) : isExpired ? (
-                              <span className="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded border bg-rose-600/30 text-rose-200 border-rose-500/80 shadow-xs flex items-center gap-1">
+                              <span className="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded border bg-red-600/40 text-red-200 border-red-400 shadow-sm flex items-center gap-1">
                                 ✕ EXPIRED (মেয়াদ শেষ)
                               </span>
                             ) : (
@@ -834,16 +834,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               isMasterAdmin
                                 ? "text-amber-300 bg-amber-500/15 border-amber-500/30"
                                 : isExpired
-                                ? "text-rose-300 bg-rose-500/20 border-rose-500/40"
+                                ? "text-red-300 bg-red-500/20 border-red-500/40 font-bold"
                                 : "text-cyan-400 bg-cyan-500/10 border-cyan-500/20"
                             )}>
                               {record.duration === 'lifetime' ? 'Permanent Lifetime' : `${record.durationDays} Days`}
                             </span>
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-slate-400 flex-wrap">
-                            <span>Note: <strong className={isMasterAdmin ? "text-amber-200" : isExpired ? "text-rose-200 font-semibold" : "text-slate-300"}>{record.clientName || 'General'}</strong></span>
+                            <span>Note: <strong className={isMasterAdmin ? "text-amber-200" : isExpired ? "text-red-200 font-semibold" : "text-slate-300"}>{record.clientName || 'General'}</strong></span>
                             <span>Created: {new Date(record.createdAt).toLocaleDateString()}</span>
-                            <span className={isExpired ? "text-rose-400 font-bold" : ""}>
+                            <span className={isExpired ? "text-red-400 font-bold" : ""}>
                               {isExpired ? "Expired On: " : "Valid Till: "}
                               {record.duration === 'lifetime' ? 'Permanent Lifetime' : new Date(record.expiresAt).toLocaleDateString()}
                             </span>
@@ -860,7 +860,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               isMasterAdmin
                                 ? "bg-amber-500/20 hover:bg-amber-500 text-amber-200 hover:text-white border border-amber-500/40"
                                 : isExpired
-                                ? "bg-rose-500/20 hover:bg-rose-600 text-rose-200 hover:text-white border border-rose-500/40"
+                                ? "bg-red-500/20 hover:bg-red-600 text-red-200 hover:text-white border border-red-500/40"
                                 : "bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/30"
                             )}
                             title="Copy Key"
@@ -885,7 +885,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             <button
                               type="button"
                               onClick={() => handleDeleteKey(record.id)}
-                              className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white border border-rose-400 text-xs font-black flex items-center gap-1.5 shadow-md cursor-pointer transition-all active:scale-95"
+                              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white border-2 border-red-400 text-xs font-black flex items-center gap-1.5 shadow-md shadow-red-900/50 cursor-pointer transition-all active:scale-95"
                               title="মেয়াদোত্তীর্ণ কী চিরতরে মুছে দিন (Delete & Terminate)"
                             >
                               <Trash2 size={13} />
@@ -895,7 +895,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             <button
                               type="button"
                               onClick={() => handleDeleteKey(record.id)}
-                              className="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                              className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/30 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
                               title="Delete Key"
                             >
                               <Trash2 size={13} />

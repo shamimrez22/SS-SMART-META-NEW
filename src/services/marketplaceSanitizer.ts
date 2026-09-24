@@ -81,8 +81,8 @@ export function sanitizeStockTitle(rawTitle: string, marketplace: string = 'univ
   // Strip redundant conversational prefixes
   title = title.replace(/^(photo of|picture of|image of|photograph of|shot of|close up of|scenic view of|an image of|a photo of|stock photo of|illustration of|vector of)\s+/i, '');
 
-  // Clean illegal characters that trigger reviewer flags: #, @, $, %, *, ~, ^, {, }, [, ], |, \, /
-  title = title.replace(/[/\\#@$%*~^{}[\]|<>]/g, ' ');
+  // Clean illegal characters that trigger reviewer flags: #, @, $, %, *, ~, ^, {, }, [, ], (, ), |, \, /, _
+  title = title.replace(/[/\\#@$%*~^{}[\]()|<>_]/g, ' ');
 
   // Collapse multiple spaces/dashes
   title = title.replace(/[-_]{2,}/g, ' ').replace(/\s{2,}/g, ' ').trim();
@@ -165,8 +165,8 @@ export function sanitizeStockKeywords(
   for (const rawTag of inputList) {
     let tag = rawTag.toLowerCase().trim();
 
-    // Remove unwanted symbols
-    tag = tag.replace(/[/\\#@$%*~^{}[\]|<>"'`;!?]/g, '').trim();
+    // Remove unwanted symbols including brackets and parentheses
+    tag = tag.replace(/[/\\#@$%*~^{}[\]()<>"'`;!?_]/g, '').trim();
 
     if (!tag || tag.length < 2) continue;
 

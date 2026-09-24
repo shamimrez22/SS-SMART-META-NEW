@@ -250,7 +250,7 @@ export async function generateDetailedPromptsFromImage(options: PromptGenOptions
     customInstructions = "",
     apiConfig,
     apiKey,
-    modelName = "gemini-2.5-flash",
+    modelName = "gemini-3.8-flash",
     turboSpeed = true,
   } = options;
 
@@ -317,13 +317,12 @@ Return valid JSON with this exact structure:
   // 4. Try Gemini first (preferred for speed and multimodal vision)
   if (geminiKey) {
     const ai = new GoogleGenAI({ apiKey: geminiKey });
-    // Prioritize ultra-fast flash models
+    // Prioritize ultra-fast flash models with robust quota
     const modelsToTry = [
-      modelName || "gemini-2.5-flash",
-      "gemini-2.5-flash",
-      "gemini-2.5-flash-lite",
-      "gemini-3.1-flash-lite",
-      "gemini-3.8-flash"
+       modelName || "gemini-3.8-flash",
+       "gemini-3.8-flash",
+       "gemini-3.1-flash-lite",
+       "gemini-flash-latest"
     ];
 
     // Remove duplicates

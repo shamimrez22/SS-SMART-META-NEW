@@ -17,11 +17,15 @@ export type FilenameFormat = 'exact_title' | 'kebab_case' | 'snake_case';
  * - Preserves or ensures valid stock asset extension (.jpg, .png, .eps, .mp4, etc.).
  */
 export function sanitizeStockFilename(
-  rawName: string, 
+  rawName: string | any, 
   originalName?: string, 
   fallbackExt: string = 'jpg',
   format: FilenameFormat = 'exact_title'
 ): string {
+  const safeRaw = typeof rawName === 'string' 
+    ? rawName 
+    : (rawName && typeof rawName === 'object' && typeof rawName.title === 'string' ? rawName.title : String(rawName || ''));
+
   const knownExts = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif', 'mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'eps', 'ai', 'svg'];
   let ext = (fallbackExt || 'jpg').toLowerCase().replace(/^\./, '');
   
@@ -30,14 +34,14 @@ export function sanitizeStockFilename(
     if (knownExts.includes(origExt)) {
       ext = origExt;
     }
-  } else if (rawName && rawName.includes('.')) {
-    const rawExt = rawName.split('.').pop()?.toLowerCase() || '';
+  } else if (safeRaw && safeRaw.includes('.')) {
+    const rawExt = safeRaw.split('.').pop()?.toLowerCase() || '';
     if (knownExts.includes(rawExt)) {
       ext = rawExt;
     }
   }
 
-  let base = (rawName || '').trim();
+  let base = safeRaw.trim();
   const extRegex = new RegExp(`\\.${ext}$`, 'i');
   base = base.replace(extRegex, '');
   

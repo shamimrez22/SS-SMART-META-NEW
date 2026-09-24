@@ -52,13 +52,13 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
       if (isValid) {
         saveAdminConfig({ isAdmin: true });
-        showNotification("✓ Welcome Shamim! Admin mode unlocked successfully.", "success");
+        showNotification("✓ Admin access verified successfully.", "success");
         onSuccess();
         onClose();
         setUsername('');
         setPassword('');
       } else {
-        setErrorMsg("ভুল ইউজারনেম বা পাসওয়ার্ড! ডিফল্ট ইউজার: SHAMIM, পাসওয়ার্ড: 321");
+        setErrorMsg("ভুল ইউজারনেম বা পাসওয়ার্ড! পুনরায় চেষ্টা করুন।");
         showNotification("Incorrect Admin credentials", "error");
       }
     }, 350);
@@ -103,27 +103,6 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-5 pt-2 space-y-4">
-          {/* Preset Credentials Hint Banner */}
-          <div className="p-3 rounded-xl bg-blue-950/40 border border-blue-500/40 flex items-center justify-between text-xs text-blue-200">
-            <div className="space-y-0.5">
-              <span className="font-bold text-cyan-300 block">👑 Default Master Credentials:</span>
-              <span className="text-[11px] text-slate-300">
-                User: <strong className="text-white font-mono">SHAMIM</strong> | Pass: <strong className="text-white font-mono">321</strong>
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setUsername('SHAMIM');
-                setPassword('321');
-                setErrorMsg(null);
-              }}
-              className="px-2.5 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-[10px] font-bold uppercase cursor-pointer transition-colors"
-            >
-              Auto-Fill
-            </button>
-          </div>
-
           {/* Error Message */}
           {errorMsg && (
             <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-500/50 flex items-center gap-2 text-rose-300 text-xs animate-in shake duration-150">
@@ -147,7 +126,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   setUsername(e.target.value);
                   setErrorMsg(null);
                 }}
-                placeholder="Enter admin username (e.g. SHAMIM)"
+                placeholder="Enter admin username"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-[#050d18] border-2 border-[#1b3452] focus:border-cyan-400 text-sm font-bold text-white placeholder-slate-500 focus:outline-none tracking-wide shadow-inner"
               />
             </div>
@@ -167,7 +146,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   setPassword(e.target.value);
                   setErrorMsg(null);
                 }}
-                placeholder="Enter password (e.g. 321)"
+                placeholder="Enter password"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-[#050d18] border-2 border-[#1b3452] focus:border-cyan-400 text-sm font-bold text-white placeholder-slate-500 focus:outline-none tracking-wider pr-10 shadow-inner"
               />
               <button

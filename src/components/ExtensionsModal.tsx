@@ -41,8 +41,6 @@ import {
   formatBatchAllPromptsText,
   formatBatchSimplePromptsText
 } from '../services/imageToPromptService';
-import { AdminPanelModal } from './AdminPanelModal';
-import { AdminLoginModal } from './AdminLoginModal';
 import { cn } from '../lib/utils';
 
 interface ExtensionsModalProps {
@@ -66,7 +64,7 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
   fileObjects,
   apiConfig,
   activeKey,
-  activeModel = 'gemini-2.5-flash',
+  activeModel = 'gemini-3.8-flash',
   showNotification,
   initialTab = 'hub',
   onOpenAdmin,
@@ -75,8 +73,6 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
   // Navigation
   const [activeTab, setActiveTab] = useState<'hub' | 'image-to-prompt' | 'prompt-expander' | 'palette-scout' | 'upscaler-advisor'>(initialTab || 'hub');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
-  const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -113,7 +109,7 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
   const [targetEngine, setTargetEngine] = useState<'universal' | 'midjourney' | 'flux' | 'photorealistic' | 'cinematic' | 'vector'>('universal');
   const [detailLevel, setDetailLevel] = useState<'standard' | 'hyper_detailed' | 'masterpiece'>('hyper_detailed');
   const [customInstructions, setCustomInstructions] = useState('');
-  const [selectedModel, setSelectedModel] = useState<string>(activeModel || 'gemini-2.5-flash');
+  const [selectedModel, setSelectedModel] = useState<string>(activeModel || 'gemini-3.8-flash');
   const [concurrency, setConcurrency] = useState<number>(4);
 
   // Text Prompt Expander Tab State
@@ -604,7 +600,7 @@ Return ONLY a JSON object:
 }`;
 
       const res = await ai.models.generateContent({
-        model: selectedModel || 'gemini-2.5-flash',
+        model: selectedModel || 'gemini-3.8-flash',
         contents: prompt,
       });
 
@@ -624,14 +620,9 @@ Return ONLY a JSON object:
       {/* 1. EXTENSIONS HUB HEADER */}
       <header className="px-5 py-3 border-b border-[#1b2d45] bg-[#091524] flex items-center justify-between shrink-0 shadow-sm z-20">
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setIsAdminLoginOpen(true)}
-            className="w-10 h-10 rounded-xl bg-cyan-500/20 border-2 border-cyan-400/40 hover:border-cyan-300 hover:bg-cyan-500/30 flex items-center justify-center text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.25)] cursor-pointer hover:scale-105 active:scale-95 transition-all"
-            title="👑 Admin Panel Access (লগইন করতে ক্লিক করুন: SHAMIM / 321)"
-          >
+          <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border-2 border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.25)]">
             <Layers size={22} />
-          </button>
+          </div>
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base md:text-lg font-black text-white uppercase tracking-wider">
@@ -668,20 +659,6 @@ Return ONLY a JSON object:
               </>
             )}
           </div>
-
-          {/* Admin Option in the corner as requested */}
-          <button
-            type="button"
-            onClick={() => {
-              if (onOpenAdmin) onOpenAdmin();
-              else setIsAdminModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-amber-200 text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs active:scale-95"
-            title="Admin Control Center (License Key Generator, WhatsApp/YouTube/Website, Admin Mode)"
-          >
-            <Shield size={14} className="text-amber-400" />
-            <span>Admin</span>
-          </button>
 
           <button
             type="button"
@@ -990,48 +967,6 @@ Return ONLY a JSON object:
                 </button>
               </div>
 
-              {/* EXTENSION 5: Admin Control & License Suite */}
-              <div 
-                onClick={() => {
-                  if (onOpenAdmin) onOpenAdmin();
-                  else setIsAdminModalOpen(true);
-                }}
-                className="group p-5 rounded-2xl bg-[#0c1a2e] hover:bg-[#10233d] border-2 border-[#1e3b63] hover:border-amber-400 transition-all cursor-pointer shadow-lg hover:shadow-amber-500/10 flex flex-col justify-between space-y-4 relative overflow-hidden"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.25)] group-hover:scale-105 transition-transform">
-                      <Shield size={24} />
-                    </div>
-                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40">
-                      ADMIN SUITE
-                    </span>
-                  </div>
-                  <div>
-                    <h4 className="text-base font-black text-white group-hover:text-amber-300 transition-colors uppercase tracking-wide">
-                      Admin Control & License Suite
-                    </h4>
-                    <p className="text-xs text-slate-300 mt-1 font-medium leading-relaxed">
-                      Generate unique commercial license keys (1M, 6M, 1Y, Lifetime), toggle Admin bypass mode, and configure WhatsApp, YouTube & Website links.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Key Generator</span>
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Admin Mode</span>
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">WhatsApp / YouTube</span>
-                  </div>
-                </div>
-
-                <button 
-                  type="button"
-                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Shield size={14} />
-                  <span>Open Admin Control</span>
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-
             </div>
           </div>
         )}
@@ -1270,9 +1205,9 @@ Return ONLY a JSON object:
                       onChange={(e) => setSelectedModel(e.target.value)}
                       className="w-full bg-secondary border border-border rounded-lg text-xs h-8 px-2 text-foreground font-bold cursor-pointer"
                     >
-                      <option value="gemini-2.5-flash">Gemini 2.5 Flash (Super Fast)</option>
+                      <option value="gemini-3.8-flash">Gemini 3.8 Flash (High Accuracy)</option>
                       <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (Max Speed)</option>
-                      <option value="gemini-3.8-flash">Gemini 3.8 Flash (High Reasoning)</option>
+                      <option value="gemini-flash-latest">Gemini Flash Latest (Auto)</option>
                     </select>
                   </div>
 
@@ -2117,25 +2052,6 @@ Return ONLY a JSON object:
           </div>
         </div>
       )}
-
-      {/* Dedicated Admin Control Panel Modal */}
-      <AdminPanelModal
-        isOpen={isAdminModalOpen}
-        onClose={() => setIsAdminModalOpen(false)}
-        showNotification={showNotification}
-        onStatusChanged={onAdminStatusChanged}
-      />
-
-      {/* Admin Authentication Gate Modal */}
-      <AdminLoginModal
-        isOpen={isAdminLoginOpen}
-        onClose={() => setIsAdminLoginOpen(false)}
-        onSuccess={() => {
-          setIsAdminModalOpen(true);
-          if (onAdminStatusChanged) onAdminStatusChanged();
-        }}
-        showNotification={showNotification}
-      />
     </div>
   );
 };

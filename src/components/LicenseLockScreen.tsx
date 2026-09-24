@@ -130,8 +130,8 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
             <h1 className="text-xl md:text-2xl font-black text-white uppercase tracking-wider">
               SS SMART META Pro
             </h1>
-            <p className="text-xs text-cyan-400 font-mono font-bold tracking-widest uppercase">
-              Commercial AI Metadata & SEO Engine • Developed By Shamim
+            <p className="text-xs text-cyan-400 font-mono font-bold tracking-widest uppercase mt-1">
+              DEVELOPED BY MD.SHAMIM REZA
             </p>
           </div>
         </div>
@@ -278,7 +278,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                           {plan.name}
                         </span>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
-                          {plan.id === 'lifetime' ? 'স্থায়ী লাইফটাইম' : `${plan.durationDays} দিন মেয়াদ`}
+                          {plan.durationLabel}
                         </span>
                       </div>
 
@@ -291,11 +291,22 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                           ৳ {plan.priceTaka}
                         </span>
                         <span className="text-xs text-slate-400 font-medium">টাকা</span>
+                        {plan.originalPrice && (
+                          <span className="text-xs text-slate-500 line-through ml-1">
+                            ৳ {plan.originalPrice}
+                          </span>
+                        )}
                       </div>
 
-                      <p className="text-[11px] text-slate-300 leading-relaxed">
-                        {plan.description}
-                      </p>
+                      <div className="text-[11px] text-slate-300 space-y-1">
+                        <div className="font-bold text-slate-200">{plan.nameBangla}</div>
+                        {plan.features?.map((feat, fIdx) => (
+                          <div key={fIdx} className="flex items-center gap-1.5 text-slate-400 text-[10.5px]">
+                            <span className="text-cyan-400">✓</span>
+                            <span>{feat}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
 
                     {/* Order Button */}
@@ -374,77 +385,12 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
           </div>
         </div>
 
-        {/* Discrete Admin Mode Login Link */}
-        <div className="pt-2 border-t border-[#132238] text-center">
-          <button
-            type="button"
-            onClick={() => setShowAdminBypass(!showAdminBypass)}
-            className="text-[11px] font-bold text-slate-400 hover:text-cyan-300 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <Layers size={13} className="text-cyan-400" />
-            <span>Are you the Admin Shamim? Login here (অ্যাডমিন লগইন)</span>
-            {showAdminBypass ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          </button>
-
-          {showAdminBypass && (
-            <form onSubmit={handleAdminBypass} className="mt-3 p-4 rounded-xl bg-[#040a12] border-2 border-cyan-500/40 text-left space-y-3 animate-in fade-in duration-150 shadow-lg">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black uppercase text-cyan-300 tracking-wider flex items-center gap-1.5">
-                  <User size={13} />
-                  <span>Admin Credentials Login</span>
-                </span>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  SHAMIM / 321
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                    Username:
-                  </label>
-                  <input 
-                    type="text"
-                    value={adminUsernameInput}
-                    onChange={(e) => setAdminUsernameInput(e.target.value)}
-                    placeholder="SHAMIM"
-                    className="w-full px-3 py-1.5 rounded-lg bg-[#091524] border border-[#1b2f48] text-xs text-white focus:outline-none focus:border-cyan-400"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                    Password:
-                  </label>
-                  <input 
-                    type="password"
-                    value={adminPasswordInput}
-                    onChange={(e) => setAdminPasswordInput(e.target.value)}
-                    placeholder="321"
-                    className="w-full px-3 py-1.5 rounded-lg bg-[#091524] border border-[#1b2f48] text-xs text-white focus:outline-none focus:border-cyan-400"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                {pinError ? (
-                  <p className="text-[11px] text-rose-400 font-bold">{pinError}</p>
-                ) : (
-                  <p className="text-[10px] text-slate-400">
-                    বা সরাসরি কী ঘরে <code className="text-amber-400 font-mono font-bold">ADMIN-SHAMIM-321</code> দিন
-                  </p>
-                )}
-
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md active:scale-95"
-                >
-                  Admin Login
-                </button>
-              </div>
-            </form>
-          )}
+        {/* Bottom Developer Credit */}
+        <div className="pt-2 text-center border-t border-[#13253b]">
+          <span className="text-[11px] font-mono font-black text-cyan-400 tracking-widest uppercase">
+            DEVELOPED BY MD.SHAMIM REZA
+          </span>
         </div>
-
       </div>
     </div>
   );
