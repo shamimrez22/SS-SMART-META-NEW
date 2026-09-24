@@ -28,7 +28,8 @@ import {
   ChevronRight,
   ChevronLeft,
   Plus,
-  ZoomIn
+  ZoomIn,
+  Shield
 } from 'lucide-react';
 import { StockMetadata, ApiConfig } from '../types';
 import {
@@ -40,6 +41,7 @@ import {
   formatBatchAllPromptsText,
   formatBatchSimplePromptsText
 } from '../services/imageToPromptService';
+import { AdminPanelModal } from './AdminPanelModal';
 import { cn } from '../lib/utils';
 
 interface ExtensionsModalProps {
@@ -51,6 +53,9 @@ interface ExtensionsModalProps {
   activeKey?: { provider: 'gemini' | 'groq' | 'mistral'; index: number };
   activeModel?: string;
   showNotification: (message: string, type: 'success' | 'error' | 'info') => void;
+  initialTab?: 'hub' | 'image-to-prompt' | 'prompt-expander' | 'palette-scout' | 'upscaler-advisor';
+  onOpenAdmin?: () => void;
+  onAdminStatusChanged?: () => void;
 }
 
 export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
@@ -61,11 +66,23 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
   apiConfig,
   activeKey,
   activeModel = 'gemini-2.5-flash',
-  showNotification
+  showNotification,
+  initialTab = 'hub',
+  onOpenAdmin,
+  onAdminStatusChanged
 }) => {
   // Navigation
-  const [activeTab, setActiveTab] = useState<'image-to-prompt' | 'prompt-expander' | 'palette-scout'>('image-to-prompt');
+  const [activeTab, setActiveTab] = useState<'hub' | 'image-to-prompt' | 'prompt-expander' | 'palette-scout' | 'upscaler-advisor'>(initialTab || 'hub');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (initialTab) {
+        setActiveTab(initialTab);
+      }
+    }
+  }, [isOpen, initialTab]);
 
   // Active Gemini API key resolved from user's settings
   const activeGeminiKey = useMemo(() => {
@@ -101,6 +118,10 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
   const [expanderIdea, setExpanderIdea] = useState('');
   const [expandedResults, setExpandedResults] = useState<{ midjourney: string; photorealistic: string; cinematic: string } | null>(null);
   const [isExpanding, setIsExpanding] = useState(false);
+
+  // Upscaler & Standards Advisor State
+  const [calcWidth, setCalcWidth] = useState<number>(3840);
+  const [calcHeight, setCalcHeight] = useState<number>(2160);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -597,24 +618,24 @@ Return ONLY a JSON object:
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background/98 backdrop-blur-xl animate-in fade-in duration-200 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex flex-col bg-[#070e18] text-slate-100 backdrop-blur-xl animate-in fade-in duration-200 overflow-hidden">
       {/* 1. EXTENSIONS HUB HEADER */}
-      <header className="px-5 py-3 border-b border-border bg-card/90 flex items-center justify-between shrink-0 shadow-sm z-20">
+      <header className="px-5 py-3 border-b border-[#1b2d45] bg-[#091524] flex items-center justify-between shrink-0 shadow-sm z-20">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600/30 to-indigo-600/20 border-2 border-blue-500/50 flex items-center justify-center shadow-inner">
-            <Layers size={22} className="text-blue-400" />
+          <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border-2 border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.25)]">
+            <Layers size={22} />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base md:text-lg font-black text-foreground uppercase tracking-wider">
+              <h2 className="text-base md:text-lg font-black text-white uppercase tracking-wider">
                 Extensions Studio
               </h2>
-              <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/40 shadow-xs">
-                MULTI-IMAGE TURBO
+              <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-xs">
+                DARK THEME • MODULAR
               </span>
             </div>
-            <p className="text-xs text-muted-foreground font-medium">
-              একসাথে একাধিক ছবি দিয়ে দ্রুত বিস্তারিত Midjourney, Flux.1 ও Photorealistic প্রম্পট জেনারেটর
+            <p className="text-xs text-slate-400 font-medium">
+              Commercial Microstock AI Utilities & Multi-Engine Prompter
             </p>
           </div>
         </div>
@@ -641,10 +662,24 @@ Return ONLY a JSON object:
             )}
           </div>
 
+          {/* Admin Option in the corner as requested */}
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenAdmin) onOpenAdmin();
+              else setIsAdminModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-amber-200 text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs active:scale-95"
+            title="Admin Control Center (License Key Generator, WhatsApp/YouTube/Website, Admin Mode)"
+          >
+            <Shield size={14} className="text-amber-400" />
+            <span>Admin</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-accent text-xs font-bold text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#233d60] bg-[#0d1e33] hover:bg-[#142d4d] text-xs font-bold text-slate-300 hover:text-white transition-all cursor-pointer"
             title={isFullscreen ? "Exit Fullscreen" : "Fullscreen View"}
           >
             {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -654,7 +689,7 @@ Return ONLY a JSON object:
           <button
             type="button"
             onClick={onClose}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-destructive/30 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs active:scale-95"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 hover:bg-rose-600 text-rose-300 hover:text-white text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs active:scale-95"
             title="Close Extensions Studio (Esc)"
           >
             <X size={16} />
@@ -664,22 +699,37 @@ Return ONLY a JSON object:
       </header>
 
       {/* 2. EXTENSIONS TABS SELECTOR STRIP */}
-      <div className="px-5 py-2 border-b border-border bg-muted/40 flex items-center justify-between gap-2 overflow-x-auto custom-scrollbar shrink-0">
+      <div className="px-5 py-2.5 border-b border-[#1b2d45] bg-[#0a1727] flex items-center justify-between gap-2 overflow-x-auto custom-scrollbar shrink-0">
         <div className="flex items-center gap-2">
+          {/* Hub Tab Button */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('hub')}
+            className={cn(
+              "flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer shrink-0 border",
+              activeTab === 'hub'
+                ? "bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(8,145,178,0.4)]"
+                : "bg-[#0e1d30] hover:bg-[#152a45] border-[#1d3554] text-slate-300 hover:text-white"
+            )}
+          >
+            <Layers size={13} className={activeTab === 'hub' ? "text-white" : "text-cyan-400"} />
+            <span>Extensions Hub</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setActiveTab('image-to-prompt')}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer shrink-0 border",
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer shrink-0 border",
               activeTab === 'image-to-prompt'
-                ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                : "bg-secondary/70 hover:bg-secondary border-border text-muted-foreground hover:text-foreground"
+                ? "bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(8,145,178,0.4)]"
+                : "bg-[#0e1d30] hover:bg-[#152a45] border-[#1d3554] text-slate-300 hover:text-white"
             )}
           >
-            <Camera size={14} />
-            <span>Image to Prompt (Multi-Batch)</span>
+            <Camera size={13} />
+            <span>Image to Prompt</span>
             <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded font-black">
-              {batchItems.length > 0 ? `${batchItems.length} Images` : 'Turbo Fast'}
+              {batchItems.length > 0 ? `${batchItems.length} Images` : 'Turbo Batch'}
             </span>
           </button>
 
@@ -687,13 +737,13 @@ Return ONLY a JSON object:
             type="button"
             onClick={() => setActiveTab('prompt-expander')}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer shrink-0 border",
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer shrink-0 border",
               activeTab === 'prompt-expander'
-                ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                : "bg-secondary/70 hover:bg-secondary border-border text-muted-foreground hover:text-foreground"
+                ? "bg-purple-600 text-white border-purple-400 shadow-[0_0_10px_rgba(168,85,247,0.4)]"
+                : "bg-[#0e1d30] hover:bg-[#152a45] border-[#1d3554] text-slate-300 hover:text-white"
             )}
           >
-            <Wand2 size={14} />
+            <Wand2 size={13} />
             <span>AI Prompt Expander</span>
           </button>
 
@@ -701,25 +751,39 @@ Return ONLY a JSON object:
             type="button"
             onClick={() => setActiveTab('palette-scout')}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer shrink-0 border",
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer shrink-0 border",
               activeTab === 'palette-scout'
-                ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                : "bg-secondary/70 hover:bg-secondary border-border text-muted-foreground hover:text-foreground"
+                ? "bg-emerald-600 text-white border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.4)]"
+                : "bg-[#0e1d30] hover:bg-[#152a45] border-[#1d3554] text-slate-300 hover:text-white"
             )}
           >
-            <Palette size={14} />
-            <span>Color & Vector Scout</span>
+            <Palette size={13} />
+            <span>Color & Palette Scout</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('upscaler-advisor')}
+            className={cn(
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer shrink-0 border",
+              activeTab === 'upscaler-advisor'
+                ? "bg-amber-600 text-white border-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.4)]"
+                : "bg-[#0e1d30] hover:bg-[#152a45] border-[#1d3554] text-slate-300 hover:text-white"
+            )}
+          >
+            <Maximize2 size={13} />
+            <span>Upscaler & Specs Advisor</span>
           </button>
         </div>
 
         {/* Right Status Summary */}
         {activeTab === 'image-to-prompt' && batchItems.length > 0 && (
           <div className="hidden sm:flex items-center gap-3 text-xs font-mono">
-            <span className="text-muted-foreground">
-              Queue: <strong className="text-foreground">{batchStats.completed}</strong>/{batchStats.total} done
+            <span className="text-slate-400">
+              Queue: <strong className="text-white">{batchStats.completed}</strong>/{batchStats.total} done
             </span>
             {batchStats.percent > 0 && (
-              <div className="w-24 h-2 rounded-full bg-secondary overflow-hidden border border-border">
+              <div className="w-24 h-2 rounded-full bg-[#081321] overflow-hidden border border-[#1b2d45]">
                 <div
                   className="h-full bg-emerald-500 transition-all duration-300"
                   style={{ width: `${batchStats.percent}%` }}
@@ -731,7 +795,239 @@ Return ONLY a JSON object:
       </div>
 
       {/* 3. MAIN WORKSPACE AREA */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-5 bg-background">
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-5 bg-[#060d17]">
+        
+        {/* =========================================================================
+            TAB 0: EXTENSIONS HUB (MODULAR CARDS VIEW)
+           ========================================================================= */}
+        {activeTab === 'hub' && (
+          <div className="max-w-6xl mx-auto space-y-6 py-2 animate-in fade-in duration-150">
+            {/* Hub Banner */}
+            <div className="p-6 rounded-2xl bg-gradient-to-r from-[#0c2242] via-[#0f2d57] to-[#122849] border border-[#20436d] shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-400/40">
+                    EXTENSIONS HUB
+                  </span>
+                  <span className="text-xs text-slate-400 font-mono">Select Tool Below</span>
+                </div>
+                <h3 className="text-xl md:text-2xl font-black text-white uppercase tracking-wide">
+                  Microstock Creative Extensions
+                </h3>
+                <p className="text-xs md:text-sm text-slate-300 max-w-2xl font-medium">
+                  Modular tools built for stock contributors. Click any tool to open its dedicated workspace in signature dark mode.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="px-3.5 py-2 rounded-xl bg-[#081424] border border-[#1b3457] text-right">
+                  <span className="text-[10px] text-slate-400 font-bold block uppercase">AI Model</span>
+                  <span className="text-xs font-mono font-bold text-cyan-300">{selectedModel}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Modular Extension Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              
+              {/* EXTENSION 1: Image to Prompt */}
+              <div 
+                onClick={() => setActiveTab('image-to-prompt')}
+                className="group p-5 rounded-2xl bg-[#0c1a2e] hover:bg-[#10233d] border-2 border-[#1e3b63] hover:border-cyan-400 transition-all cursor-pointer shadow-lg hover:shadow-cyan-500/10 flex flex-col justify-between space-y-4 relative overflow-hidden"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow-[0_0_15px_rgba(34,211,238,0.25)] group-hover:scale-105 transition-transform">
+                      <Camera size={24} />
+                    </div>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40">
+                      MULTI-BATCH
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="text-base font-black text-white group-hover:text-cyan-300 transition-colors uppercase tracking-wide">
+                      Image to Prompt Studio
+                    </h4>
+                    <p className="text-xs text-slate-300 mt-1 font-medium leading-relaxed">
+                      Reverse-engineer single or 100+ images into Midjourney v6.1, Flux.1, Photorealistic, Cinematic, and Vector prompts.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Multi-Batch</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Midjourney v6.1</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Flux.1 Dev</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">1-Click Copy</span>
+                  </div>
+                </div>
+
+                <button 
+                  type="button"
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>Open Image to Prompt</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+
+              {/* EXTENSION 2: AI Prompt Expander */}
+              <div 
+                onClick={() => setActiveTab('prompt-expander')}
+                className="group p-5 rounded-2xl bg-[#0c1a2e] hover:bg-[#10233d] border-2 border-[#1e3b63] hover:border-purple-400 transition-all cursor-pointer shadow-lg hover:shadow-purple-500/10 flex flex-col justify-between space-y-4 relative overflow-hidden"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-xl bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.25)] group-hover:scale-105 transition-transform">
+                      <Wand2 size={24} />
+                    </div>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-400/40">
+                      TEXT TO PROMPT
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="text-base font-black text-white group-hover:text-purple-300 transition-colors uppercase tracking-wide">
+                      AI Prompt Expander
+                    </h4>
+                    <p className="text-xs text-slate-300 mt-1 font-medium leading-relaxed">
+                      Type any keyword or concept. Instantly expands into 3 professional stock prompts: Midjourney, Photorealistic 8K, and Cinematic Film.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Idea Expansion</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Stock Lighting</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Cinematic</span>
+                  </div>
+                </div>
+
+                <button 
+                  type="button"
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>Open Prompt Expander</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+
+              {/* EXTENSION 3: Color & Palette Scout */}
+              <div 
+                onClick={() => setActiveTab('palette-scout')}
+                className="group p-5 rounded-2xl bg-[#0c1a2e] hover:bg-[#10233d] border-2 border-[#1e3b63] hover:border-emerald-400 transition-all cursor-pointer shadow-lg hover:shadow-emerald-500/10 flex flex-col justify-between space-y-4 relative overflow-hidden"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.25)] group-hover:scale-105 transition-transform">
+                      <Palette size={24} />
+                    </div>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
+                      COLOR HARMONY
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="text-base font-black text-white group-hover:text-emerald-300 transition-colors uppercase tracking-wide">
+                      Color & Palette Scout
+                    </h4>
+                    <p className="text-xs text-slate-300 mt-1 font-medium leading-relaxed">
+                      Curated commercial palettes, trending hex colors, and color-theory keyword generators optimized for stock search algorithms.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Hex Swatches</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Trending Palettes</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Vector Colors</span>
+                  </div>
+                </div>
+
+                <button 
+                  type="button"
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>Open Color Scout</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+
+              {/* EXTENSION 4: Upscaler & Vector Standards Advisor */}
+              <div 
+                onClick={() => setActiveTab('upscaler-advisor')}
+                className="group p-5 rounded-2xl bg-[#0c1a2e] hover:bg-[#10233d] border-2 border-[#1e3b63] hover:border-amber-400 transition-all cursor-pointer shadow-lg hover:shadow-amber-500/10 flex flex-col justify-between space-y-4 relative overflow-hidden"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.25)] group-hover:scale-105 transition-transform">
+                      <Maximize2 size={24} />
+                    </div>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40">
+                      SPECS & DPI
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="text-base font-black text-white group-hover:text-amber-300 transition-colors uppercase tracking-wide">
+                      Upscaler & Vector Advisor
+                    </h4>
+                    <p className="text-xs text-slate-300 mt-1 font-medium leading-relaxed">
+                      Instant resolution calculator for Adobe Stock (4MP-100MP), Freepik, Shutterstock, 300 DPI print target sizing, and vector EPS-10 verification.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Megapixel Calc</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">300 DPI Print</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">EPS-10 Rules</span>
+                  </div>
+                </div>
+
+                <button 
+                  type="button"
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>Open Specs Advisor</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+
+              {/* EXTENSION 5: Admin Control & License Suite */}
+              <div 
+                onClick={() => {
+                  if (onOpenAdmin) onOpenAdmin();
+                  else setIsAdminModalOpen(true);
+                }}
+                className="group p-5 rounded-2xl bg-[#0c1a2e] hover:bg-[#10233d] border-2 border-[#1e3b63] hover:border-amber-400 transition-all cursor-pointer shadow-lg hover:shadow-amber-500/10 flex flex-col justify-between space-y-4 relative overflow-hidden"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.25)] group-hover:scale-105 transition-transform">
+                      <Shield size={24} />
+                    </div>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40">
+                      ADMIN SUITE
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="text-base font-black text-white group-hover:text-amber-300 transition-colors uppercase tracking-wide">
+                      Admin Control & License Suite
+                    </h4>
+                    <p className="text-xs text-slate-300 mt-1 font-medium leading-relaxed">
+                      Generate unique commercial license keys (1M, 6M, 1Y, Lifetime), toggle Admin bypass mode, and configure WhatsApp, YouTube & Website links.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Key Generator</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">Admin Mode</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-[#132845] text-slate-300 border border-[#213f6b]">WhatsApp / YouTube</span>
+                  </div>
+                </div>
+
+                <button 
+                  type="button"
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Shield size={14} />
+                  <span>Open Admin Control</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
         
         {/* =========================================================================
             TAB 1: MULTI-IMAGE TO PROMPT GENERATOR (SERIAL SIDE-BY-SIDE FEED)
@@ -1555,8 +1851,179 @@ Return ONLY a JSON object:
         )}
 
         {/* =========================================================================
-            TAB 3: COLOR & VECTOR PALETTE SCOUT
+            TAB 4: UPSCALER & VECTOR STANDARDS ADVISOR
            ========================================================================= */}
+        {activeTab === 'upscaler-advisor' && (
+          <div className="max-w-4xl mx-auto space-y-5 animate-in fade-in duration-150">
+            {/* Top Card: Live Megapixel & Agency Resolution Calculator */}
+            <div className="p-5 md:p-6 rounded-2xl bg-[#0c1a2e] border-2 border-[#1e3b63] shadow-xl space-y-5">
+              <div className="flex items-center justify-between border-b border-[#1b3457] pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.25)]">
+                    <Maximize2 size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white uppercase tracking-wider">
+                      Stock Resolution & Megapixel Calculator
+                    </h3>
+                    <p className="text-xs text-slate-400 font-medium">
+                      Check your image dimensions against Adobe Stock, Shutterstock, and Freepik submission thresholds.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-right">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Total Megapixels</span>
+                  <span className={cn(
+                    "text-xl font-mono font-black",
+                    ((calcWidth * calcHeight) / 1000000) >= 4.0 ? "text-emerald-400" : "text-rose-400"
+                  )}>
+                    {((calcWidth * calcHeight) / 1000000).toFixed(2)} MP
+                  </span>
+                </div>
+              </div>
+
+              {/* Input Dimensions & Quick Presets */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black text-slate-300 uppercase tracking-wider">Width (Pixels)</label>
+                  <input
+                    type="number"
+                    value={calcWidth}
+                    onChange={(e) => setCalcWidth(Math.max(100, parseInt(e.target.value) || 0))}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#081321] border border-[#1d3554] text-white font-mono text-sm focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black text-slate-300 uppercase tracking-wider">Height (Pixels)</label>
+                  <input
+                    type="number"
+                    value={calcHeight}
+                    onChange={(e) => setCalcHeight(Math.max(100, parseInt(e.target.value) || 0))}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#081321] border border-[#1d3554] text-white font-mono text-sm focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">Standard Stock Presets</span>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: '4K UHD (3840×2160)', w: 3840, h: 2160 },
+                    { label: '8K Ultra (7680×4320)', w: 7680, h: 4320 },
+                    { label: 'Square 4K (4096×4096)', w: 4096, h: 4096 },
+                    { label: 'Vertical 9:16 (2160×3840)', w: 2160, h: 3840 },
+                    { label: 'Full HD 1080p (1920×1080)', w: 1920, h: 1080 },
+                  ].map((p, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setCalcWidth(p.w);
+                        setCalcHeight(p.h);
+                      }}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-bold font-mono border transition-all cursor-pointer",
+                        calcWidth === p.w && calcHeight === p.h
+                          ? "bg-amber-500/20 text-amber-300 border-amber-400 shadow-xs"
+                          : "bg-[#0f2138] hover:bg-[#162f4e] text-slate-300 border-[#1f3757]"
+                      )}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Agency Compliance Status Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                {/* Adobe Stock */}
+                <div className={cn(
+                  "p-3.5 rounded-xl border flex flex-col justify-between space-y-1.5",
+                  ((calcWidth * calcHeight) / 1000000) >= 4.0 && ((calcWidth * calcHeight) / 1000000) <= 100
+                    ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
+                    : "bg-rose-950/20 border-rose-500/40 text-rose-300"
+                )}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase">Adobe Stock</span>
+                    <span className="text-[10px] font-black uppercase px-1.5 py-0.2 rounded bg-black/40">Min 4.0 MP</span>
+                  </div>
+                  <div className="text-[11px] font-bold">
+                    {((calcWidth * calcHeight) / 1000000) >= 4.0 ? '✅ APPROVED (Meets ≥ 4.0 MP)' : '❌ REJECTED (< 4.0 MP - Needs Upscale)'}
+                  </div>
+                </div>
+
+                {/* Shutterstock */}
+                <div className={cn(
+                  "p-3.5 rounded-xl border flex flex-col justify-between space-y-1.5",
+                  ((calcWidth * calcHeight) / 1000000) >= 4.0
+                    ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
+                    : "bg-rose-950/20 border-rose-500/40 text-rose-300"
+                )}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase">Shutterstock</span>
+                    <span className="text-[10px] font-black uppercase px-1.5 py-0.2 rounded bg-black/40">Min 4.0 MP</span>
+                  </div>
+                  <div className="text-[11px] font-bold">
+                    {((calcWidth * calcHeight) / 1000000) >= 4.0 ? '✅ APPROVED (Meets ≥ 4.0 MP)' : '❌ REJECTED (< 4.0 MP)'}
+                  </div>
+                </div>
+
+                {/* Freepik */}
+                <div className={cn(
+                  "p-3.5 rounded-xl border flex flex-col justify-between space-y-1.5",
+                  Math.max(calcWidth, calcHeight) >= 2000
+                    ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
+                    : "bg-rose-950/20 border-rose-500/40 text-rose-300"
+                )}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase">Freepik</span>
+                    <span className="text-[10px] font-black uppercase px-1.5 py-0.2 rounded bg-black/40">Min 2000px</span>
+                  </div>
+                  <div className="text-[11px] font-bold">
+                    {Math.max(calcWidth, calcHeight) >= 2000 ? '✅ APPROVED (Long edge ≥ 2000px)' : '❌ REJECTED (< 2000px edge)'}
+                  </div>
+                </div>
+              </div>
+
+              {/* 300 DPI Print Info */}
+              <div className="p-3.5 rounded-xl bg-[#081321] border border-[#1b3457] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                <span className="text-slate-300 font-medium">
+                  🖨️ <strong>300 DPI Print Size:</strong> {(calcWidth / 300).toFixed(1)}" × {(calcHeight / 300).toFixed(1)}" inches ({((calcWidth / 300) * 2.54).toFixed(1)} × {((calcHeight / 300) * 2.54).toFixed(1)} cm)
+                </span>
+                <span className="text-[10px] text-amber-300 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                  Optimal for High-End Fine Art Prints
+                </span>
+              </div>
+            </div>
+
+            {/* Vector EPS-10 Standards Guide */}
+            <div className="p-5 rounded-2xl bg-[#0c1a2e] border-2 border-[#1e3b63] shadow-xl space-y-3">
+              <h4 className="text-sm font-black text-cyan-300 uppercase tracking-wider flex items-center gap-2">
+                <span>⚡ Vector EPS Submission Rules (Zero-Rejection Checklist)</span>
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-300">
+                <div className="p-3 rounded-xl bg-[#081424] border border-[#193252] space-y-1">
+                  <span className="font-bold text-white block">1. File Format:</span>
+                  Save strictly as <strong>Illustrator 10 EPS (.eps)</strong> with Transparency Flattener set to High Resolution.
+                </div>
+                <div className="p-3 rounded-xl bg-[#081424] border border-[#193252] space-y-1">
+                  <span className="font-bold text-white block">2. Text & Fonts:</span>
+                  Expand all text to vector shapes (<code>Type &gt; Create Outlines</code>). No live editable fonts allowed.
+                </div>
+                <div className="p-3 rounded-xl bg-[#081424] border border-[#193252] space-y-1">
+                  <span className="font-bold text-white block">3. Color Space:</span>
+                  Use <strong>RGB color mode</strong> for stock digital vectors. Avoid CMYK unless specifically submitting print templates.
+                </div>
+                <div className="p-3 rounded-xl bg-[#081424] border border-[#193252] space-y-1">
+                  <span className="font-bold text-white block">4. Isolated Vector Rules:</span>
+                  Group all artwork, remove locked layers, unlock hidden paths, and ensure no stray anchor points exist on the artboard.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {activeTab === 'palette-scout' && (
           <div className="max-w-4xl mx-auto space-y-5">
             <div className="p-5 rounded-2xl bg-card border border-border shadow-md space-y-4">
@@ -1643,6 +2110,14 @@ Return ONLY a JSON object:
           </div>
         </div>
       )}
+
+      {/* Dedicated Admin Control Panel Modal */}
+      <AdminPanelModal
+        isOpen={isAdminModalOpen}
+        onClose={() => setIsAdminModalOpen(false)}
+        showNotification={showNotification}
+        onStatusChanged={onAdminStatusChanged}
+      />
     </div>
   );
 };

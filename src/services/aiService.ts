@@ -1328,39 +1328,74 @@ async function resizeImage(file: File, maxWidth: number, maxHeight: number, qual
 function getMarketplaceDirectives(marketplace: string = 'universal'): string {
   switch (marketplace) {
     case 'adobe':
-      return `=== TARGET MARKETPLACE: ADOBE STOCK ===
-- Top 10 Keywords Priority: Adobe Stock's search algorithm heavily weighs the first 10 keywords. Ensure keywords 1-10 are the most direct, literal visual nouns and main subject.
-- Titles: Clear, literal, no trademarked brand names, 8-15 words.
+      return `=== TARGET MARKETPLACE: ADOBE STOCK (RANK #1 ALGORITHM OPTIMIZED) ===
+- Top 10 Keywords Heavy Weighting: Adobe Stock's search algorithm gives over 80% of search ranking weight to the FIRST 10 KEYWORDS! Keywords 1-10 MUST be the most critical, direct, literal visual nouns and main subject elements.
+- Title: Clear, literal, 8-15 words. High search intent phrase in the first 5 words. Absolutely no brand names or buzzwords.
 - Category: Pick the single most accurate Adobe Stock category.`;
+
     case 'shutterstock':
-      return `=== TARGET MARKETPLACE: SHUTTERSTOCK ===
-- Title: Clear, literal description of action and primary subject. Strictly no trademarks, brand names, or editorial dates.
-- Keywords: 40-50 high-search volume commercial keywords. No repetitive spam or punctuation.`;
+      return `=== TARGET MARKETPLACE: SHUTTERSTOCK (HIGH COMMERCIAL SEARCH VOLUME) ===
+- Title: Literal description of subject and action. Must be natural English (7-15 words, max 200 characters). Strictly no trademarks or punctuation.
+- Keywords: Exactly 45-50 commercial keywords matching buyer search intent. No repetitive word stems (e.g. do not repeat card, cards, businesscard).`;
+
     case 'freepik':
-      return `=== TARGET MARKETPLACE: FREEPIK & FLATICON ===
-- Vector / Graphic focus: If graphic or vector, emphasize format (isolated, banner, background, template, design element, graphic style).
+      return `=== TARGET MARKETPLACE: FREEPIK & FLATICON (DESIGNER & VECTOR FOCUS) ===
+- Vector / Design Emphasis: Prioritize commercial utility tags that graphic designers and agency art directors search for (e.g., template, isolated, banner, background, graphic element, flat design, modern vector, minimal layout, corporate branding, copy space).
 - Keywords: High commercial search volume, trending microstock tags.`;
+
     case 'getty':
-      return `=== TARGET MARKETPLACE: GETTY IMAGES / ISTOCK ===
-- Vocabulary standard: Adhere to controlled taxonomy. Blend conceptual keywords (freedom, success, ambition) with physical nouns.
-- No keyword stuffing or duplicate word variants.`;
-    case 'alamy':
-      return `=== TARGET MARKETPLACE: ALAMY ===
-- Caption: Provide a rich, informative caption (who, what, where, when, why) up to 25 words.
-- Keywords: Essential search tags first, followed by broader secondary tags.`;
+      return `=== TARGET MARKETPLACE: GETTY IMAGES / ISTOCK (CONTROLLED TAXONOMY) ===
+- Controlled Vocabulary: Blend literal visual nouns with high-level conceptual themes (growth, teamwork, freedom, innovation, ambition, lifestyle).
+- Clean tags: Strictly avoid duplicate word variants or spammy lists.`;
+
     case 'vecteezy':
-      return `=== TARGET MARKETPLACE: VECTEEZY ===
-- Clean vector/photo metadata with high buyer utility tags (copy space, background, graphic, creative).`;
+      return `=== TARGET MARKETPLACE: VECTEEZY (VECTOR & GRAPHIC UTILITY) ===
+- Clean vector/photo metadata with high buyer utility tags (copy space, background, graphic, creative, vector art, illustration, template, isolated).`;
+
+    case 'pond5':
+      return `=== TARGET MARKETPLACE: POND5 (TOP VIDEO & AUDIO FOOTAGE) ===
+- Video Footage Focus: Emphasize shot characteristics (4k footage, b-roll, aerial, drone shot, slow motion, cinematic, establishing shot, camera movement, panning, tracking, natural lighting).`;
+
+    case 'envato':
+      return `=== TARGET MARKETPLACE: ENVATO ELEMENTS & GRAPHICRIVER (CREATIVE ASSETS) ===
+- Template & Asset Focus: Emphasize design utility, corporate identity, marketing collateral, UI/UX, print-ready, creative layout, modern aesthetic.`;
+
+    case 'depositphotos':
+      return `=== TARGET MARKETPLACE: DEPOSITPHOTOS ===
+- 40-50 clean commercial tags, literal English title, strict zero-trademark compliance.`;
+
     case '123rf':
+      return `=== TARGET MARKETPLACE: 123RF ===
+- Clean English keywords without symbols or punctuation, direct literal title.`;
+
     case 'dreamstime':
-      return `=== TARGET MARKETPLACE: MICROSTOCK STANDARD (123RF / DREAMSTIME) ===
-- Clean English keywords without symbols, direct literal title.`;
+      return `=== TARGET MARKETPLACE: DREAMSTIME ===
+- Distinctive commercial tags, min 35 to max 50 keywords, clear category, zero keyword stuffing.`;
+
+    case 'alamy':
+      return `=== TARGET MARKETPLACE: ALAMY (EDITORIAL & COMMERCIAL CAPTIONS) ===
+- Rich Caption: Provide an informative, comprehensive caption (who, what, where, when, why) up to 25 words.
+- Keywords: Essential search tags first, followed by broader context tags.`;
+
+    case 'canva':
+      return `=== TARGET MARKETPLACE: CANVA (ELEMENTS & SOCIAL MEDIA GRAPHICS) ===
+- Design tags: Elements, sticker, template, social media, minimalist, aesthetic, pastel, modern graphic, decorative.`;
+
+    case 'motionelements':
+      return `=== TARGET MARKETPLACE: MOTION ELEMENTS (MOTION & VIDEO ASSETS) ===
+- Motion graphics, stock video, background loops, alpha channel, VFX, 4K, b-roll, transition.`;
+
+    case 'creativemarket':
+      return `=== TARGET MARKETPLACE: CREATIVE MARKET (BOUTIQUE & BRANDING ASSETS) ===
+- Design kit, typography, branding, handcrafted, elegant, modern aesthetic, stationery, creative template.`;
+
     case 'universal':
     default:
       return `=== TARGET MARKETPLACE: UNIVERSAL (100% COMPATIBLE WITH ALL STOCK SITES) ===
-- Universal compatibility across Adobe Stock, Shutterstock, Freepik, Getty Images, Alamy, Vecteezy, 123RF, Dreamstime.
-- Strict 50 comma-separated keywords with zero special characters or trademarks.
-- Direct literal title (8-15 words) readable and approved by all automated agency review bots.`;
+- Universal compatibility across Adobe Stock, Shutterstock, Freepik, Getty Images, Vecteezy, Pond5, Envato, Depositphotos, 123RF, Dreamstime, Alamy, Canva.
+- Rank #1 Algorithm Matching: First 10 keywords are primary literal nouns (satisfies Adobe Stock), remaining keywords cover context, design utility, and high-volume buyer queries (satisfies Shutterstock and Freepik).
+- Constructive 8-15 word descriptive title readable by all automated review bots.
+- Zero trademarks, zero buzzwords, zero punctuation. 100% account safety guarantee.`;
   }
 }
 
@@ -1386,46 +1421,46 @@ function getPrompt(settings: any, filename: string, isVideo: boolean = false) {
   const targetCount = maxKeywords || 50;
   const marketplaceRules = getMarketplaceDirectives(marketplace);
 
-  return `You are a World-Class Senior Stock Agency Inspector & Metadata SEO Specialist (for Adobe Stock, Shutterstock, Getty Images, Freepik).
-Your highest priority is to inspect this asset with 100% surgical accuracy and output 100% COMPLETE, HIGH-CONVERTING, COMMERCIAL-GRADE METADATA that strictly matches the EXACT subject matter shown in this file.
+  return `You are a World-Class Senior Stock Agency Inspector & Metadata SEO Specialist (for Adobe Stock, Shutterstock, Getty Images, Freepik, Vecteezy, Pond5, Envato, Alamy).
+Your highest priority is to inspect this asset with 100% surgical accuracy and generate TOP-RANKING (#1 Search Demand), HIGH-CONVERTING, COMMERCIAL-GRADE METADATA that strictly matches the EXACT subject matter shown in this file.
 
 ${marketplaceRules}
 
 === CRITICAL MARKETPLACE SAFETY & COMPLIANCE (ZERO ACCOUNT RISK) ===
 - ZERO TRADEMARKS: Absolutely NEVER include brand names or registered trademarks (e.g. Apple, Nike, BMW, Tesla, Gucci, Sony, Microsoft, Google, etc.).
 - ZERO BUZZWORDS OR PROMOTIONAL HYPE: Absolutely NEVER use "best", "masterpiece", "award winning", "trending", "photorealistic", "8k", "ultra realistic", or "stock photo". Automated inspection bots immediately flag and reject assets with these words!
-- ZERO KEYWORD STUFFING IN TITLE: The title must be a natural, flowing English descriptive phrase (7-15 words). Never output a comma-separated list or keyword dump as a title.
+- ZERO "ALTU-FALTU" / JUNK KEYWORDS: Absolutely NEVER include useless filler words like "nice", "good", "great", "awesome", "cool", "pretty", "something", "thing", "things", "stuff", "file", "upload", "download", or "looking". Every keyword must be a high-converting commercial search term!
+- ZERO KEYWORD STUFFING IN TITLE: The title must be a natural, flowing English descriptive phrase (${minTitleWords}-${maxTitleWords} words). Never output a comma-separated list or keyword dump as a title.
 - 100% VISUAL ACCURACY (NO IRRELEVANT SPAM): Every keyword must accurately match what is visually present in the asset. Irrelevant tags violate marketplace policies and risk contributor account suspension.
 
-=== MANDATORY SUBJECT INSPECTION DIRECTIVES ===
-1. 100% EXACT SUBJECT MATCH (ZERO GENERIC GUESSING):
-   - You MUST closely analyze what is ACTUALLY in the image/video frame.
+=== RANK #1 COMMERCIAL SEARCH DEMAND DIRECTIVES ===
+1. HIGH-DEMAND BUYER QUERY MATCHING (SOBAR AGEY SHOW KORBE):
+   - Buyers search with specific high-intent queries (e.g. "business card template orange", "aerial highway forest 2027", "isometric technology icon set", "drone sunset b-roll").
+   - The first 4 to 8 words of the title MUST contain the exact high-demand search phrase so marketplace algorithms rank this asset on Page 1!
    - Visible Numbers & Text: If there is any visible number, year, or text (e.g. "2027", highway numbers, street names, signboards), you MUST prominently feature it in the title, description, and primary keywords!
-   - Core Subject: Identify the exact primary object/subject (e.g. winding asphalt highway through pine forest with 2027 numbers, business team in modern conference room, organic espresso cup with latte art, electric sports car).
-   - Setting & Background: Identify the exact environment, vegetation, weather, and geography (e.g. foggy mist, evergreen rainforest, mountain pass, sunrise dawn, studio backdrop).
-   - Camera Technique & Lighting: Identify perspective (aerial drone shot, top view, eye-level, macro close-up) and lighting (cinematic soft light, volumetric sun rays, golden hour, moody overcast).
-   - Conceptual Meaning: What is the commercial metaphor or theme? (e.g. New Year 2027 roadmap, future travel, annual goals, journey forward, innovation).
 
-2. TITLE SPECIFICATIONS (${minTitleWords} to ${maxTitleWords} words):
-   - Direct, descriptive, literal stock title. Format: [Perspective/Angle] + [Exact Core Subject & Distinctive Numbers/Text] + [Setting/Environment] + [Commercial Concept].
-   - Example: "Aerial View of 2027 Numbers on Asphalt Road Winding Through Lush Green Pine Forest"
-   - Never use generic placeholder titles.
+2. CONSTRUCTIVE & STRUCTURED TITLE ("GOTHON-MULOK" TITLE FORMULA):
+   - Word count: strictly ${minTitleWords} to ${maxTitleWords} words.
+   - Formula: [Exact Core Subject & Distinguishing Features] + [Action / Characteristic Details] + [Setting / Environment / Style] + [Commercial Application / Format].
+   - Example 1 (Vector/Template): "Modern Geometric Business Card Design Template in Blue and White for Corporate Branding"
+   - Example 2 (Photo/Video): "Aerial View of 2027 Numbers on Asphalt Road Winding Through Lush Green Pine Forest"
+   - Never use generic placeholder titles or vague one-liners.
 
-3. DESCRIPTION SPECIFICATIONS (${minDescriptionWords} to ${maxDescriptionWords} words):
-   - Comprehensive editorial description covering exact foreground, subject details, background scenery, lighting condition, colors, and commercial marketing relevance.
+3. STRUCTURED EDITORIAL DESCRIPTION (${minDescriptionWords} to ${maxDescriptionWords} words):
+   - Professional, structured summary covering exact foreground subject, composition, background environment, lighting condition, color palette, and commercial marketing utility.
 
 4. KEYWORDS SPECIFICATIONS (MANDATORY EXACTLY ${targetCount} KEYWORDS):
    - You MUST provide a comma-separated list of EXACTLY ${targetCount} keywords. Do NOT provide fewer than ${targetCount} keywords under any circumstances!
-   - Every single keyword must be 100% relevant to this file's subject, ordered in strict SEO tiers:
-     * Keywords 1-15 (Primary Subject & Core Features): The exact literal elements, main subject, visible numbers (e.g. 2027, two thousand twenty seven), nouns, key objects, and materials.
-     * Keywords 16-30 (Environment, Setting & Technique): Specific location type, weather, lighting, color palette, camera angle (aerial, drone, top view), seasonal details.
-     * Keywords 31-42 (Concept, Emotion & Commercial Application): Meaning, metaphors (journey, future, roadmap, vision, celebration, progress, goal), mood, industry relevance.
-     * Keywords 43-${targetCount} (Search Intent & High-Volume Buyer Queries): Common search phrases and terms stock buyers use when searching for this exact subject.
+   - Ordered in strict SEO tiers for maximum marketplace sales:
+     * Keywords 1-10 (PRIMARY SUBJECT & CORE VISUAL NOUNS): The exact literal elements, main subject, visible numbers (e.g. 2027), nouns, key objects, and materials. (Adobe Stock indexes these 10 tags with highest weight!)
+     * Keywords 11-25 (ENVIRONMENT, SETTING & TECHNIQUE): Specific location type, weather, lighting, color palette, camera angle (aerial, top view, isometric, flat lay), style (minimalist, modern, corporate, vintage).
+     * Keywords 26-38 (COMMERCIAL UTILITY & DESIGN VALUE): Template, banner, background, copy space, graphic element, layout, corporate branding, presentation, marketing, isolated.
+     * Keywords 39-${targetCount} (HIGH-VOLUME BUYER SEARCH PHRASES): Common search terms, industry concepts, and buyer intent tags.
    - ${singleWordKeywords ? "Format: strictly single words." : "Format: mix of precise single words and high-converting 2-word stock phrases."}
-   - No duplicate keywords. No irrelevant spam.
+   - No duplicate keywords. No irrelevant spam. No useless filler words.
 
 5. CATEGORY SELECTION:
-   - Primary Adobe Stock category: Landscapes, Nature, Business, Technology, People, Architecture, Travel, Food & Drink, Animals, Transportation, Backgrounds/Textures, Holidays/Celebrations.
+   - Primary Stock Category: Landscapes, Nature, Business, Technology, People, Architecture, Travel, Food & Drink, Animals, Transportation, Backgrounds/Textures, Holidays/Celebrations.
 
 ${isVideo ? "- FOR VIDEO ASSETS: Include footage-specific descriptors where appropriate (e.g., 4k footage, aerial, drone, b-roll, slow motion, cinematic, camera movement, panning, tracking)." : ""}
 ${silhouette ? "- ASSET IS A SILHOUETTE: Emphasize shadow, outline, backlit profile, shape contrast." : ""}

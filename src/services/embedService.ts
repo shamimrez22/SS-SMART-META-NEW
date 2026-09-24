@@ -549,15 +549,33 @@ ${xmpPacket}
   return svgContent;
 }
 
+// Helper function to search for byte sequences in Uint8Array
+function findSubarray(source: Uint8Array, pattern: Uint8Array, fromIndex: number = 0): number {
+  const pLen = pattern.length;
+  if (pLen === 0) return -1;
+  const limit = source.length - pLen;
+  for (let i = fromIndex; i <= limit; i++) {
+    let match = true;
+    for (let j = 0; j < pLen; j++) {
+      if (source[i + j] !== pattern[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return i;
+  }
+  return -1;
+}
+
 // Directly inject metadata into an EPS (PostScript) vector string
 export function injectEpsMetadata(
   epsContent: string,
   metadata: Partial<StockMetadata>
 ): string {
-  const title = metadata.title || '';
-  const description = metadata.description || '';
-  const keywords = metadata.keywords || '';
-  const xmpPacket = createXmpPacket(metadata, 'application/postscript');
+  const title = (metadata.title || '').trim();
+  const description = (metadata.description || title).trim();
+  const keywords = (metadata.keywords || '').trim();
+  const baseXml = createXmpPacket(metadata, 'application/postscript');
 
   // 1. Update/Inject standard Adobe PostScript DSC comments in EPS header
   let updatedEps = epsContent;
@@ -578,25 +596,35 @@ export function injectEpsMetadata(
   }
 
   // 2. Check if EPS already contains an XMP packet
-  const xpacketRegex = /<\?xpacket begin[\s\S]*?<\?xpacket end="[rw]"\?>/g;
-  if (xpacketRegex.test(updatedEps)) {
-    return updatedEps.replace(xpacketRegex, xmpPacket);
+  const xpacketRegex = /<\?xpacket begin[\s\S]*?<\?xpacket end=['"][rw]['"]\?>/i;
+  const match = updatedEps.match(xpacketRegex);
+  if (match && match.index !== undefined) {
+    const origPacket = match[0];
+    const origLen = origPacket.length;
+    let replacementXmp = baseXml;
+    if (baseXml.length <= origLen) {
+      // In-place padding: Pad with spaces before `<?xpacket end=` so total length is preserved exactly
+      const padLen = origLen - baseXml.length;
+      const endMarker = '<?xpacket end=';
+      const insertIdx = baseXml.lastIndexOf(endMarker);
+      if (insertIdx !== -1) {
+        replacementXmp = baseXml.slice(0, insertIdx) + ' '.repeat(padLen) + baseXml.slice(insertIdx);
+      }
+    }
+    return updatedEps.slice(0, match.index) + replacementXmp + updatedEps.slice(match.index + origLen);
   }
 
-  // Look for %%EndComments marker in PostScript EPS header: Inject BEFORE %%EndComments
+  // 3. If no existing XMP, inject PostScript ConsumeMetadata block after %%EndComments
   const endCommentsIndex = updatedEps.indexOf('%%EndComments');
-  const xmlBlock = `\n%begin_xml_code\n${xmpPacket}\n%end_xml_code\n`;
+  const xmpLen = new TextEncoder().encode(baseXml).length;
+  const psXmlBlock = `\n%begin_xml_code\n/pdfmark where{pop true}{false}ifelse\n[/NamespacePush pdfmark\n[/_objdef {eps_metadata_stream} /type /stream /OBJ pdfmark\n[{eps_metadata_stream} 2 dict begin /Type /Metadata def /Subtype /XML def currentdict end /PUT pdfmark\n/MetadataString ${xmpLen} string def\n/TempString 100 string def\n/ConsumeMetadata {currentfile TempString readline pop pop currentfile MetadataString readstring pop pop} bind def\nConsumeMetadata\n%begin_xml_packet: ${xmpLen}\n${baseXml}\n%end_xml_packet\n[{eps_metadata_stream} MetadataString /PUT pdfmark\n%end_xml_code\n`;
+
   if (endCommentsIndex !== -1) {
-    return updatedEps.slice(0, endCommentsIndex) + xmlBlock + updatedEps.slice(endCommentsIndex);
+    const insertPos = endCommentsIndex + '%%EndComments'.length;
+    return updatedEps.slice(0, insertPos) + psXmlBlock + updatedEps.slice(insertPos);
   }
 
-  // If no %%EndComments, insert right after the first line (e.g., %!PS-Adobe-3.0 EPSF-3.0)
-  const firstNewline = updatedEps.indexOf('\n');
-  if (firstNewline !== -1) {
-    return updatedEps.slice(0, firstNewline + 1) + xmlBlock + updatedEps.slice(firstNewline + 1);
-  }
-
-  return xmlBlock + updatedEps;
+  return updatedEps + psXmlBlock;
 }
 
 // Binary-safe EPS/AI Metadata Embedder: Preserves DOS EPS binary headers, TIFF previews, and PostScript integrity
@@ -629,70 +657,116 @@ export async function embedMetadataInEpsBlob(
       tiffLength = view.getUint32(24, true);
     }
 
-    if (psOffset + psLength > bytes.length || psOffset < 0 || psLength <= 0) {
+    if (psOffset < 0 || psLength <= 0 || psOffset + psLength > bytes.length) {
       psOffset = 0;
       psLength = bytes.length;
     }
 
-    const psSlice = bytes.subarray(psOffset, psOffset + psLength);
+    // Partition original file into prefix (DOS header + padding), psSlice, and suffix (e.g. TIFF preview)
+    const prefixBytes = isDosEps && psOffset > 0 ? bytes.subarray(0, psOffset) : new Uint8Array(0);
+    const psSlice = isDosEps && psOffset > 0 ? bytes.subarray(psOffset, psOffset + psLength) : bytes;
+    const suffixBytes = isDosEps && psOffset > 0 ? bytes.subarray(psOffset + psLength) : new Uint8Array(0);
 
-    // Safe PostScript slice extraction: Only parse and rewrite the ASCII/DSC comments header.
-    // Binary PostScript paths, fonts, and raster previews are kept 100% untouched as raw bytes.
-    let commentsEnd = psSlice.length;
-    const searchLimit = Math.min(psSlice.length, 131072);
-    // Search for "%%EndComments" marker in bytes (ASCII: 37, 37, 69, 110, 100, 67, 111, 109, 109, 101, 110, 116, 115)
-    const endMarker = [37, 37, 69, 110, 100, 67, 111, 109, 109, 101, 110, 116, 115];
-    for (let i = 0; i < searchLimit - endMarker.length; i++) {
-      let match = true;
-      for (let m = 0; m < endMarker.length; m++) {
-        if (psSlice[i + m] !== endMarker[m]) {
-          match = false;
-          break;
+    // Search for existing XMP packet inside psSlice using byte-level search
+    const startPattern = new TextEncoder().encode('<?xpacket begin');
+    const xmpStart = findSubarray(psSlice, startPattern);
+
+    const baseXml = createXmpPacket(metadata, 'application/postscript');
+    let newPsBytes: Uint8Array;
+    let delta = 0;
+
+    if (xmpStart !== -1) {
+      // Find end marker
+      const endPattern = new TextEncoder().encode('<?xpacket end');
+      const xmpEndStart = findSubarray(psSlice, endPattern, xmpStart);
+      let xmpEnd = -1;
+      if (xmpEndStart !== -1) {
+        const closePattern = new TextEncoder().encode('?>');
+        const closeIdx = findSubarray(psSlice, closePattern, xmpEndStart);
+        if (closeIdx !== -1) {
+          xmpEnd = closeIdx + 2;
         }
       }
-      if (match) {
-        commentsEnd = i;
-        break;
+
+      if (xmpEnd !== -1 && xmpEnd > xmpStart) {
+        const origPacketLen = xmpEnd - xmpStart;
+        const baseXmlBytes = new TextEncoder().encode(baseXml);
+
+        if (baseXmlBytes.length <= origPacketLen) {
+          // Standard in-place padding: Insert spaces before <?xpacket end= to match exact original length!
+          const padCount = origPacketLen - baseXmlBytes.length;
+          const endMarkerStr = '<?xpacket end=';
+          const insIdx = baseXml.lastIndexOf(endMarkerStr);
+          const paddedXml = insIdx !== -1
+            ? baseXml.slice(0, insIdx) + ' '.repeat(padCount) + baseXml.slice(insIdx)
+            : baseXml + ' '.repeat(padCount);
+          const paddedBytes = new TextEncoder().encode(paddedXml);
+
+          newPsBytes = new Uint8Array(psSlice.length);
+          newPsBytes.set(psSlice.subarray(0, xmpStart), 0);
+          newPsBytes.set(paddedBytes, xmpStart);
+          newPsBytes.set(psSlice.subarray(xmpEnd), xmpStart + paddedBytes.length);
+          delta = 0; // ZERO offset shift, 100% preservation!
+        } else {
+          // If metadata is longer than previous padding, expand cleanly
+          newPsBytes = new Uint8Array(psSlice.length - origPacketLen + baseXmlBytes.length);
+          newPsBytes.set(psSlice.subarray(0, xmpStart), 0);
+          newPsBytes.set(baseXmlBytes, xmpStart);
+          newPsBytes.set(psSlice.subarray(xmpEnd), xmpStart + baseXmlBytes.length);
+          delta = baseXmlBytes.length - origPacketLen;
+
+          // Check if %begin_xml_packet: is immediately preceding and update length
+          const lookback = Math.max(0, xmpStart - 200);
+          const headerBefore = new TextDecoder('latin1').decode(psSlice.subarray(lookback, xmpStart));
+          const numMatch = headerBefore.match(/(%begin_xml_packet:\s*)(\d+)/i);
+          if (numMatch && numMatch.index !== undefined) {
+            const oldNumStr = numMatch[2];
+            const newNumStr = String(baseXmlBytes.length);
+            const numDiff = newNumStr.length - oldNumStr.length;
+            if (numDiff === 0) {
+              const fullIdx = lookback + numMatch.index + numMatch[1].length;
+              newPsBytes.set(new TextEncoder().encode(newNumStr), fullIdx);
+            }
+          }
+        }
+      } else {
+        // Fallback: decode text and inject safely
+        const psText = new TextDecoder('latin1').decode(psSlice);
+        const updatedPsText = injectEpsMetadata(psText, metadata);
+        newPsBytes = new TextEncoder().encode(updatedPsText);
+        delta = newPsBytes.length - psSlice.length;
       }
+    } else {
+      // No XMP packet in the file: inject DSC comments and Adobe PostScript XMP block
+      const psText = new TextDecoder('latin1').decode(psSlice);
+      const updatedPsText = injectEpsMetadata(psText, metadata);
+      newPsBytes = new TextEncoder().encode(updatedPsText);
+      delta = newPsBytes.length - psSlice.length;
     }
-
-    const headerSlice = psSlice.subarray(0, commentsEnd);
-    const bodySlice = psSlice.subarray(commentsEnd);
-    const headerText = new TextDecoder('latin1').decode(headerSlice);
-
-    // Inject updated DSC comments & XMP packet into ASCII header only
-    const updatedHeaderText = injectEpsMetadata(headerText, metadata);
-    const newHeaderBytes = new TextEncoder().encode(updatedHeaderText);
-
-    const newPsBytes = new Uint8Array(newHeaderBytes.length + bodySlice.length);
-    newPsBytes.set(newHeaderBytes, 0);
-    newPsBytes.set(bodySlice, newHeaderBytes.length);
-    const delta = newPsBytes.length - psLength;
 
     if (!isDosEps) {
       return new Blob([newPsBytes], { type: 'application/postscript' });
     }
 
-    // Construct new 30-byte DOS header with updated psLength and adjusted offsets
-    const newHeader = new Uint8Array(30);
-    newHeader[0] = 0xC5; newHeader[1] = 0xD0; newHeader[2] = 0xD3; newHeader[3] = 0xC6;
-    const headerView = new DataView(newHeader.buffer);
-    headerView.setUint32(4, psOffset, true);
+    // For DOS EPS: copy prefixBytes (preserving all original bytes before psOffset)
+    const newPrefix = new Uint8Array(prefixBytes);
+    const headerView = new DataView(newPrefix.buffer, newPrefix.byteOffset, newPrefix.byteLength);
+
+    // Update psLength at offset 8
     headerView.setUint32(8, newPsBytes.length, true);
 
-    const newWmfOffset = wmfOffset > psOffset ? wmfOffset + delta : wmfOffset;
-    headerView.setUint32(12, newWmfOffset, true);
-    headerView.setUint32(16, wmfLength, true);
-
-    const newTiffOffset = tiffOffset > psOffset ? tiffOffset + delta : tiffOffset;
-    headerView.setUint32(20, newTiffOffset, true);
-    headerView.setUint32(24, tiffLength, true);
+    // Adjust WMF offset if it appears after PostScript stream
+    if (wmfOffset > psOffset && wmfLength > 0) {
+      headerView.setUint32(12, wmfOffset + delta, true);
+    }
+    // Adjust TIFF offset if it appears after PostScript stream
+    if (tiffOffset > psOffset && tiffLength > 0) {
+      headerView.setUint32(20, tiffOffset + delta, true);
+    }
+    // Checksum = 0xFFFF per Adobe PostScript specification
     headerView.setUint16(28, 0xFFFF, true);
 
-    // Slices after PostScript (e.g. binary TIFF preview) remain completely untouched and clean
-    const afterPs = bytes.subarray(psOffset + psLength);
-
-    return new Blob([newHeader, newPsBytes, afterPs], { type: 'application/postscript' });
+    return new Blob([newPrefix, newPsBytes, suffixBytes], { type: 'application/postscript' });
   } catch (epsErr) {
     console.warn("embedMetadataInEpsBlob warning, fallback to original file:", epsErr);
     return file;

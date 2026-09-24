@@ -35,14 +35,29 @@ export interface ApiStatus {
   [key: string]: ApiConnectionStatus;
 }
 
-export type StockMarketplace = 'universal' | 'adobe' | 'shutterstock' | 'freepik' | 'getty' | 'alamy' | 'vecteezy' | '123rf' | 'dreamstime';
+export type StockMarketplace = 
+  | 'universal'
+  | 'adobe'
+  | 'shutterstock'
+  | 'freepik'
+  | 'getty'
+  | 'vecteezy'
+  | 'pond5'
+  | 'envato'
+  | 'depositphotos'
+  | '123rf'
+  | 'dreamstime'
+  | 'alamy'
+  | 'canva'
+  | 'motionelements'
+  | 'creativemarket';
 
 export interface GeneratorSettings {
   titleLength: [number, number];
   descriptionLength: [number, number];
   keywordsCount: number;
   autoDownload: boolean;
-  promptMode: 'default' | 'adobe' | 'shutterstock' | 'custom';
+  promptMode: 'default' | 'adobe' | 'shutterstock' | 'custom' | 'freepik' | 'getty';
   marketplace: StockMarketplace;
   aiModel: string;
   titlePrefix: string;

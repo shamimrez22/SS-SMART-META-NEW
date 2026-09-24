@@ -1,18 +1,26 @@
 import React from 'react';
-import { X, MessageSquare, Phone, Mail, Globe, Send, User, ExternalLink } from 'lucide-react';
+import { X, MessageSquare, Phone, Mail, Globe, Send, User, ExternalLink, Shield } from 'lucide-react';
+import { getAdminConfig } from '../services/licenseService';
 
 interface ContactModalProps {
   isOpen: boolean;
   onClose: () => void;
   showNotification: (msg: string, type: 'info' | 'error' | 'success') => void;
+  onOpenAdmin?: () => void;
 }
 
 export const ContactModal: React.FC<ContactModalProps> = ({
   isOpen,
   onClose,
-  showNotification
+  showNotification,
+  onOpenAdmin
 }) => {
   if (!isOpen) return null;
+
+  const adminConfig = getAdminConfig();
+  const whatsappUrl = adminConfig.whatsapp.startsWith('http') 
+    ? adminConfig.whatsapp 
+    : `https://wa.me/${adminConfig.whatsapp.replace(/[^0-9+]/g, '')}`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-150">
@@ -39,15 +47,31 @@ export const ContactModal: React.FC<ContactModalProps> = ({
         {/* Modal Body */}
         <div className="p-5 flex flex-col gap-4 text-xs">
           {/* Developer Card */}
-          <div className="p-3 bg-[#1a293c] border border-[#273a50] rounded-lg flex items-center gap-3">
-            <div className="w-11 h-11 rounded-full bg-cyan-600/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 font-bold text-base">
-              SR
+          <div className="p-3 bg-[#1a293c] border border-[#273a50] rounded-lg flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-cyan-600/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 font-bold text-base">
+                SR
+              </div>
+              <div className="flex flex-col">
+                <span className="font-bold text-white text-sm">{adminConfig.developerName || "Shamim"}</span>
+                <span className="text-[11px] text-cyan-400">Creator & Lead Engineer</span>
+                <span className="text-[10px] text-slate-400">SS SMART META Studio</span>
+              </div>
             </div>
-            <div className="flex flex-col">
-              <span className="font-bold text-white text-sm">Shamim</span>
-              <span className="text-[11px] text-cyan-400">Developer & Creator of SS SMART META</span>
-              <span className="text-[10px] text-slate-400">Dhaka, Bangladesh</span>
-            </div>
+            {onOpenAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenAdmin();
+                }}
+                className="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-[10px] uppercase flex items-center gap-1 cursor-pointer"
+                title="Admin Control"
+              >
+                <Shield size={11} />
+                <span>Admin</span>
+              </button>
+            )}
           </div>
 
           {/* Quick Channels */}
@@ -56,7 +80,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({
             
             {/* WhatsApp */}
             <a 
-              href="https://wa.me/+8801700000000" 
+              href={whatsappUrl} 
               target="_blank" 
               rel="noreferrer"
               className="flex items-center justify-between p-2.5 rounded bg-[#1e2f44] hover:bg-[#253b56] border border-emerald-500/40 text-emerald-300 transition-colors cursor-pointer group"
@@ -65,16 +89,35 @@ export const ContactModal: React.FC<ContactModalProps> = ({
                 <span className="text-base">💬</span>
                 <div>
                   <div className="font-bold text-white">WhatsApp Direct Chat</div>
-                  <div className="text-[10px] text-slate-400">Instant answers, feature requests & support</div>
+                  <div className="text-[10px] text-slate-400">{adminConfig.whatsapp || "Instant answers, feature requests & license keys"}</div>
                 </div>
               </div>
               <ExternalLink size={14} className="opacity-60 group-hover:opacity-100" />
             </a>
 
+            {/* Website */}
+            {adminConfig.website && (
+              <a 
+                href={adminConfig.website} 
+                target="_blank" 
+                rel="noreferrer"
+                className="flex items-center justify-between p-2.5 rounded bg-[#1e2f44] hover:bg-[#253b56] border border-blue-500/40 text-blue-300 transition-colors cursor-pointer group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Globe size={16} className="text-blue-400" />
+                  <div>
+                    <div className="font-bold text-white">Official Website</div>
+                    <div className="text-[10px] text-slate-400">{adminConfig.website}</div>
+                  </div>
+                </div>
+                <ExternalLink size={14} className="opacity-60 group-hover:opacity-100" />
+              </a>
+            )}
+
             {/* Email */}
             <div 
               onClick={() => {
-                navigator.clipboard.writeText("contact@metamaster.app");
+                navigator.clipboard.writeText(adminConfig.email || "contact@metamaster.app");
                 showNotification("Email copied to clipboard!", "success");
               }}
               className="flex items-center justify-between p-2.5 rounded bg-[#1e2f44] hover:bg-[#253b56] border border-[#2f435c] text-slate-200 transition-colors cursor-pointer group"
@@ -83,32 +126,34 @@ export const ContactModal: React.FC<ContactModalProps> = ({
                 <Mail size={16} className="text-cyan-400" />
                 <div>
                   <div className="font-bold text-white">Official Email</div>
-                  <div className="text-[10px] text-slate-400">contact@metamaster.app</div>
+                  <div className="text-[10px] text-slate-400">{adminConfig.email || "contact@metamaster.app"}</div>
                 </div>
               </div>
               <span className="text-[10px] text-cyan-400">Copy</span>
             </div>
 
             {/* YouTube */}
-            <a 
-              href="https://youtube.com" 
-              target="_blank" 
-              rel="noreferrer"
-              className="flex items-center justify-between p-2.5 rounded bg-[#1e2f44] hover:bg-[#253b56] border border-rose-500/30 text-rose-300 transition-colors cursor-pointer group"
-            >
-              <div className="flex items-center gap-2.5">
-                <span className="text-base text-rose-500">▶</span>
-                <div>
-                  <div className="font-bold text-white">YouTube Tutorials</div>
-                  <div className="text-[10px] text-slate-400">Watch tutorials & metadata workflow guides</div>
+            {adminConfig.youtube && (
+              <a 
+                href={adminConfig.youtube} 
+                target="_blank" 
+                rel="noreferrer"
+                className="flex items-center justify-between p-2.5 rounded bg-[#1e2f44] hover:bg-[#253b56] border border-rose-500/30 text-rose-300 transition-colors cursor-pointer group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className="text-base text-rose-500">▶</span>
+                  <div>
+                    <div className="font-bold text-white">YouTube Tutorials</div>
+                    <div className="text-[10px] text-slate-400">Watch tutorials & metadata workflow guides</div>
+                  </div>
                 </div>
-              </div>
-              <ExternalLink size={14} className="opacity-60 group-hover:opacity-100" />
-            </a>
+                <ExternalLink size={14} className="opacity-60 group-hover:opacity-100" />
+              </a>
+            )}
           </div>
 
           <div className="pt-2 text-center text-[10px] text-slate-500 border-t border-[#24354a]">
-            Meta Master Desktop v3.5 • All Rights Reserved © {new Date().getFullYear()}
+            SS SMART META Desktop v3.5 • All Rights Reserved © {new Date().getFullYear()}
           </div>
         </div>
       </div>

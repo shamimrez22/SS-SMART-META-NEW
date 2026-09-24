@@ -53,7 +53,9 @@ import {
   Minus,
   Undo2,
   Redo2,
-  Shield
+  Shield,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import Papa from 'papaparse';
 import * as piexif from "piexifjs";
@@ -73,6 +75,11 @@ import { AssetInspector } from './components/AssetInspector';
 import { ExtensionsModal } from './components/ExtensionsModal';
 import { MetaMasterView } from './components/MetaMasterView';
 import { ContactModal } from './components/ContactModal';
+import { ManageKeysModal } from './components/ManageKeysModal';
+import { SettingsModal } from './components/SettingsModal';
+import { AdminPanelModal } from './components/AdminPanelModal';
+import { LicenseLockScreen } from './components/LicenseLockScreen';
+import { checkCurrentLicenseStatus, LicenseStatusResult } from './services/licenseService';
 import { cn, sanitizeFilenameForFs, sanitizeStockFilename } from './lib/utils';
 
 const STORAGE_KEY = 'ai-metadata-pro-config';
@@ -880,6 +887,52 @@ export default function App() {
   }, [settings, pushUndoSnapshot]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExtensionsOpen, setIsExtensionsOpen] = useState(false);
+  const [isManageKeysOpen, setIsManageKeysOpen] = useState(false);
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatusResult>(checkCurrentLicenseStatus);
+
+  const refreshLicenseStatus = useCallback(() => {
+    setLicenseStatus(checkCurrentLicenseStatus());
+  }, []);
+
+  const [extensionInitialTab, setExtensionInitialTab] = useState<'hub' | 'image-to-prompt' | 'prompt-expander' | 'palette-scout' | 'upscaler-advisor'>('hub');
+  const [expandedSettingsSections, setExpandedSettingsSections] = useState<Record<string, boolean>>({
+    marketplace: false,
+    aiModel: false,
+    imagerOptions: false,
+    affixes: false,
+    autoSync: false,
+    savedKeywords: false,
+    customPrompt: false,
+  });
+
+  const toggleSettingsSection = useCallback((section: string) => {
+    setExpandedSettingsSections(prev => ({ ...prev, [section]: !prev[section] }));
+  }, []);
+
+  const expandAllSettings = useCallback(() => {
+    setExpandedSettingsSections({
+      marketplace: true,
+      aiModel: true,
+      imagerOptions: true,
+      affixes: true,
+      autoSync: true,
+      savedKeywords: true,
+      customPrompt: true,
+    });
+  }, []);
+
+  const collapseAllSettings = useCallback(() => {
+    setExpandedSettingsSections({
+      marketplace: false,
+      aiModel: false,
+      imagerOptions: false,
+      affixes: false,
+      autoSync: false,
+      savedKeywords: false,
+      customPrompt: false,
+    });
+  }, []);
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean; message: string; filename: string }>({ isOpen: false, message: '', filename: '' });
 
   const openErrorModal = useCallback((message: string, filename: string) => {
@@ -1377,8 +1430,8 @@ export default function App() {
     const isRenamed = targetFilename.toLowerCase() !== originalFilename.toLowerCase();
 
     // Single FileSystemFileHandle cannot rename/move itself on user local disk outside of OPFS.
-    // If the file needs to be renamed and activeDir is not connected yet, prompt user for folder!
-    if (isRenamed && !activeDir && typeof (window as any).showDirectoryPicker === 'function' && !isInIframe) {
+    // If the file needs to be renamed, activeDir is not connected, and there is no direct file handle, prompt user for folder!
+    if (isRenamed && !activeDir && (!fileMetadata.handle || typeof fileMetadata.handle.createWritable !== 'function') && typeof (window as any).showDirectoryPicker === 'function' && !isInIframe) {
       try {
         activeDir = await ensureDirectoryHandle();
       } catch (dirErr) {
@@ -1541,9 +1594,7 @@ export default function App() {
         }
 
         if (handleWriteOk) {
-          if (isRenamed) {
-            showNotification(`"${originalFilename}" ফাইলে মেটাডাটা সেভ হয়েছে। কিন্তু ফাইলের নাম "${targetFilename}"-এ পরিবর্তন করতে 'Add Folder' দিয়ে ফোল্ডার কানেক্ট করুন।`, 'info');
-          }
+          showNotification(`✓ সরাসরি মূল ফাইলে মেটাডাটা সেভ হয়েছে!`, 'success');
           setFiles(prev => prev.map(f => f.id === id ? { 
             ...f, 
             status: 'saved', 
@@ -1556,7 +1607,7 @@ export default function App() {
       }
 
       // 3. If neither folder handle nor file handle is connected or writable:
-      if (!activeDir && typeof (window as any).showDirectoryPicker === 'function') {
+      if (!activeDir && (!fileMetadata.handle || typeof fileMetadata.handle.createWritable !== 'function') && typeof (window as any).showDirectoryPicker === 'function') {
         try {
           const pickedDir = await ensureDirectoryHandle();
           if (pickedDir) {
@@ -2269,6 +2320,94 @@ export default function App() {
           }));
           break;
 
+        case 'envato':
+          // Envato Elements & GraphicRiver template
+          data = targetFiles.map(f => ({
+            'Filename': f.filename,
+            'Title': f.title || '',
+            'Description': f.description || '',
+            'Tags': (f.keywords || '')
+              .split(',')
+              .map(k => k.trim())
+              .filter(Boolean)
+              .join(','),
+            'Category': f.category || 'Graphics'
+          }));
+          break;
+
+        case 'depositphotos':
+          // Depositphotos Contributor template
+          data = targetFiles.map(f => ({
+            'Filename': f.filename,
+            'Title': f.title || '',
+            'Description': f.description || '',
+            'Keywords': (f.keywords || '')
+              .split(',')
+              .map(k => k.trim())
+              .filter(Boolean)
+              .join(','),
+            'Category': f.category || 'Technology'
+          }));
+          break;
+
+        case '123rf':
+          // 123RF Contributor template
+          data = targetFiles.map(f => ({
+            'Filename': f.filename,
+            'Title': f.title || '',
+            'Description': f.description || '',
+            'Keywords': (f.keywords || '')
+              .split(',')
+              .map(k => k.trim())
+              .filter(Boolean)
+              .join(',')
+          }));
+          break;
+
+        case 'canva':
+          // Canva Contributor template
+          data = targetFiles.map(f => ({
+            'Filename': f.filename,
+            'Title': f.title || '',
+            'Tags': (f.keywords || '')
+              .split(',')
+              .map(k => k.trim())
+              .filter(Boolean)
+              .join(','),
+            'Category': f.category || 'Graphics'
+          }));
+          break;
+
+        case 'motionelements':
+          // Motion Elements template
+          data = targetFiles.map(f => ({
+            'Filename': f.filename,
+            'Title': f.title || '',
+            'Description': f.description || '',
+            'Keywords': (f.keywords || '')
+              .split(',')
+              .map(k => k.trim())
+              .filter(Boolean)
+              .join(','),
+            'Category': f.category || 'Video'
+          }));
+          break;
+
+        case 'creativemarket':
+          // Creative Market template
+          data = targetFiles.map(f => ({
+            'Filename': f.filename,
+            'Title': f.title || '',
+            'Description': f.description || '',
+            'Tags': (f.keywords || '')
+              .split(',')
+              .map(k => k.trim())
+              .filter(Boolean)
+              .join(','),
+            'Category': f.category || 'Graphics'
+          }));
+          break;
+
         case 'dreamstime':
           // Dreamstime Contributor template
           data = targetFiles.map(f => ({
@@ -2370,17 +2509,14 @@ export default function App() {
       return;
     }
 
-    // Ensure we have activeDir or file handles so we NEVER trigger browser downloads,
-    // and if any file has been renamed, a folder handle is required to rename the file on disk.
+    // Ensure we have activeDir or file handles so we NEVER trigger browser downloads
     if (!activeDir) {
       const needsFolder = candidateFiles.some(f => {
-        const orig = f.originalFilename || f.filename;
-        const target = sanitizeStockFilename(f.filename, orig, f.fileType || 'jpg');
-        return target.toLowerCase() !== orig.toLowerCase() || !f.handle || typeof f.handle.createWritable !== 'function';
+        return !f.handle || typeof f.handle.createWritable !== 'function';
       });
 
-      if (needsFolder) {
-        showNotification("ফাইলগুলো রিনেম ও মেটাডাটা সরাসরি আসল ফোল্ডারে সেভ করতে ফোল্ডারটি নির্বাচন করুন...", 'info');
+      if (needsFolder && typeof (window as any).showDirectoryPicker === 'function' && !isInIframe) {
+        showNotification("ফাইলগুলো সরাসরি সেভ করতে মূল ফোল্ডারটি নির্বাচন করুন...", 'info');
         activeDir = await ensureDirectoryHandle();
         if (!activeDir) {
           showNotification("ফোল্ডার নির্বাচন বাতিল করা হয়েছে। সরাসরি সেভ করতে 'Add Folder' ব্যবহার করুন।", 'error');
@@ -2491,8 +2627,8 @@ export default function App() {
     const targetFilename = sanitizeStockFilename(rawTarget, originalFilename, fallbackExt);
     const isRenamed = targetFilename.toLowerCase() !== originalFilename.toLowerCase();
 
-    if (!activeDir && (isRenamed || !fileMetadata.handle || typeof fileMetadata.handle.createWritable !== 'function')) {
-      showNotification(`"${targetFilename}" ফাইলে কোনো ডাউনলোড ছাড়া সরাসরি রিনেম ও সেভ করতে মূল ফোল্ডারটি নির্বাচন করুন...`, 'info');
+    if (!activeDir && (!fileMetadata.handle || typeof fileMetadata.handle.createWritable !== 'function') && typeof (window as any).showDirectoryPicker === 'function' && !isInIframe) {
+      showNotification(`"${targetFilename}" ফাইলে সরাসরি সেভ করতে মূল ফোল্ডারটি নির্বাচন করুন...`, 'info');
       activeDir = await ensureDirectoryHandle();
       if (!activeDir) {
         showNotification(`ফোল্ডার নির্বাচন বাতিল হয়েছে। কোনো ফাইল ডাউনলোড করা হয়নি।`, 'error');
@@ -2680,6 +2816,8 @@ export default function App() {
         setMode={setMode}
         theme={theme}
         setTheme={setTheme}
+        settings={settings}
+        setSettings={setSettings}
         genOptions={genOptions}
         setGenOptions={setGenOptions}
         activeKey={activeKey}
@@ -2688,6 +2826,12 @@ export default function App() {
         setIsSettingsOpen={setIsSettingsOpen}
         setIsContactOpen={setIsContactOpen}
         setIsExtensionsOpen={setIsExtensionsOpen}
+        setIsManageKeysOpen={setIsManageKeysOpen}
+        onOpenAdmin={() => setIsAdminModalOpen(true)}
+        openExtensionsWithTab={(tab) => {
+          setExtensionInitialTab(tab);
+          setIsExtensionsOpen(true);
+        }}
         handleFileSelectDirect={handleFileSelectDirect}
         handleDirectorySelect={handleDirectorySelect}
         startGeneration={startGeneration}
@@ -2703,1323 +2847,19 @@ export default function App() {
         showNotification={showNotification}
       />
 
-      {/* Settings Modal (Full Page View) */}
-      {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="w-full h-full flex flex-col bg-background overflow-hidden">
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted shrink-0 shadow-sm">
-              <div className="flex items-center gap-3">
-                <Settings size={22} className="text-primary" />
-                <div>
-                  <h3 className="font-extrabold text-base uppercase tracking-wider text-foreground">Application Settings</h3>
-                  <p className="text-xs text-muted-foreground font-medium">Configure API keys, AI imager preferences, metadata rules, and concurrency</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setIsSettingsOpen(false)} 
-                className="p-2 hover:bg-destructive hover:text-destructive-foreground rounded-md text-muted-foreground transition-all flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider"
-                title="Close settings"
-              >
-                <X size={20} />
-                <span className="hidden sm:inline">Close</span>
-              </button>
-            </div>
-            
-            {/* Content Body */}
-            <div className="flex-1 p-6 md:p-8 space-y-8 overflow-y-auto custom-scrollbar bg-background">
-              <div className="max-w-6xl mx-auto space-y-8">
-                {/* API Keys Section */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-border pb-2">
-                    <h4 className="text-sm md:text-base font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2.5">
-                      <Database size={18} className="text-primary" />
-                      Service Configuration (5 Slots Per Provider)
-                    </h4>
-                    <span className="text-xs text-muted-foreground">Keys are stored securely in local browser storage</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {(['gemini', 'groq', 'mistral'] as const).map(provider => (
-                      <div key={provider} className="space-y-3 p-4 bg-muted/40 rounded-md border border-border flex flex-col justify-between shadow-sm">
-                        <div className="flex items-center justify-between border-b border-border/60 pb-2">
-                          <label className="text-xs md:text-sm font-black text-primary uppercase tracking-wider">{provider} API KEYS</label>
-                          {provider === 'gemini' && (
-                            <span className="text-[11px] text-muted-foreground font-mono">AIza... & AQ...</span>
-                          )}
-                        </div>
-                        <div className="space-y-2.5">
-                          {apiConfig[provider]?.map((key, idx) => (
-                            <div key={idx} className="flex gap-2 items-center">
-                              <span className="text-xs font-bold text-muted-foreground w-5 text-right shrink-0">{idx + 1}.</span>
-                              <input 
-                                type="password"
-                                value={key || ''}
-                                onChange={(e) => {
-                                  const newKeys = [...apiConfig[provider]];
-                                  newKeys[idx] = e.target.value.trim();
-                                  const newConfig = { ...apiConfig, [provider]: newKeys };
-                                  setApiConfig(newConfig);
-                                  try {
-                                    localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiConfig: newConfig, settings, activeKey }));
-                                  } catch (err) {
-                                    console.error("Auto-save failed:", err);
-                                  }
-                                }}
-                                placeholder={`Enter ${provider.toUpperCase()} Key ${idx + 1}...`}
-                                className="flex-1 bg-secondary border border-border text-xs md:text-sm h-9 rounded-md px-3 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-mono"
-                              />
-                              <button 
-                                onClick={() => handleTestConnection(provider, idx)}
-                                disabled={!key || apiStatus[`${provider}-${idx}`] === 'testing'}
-                                className={cn(
-                                  "px-3 h-9 rounded-md text-xs font-black uppercase tracking-wider transition-all shadow-sm shrink-0",
-                                  apiStatus[`${provider}-${idx}`] === 'connected' ? "bg-emerald-600 text-white shadow-emerald-500/20" :
-                                  apiStatus[`${provider}-${idx}`] === 'failed' ? "bg-destructive text-destructive-foreground shadow-red-500/20" :
-                                  "bg-secondary hover:bg-accent text-foreground border border-border"
-                                )}
-                              >
-                                {apiStatus[`${provider}-${idx}`] === 'testing' ? '...' : 
-                                 apiStatus[`${provider}-${idx}`] === 'connected' ? 'READY' : 
-                                 apiStatus[`${provider}-${idx}`] === 'failed' ? 'FAILED' : 'TEST'}
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  const newKeys = [...apiConfig[provider]];
-                                  newKeys[idx] = '';
-                                  const newConfig = { ...apiConfig, [provider]: newKeys };
-                                  setApiConfig(newConfig);
-                                  try {
-                                    localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiConfig: newConfig, settings, activeKey }));
-                                  } catch (err) {
-                                    console.error("Save failed:", err);
-                                  }
-                                  setApiStatus(prev => {
-                                    const newStatus = { ...prev };
-                                    delete newStatus[`${provider}-${idx}`];
-                                    return newStatus;
-                                  });
-                                }}
-                                className="p-2 h-9 bg-destructive/10 hover:bg-destructive/25 text-destructive rounded-md border border-destructive/20 transition-all shrink-0 flex items-center justify-center"
-                                title="Clear Key"
-                              >
-                                <Trash2 size={15} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* AI Imager Options & Saved Keywords in a responsive 2-column grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* AI Imager Options */}
-                  <div className="space-y-3 border border-border p-4 rounded-md bg-muted/20 shadow-sm">
-                    <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2 border-b border-border pb-2">
-                      <FileImage size={16} className="text-primary" />
-                      AI Imager Configuration
-                    </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {[
-                        { id: 'singleWordKeywords', label: 'Single Word Keywords', desc: 'Output single-token tags' },
-                        { id: 'autoGenerateOnAdd', label: 'Auto-Generate on Add', desc: 'Process immediately when uploaded' },
-                        { id: 'silhouette', label: 'Silhouette Mode', desc: 'Optimized for vector shapes' },
-                        { id: 'customPromptEnabled', label: 'Custom Prompt', desc: 'Use additional prompt instructions' },
-                        { id: 'transparentBackground', label: 'Transparent BG', desc: 'Isolate subject metadata' },
-                        { id: 'prohibitedWords', label: 'Filter Prohibited', desc: 'Strip trademarked terms' }
-                      ].map(option => (
-                        <div key={option.id} className="flex items-center justify-between p-2.5 bg-muted/40 rounded-md border border-border hover:bg-muted/60 transition-colors">
-                          <div className="flex flex-col">
-                            <span className="text-xs font-bold text-foreground">{option.label}</span>
-                            <span className="text-[10px] text-muted-foreground">{option.desc}</span>
-                          </div>
-                          <button 
-                            onClick={() => setSettings(prev => ({ ...prev, [option.id]: !prev[option.id as keyof GeneratorSettings] }))}
-                            className={cn(
-                              "w-10 h-5 rounded-full transition-all relative border border-border shrink-0 ml-2",
-                              settings[option.id as keyof GeneratorSettings] ? "bg-primary" : "bg-muted"
-                            )}
-                          >
-                            <div className={cn(
-                              "absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all shadow-sm",
-                              settings[option.id as keyof GeneratorSettings] ? "left-5" : "left-0.5"
-                            )} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Saved Keywords Section */}
-                  <div className="space-y-3 border border-border p-4 rounded-md bg-muted/20 shadow-sm flex flex-col">
-                    <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2 border-b border-border pb-2">
-                      <Tag size={16} className="text-primary" />
-                      Saved Keywords (Persistent Tag Pool)
-                    </h4>
-                    <div className="space-y-3 flex-1 flex flex-col">
-                      <div className="flex gap-2">
-                        <input 
-                          type="text"
-                          value={newKeyword}
-                          onChange={(e) => setNewKeyword(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && newKeyword.trim()) {
-                              setSettings(prev => ({ ...prev, savedKeywords: [...prev.savedKeywords, newKeyword.trim()] }));
-                              setNewKeyword('');
-                            }
-                          }}
-                          placeholder="Type keyword and press Enter or click Add..."
-                          className="flex-1 bg-secondary border border-border text-xs md:text-sm h-9 rounded-md px-3 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-medium"
-                        />
-                        <button 
-                          onClick={() => {
-                            if (newKeyword.trim()) {
-                              setSettings(prev => ({ ...prev, savedKeywords: [...prev.savedKeywords, newKeyword.trim()] }));
-                              setNewKeyword('');
-                            }
-                          }}
-                          className="px-4 h-9 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-black uppercase tracking-wider rounded-md transition-all shadow-sm"
-                        >
-                          ADD KEYWORD
-                        </button>
-                      </div>
-                      <div className="flex flex-wrap gap-2 min-h-[70px] p-3 bg-muted/40 rounded-md border border-border flex-1 items-start content-start">
-                        {(!settings.savedKeywords || settings.savedKeywords.length === 0) ? (
-                          <span className="text-xs text-muted-foreground italic">No saved keywords added yet. Add preset tags above to automatically append them.</span>
-                        ) : (
-                          settings.savedKeywords.map((kw, idx) => (
-                            <div key={idx} className="flex items-center gap-1.5 bg-primary/10 border border-primary/30 px-2 py-1 rounded-md group">
-                              <span className="text-xs font-bold text-foreground">{kw}</span>
-                              <button 
-                                onClick={() => {
-                                  setSettings(prev => ({
-                                    ...prev,
-                                    savedKeywords: (prev.savedKeywords || []).filter((_, i) => i !== idx)
-                                  }));
-                                }}
-                                className="text-muted-foreground hover:text-destructive transition-colors ml-1"
-                                title="Remove keyword"
-                              >
-                                <X size={12} />
-                              </button>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Stock Agency Marketplace & AI Model Architecture */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Stock Marketplace Selection */}
-                  <div className="space-y-3 border border-border p-4 rounded-md bg-muted/20 shadow-sm">
-                    <div className="flex items-center justify-between border-b border-border pb-2">
-                      <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2">
-                        <Globe size={16} className="text-primary" />
-                        Target Stock Agency Marketplace
-                      </h4>
-                      <span className="text-[10px] font-mono font-bold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded">
-                        100% COMPLIANT
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-muted-foreground">
-                      Choose your primary target agency. The AI inspector strictly tailors metadata formatting, keyword tiers, and title rules to guarantee approval.
-                    </p>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {[
-                        { id: 'universal', label: 'Universal', badge: 'All Agencies', desc: '100% Cross-Platform' },
-                        { id: 'adobe', label: 'Adobe Stock', badge: 'Top 10 Heavy', desc: 'Visual Nouns First' },
-                        { id: 'shutterstock', label: 'Shutterstock', badge: 'Commercial', desc: 'Literal & Trademark-Free' },
-                        { id: 'freepik', label: 'Freepik / Flaticon', badge: 'Graphic Focus', desc: 'Vector & Isolated Tags' },
-                        { id: 'getty', label: 'Getty / iStock', badge: 'Taxonomy', desc: 'Concept + Literal Mix' },
-                        { id: 'alamy', label: 'Alamy', badge: 'Editorial', desc: 'Rich 25-Word Caption' },
-                        { id: 'vecteezy', label: 'Vecteezy', badge: 'Utility Tags', desc: 'Design & Background' },
-                        { id: '123rf', label: '123RF', badge: 'Microstock', desc: 'Clean Punctuation' },
-                        { id: 'dreamstime', label: 'Dreamstime', badge: 'Keywords', desc: 'Direct Search Terms' }
-                      ].map(m => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => setSettings(prev => ({ ...prev, marketplace: m.id as any }))}
-                          className={cn(
-                            "flex flex-col items-start p-2.5 rounded-md border text-left transition-all relative",
-                            settings.marketplace === m.id 
-                              ? "bg-primary/10 border-primary text-foreground shadow-sm ring-1 ring-primary/30" 
-                              : "bg-secondary/60 hover:bg-secondary border-border text-muted-foreground hover:text-foreground"
-                          )}
-                        >
-                          <div className="flex items-center justify-between w-full">
-                            <span className="text-xs font-bold text-foreground">{m.label}</span>
-                            {settings.marketplace === m.id && (
-                              <Check size={13} className="text-primary shrink-0" />
-                            )}
-                          </div>
-                          <span className="text-[10px] text-muted-foreground font-medium mt-0.5">{m.desc}</span>
-                          <span className="text-[9px] font-mono mt-1 text-primary/80 uppercase font-semibold">{m.badge}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* AI Model Selection */}
-                  <div className="space-y-3 border border-border p-4 rounded-md bg-muted/20 shadow-sm flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between border-b border-border pb-2">
-                        <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2">
-                          <Cpu size={16} className="text-primary" />
-                          AI Vision Model Selection
-                        </h4>
-                        <span className="text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded">
-                          MULTIMODAL 2026
-                        </span>
-                      </div>
-
-                      <p className="text-xs text-muted-foreground mt-2">
-                        Select which Gemini AI model processes your assets. Choose faster turnaround or deeper reasoning for complex subjects.
-                      </p>
-
-                      <div className="space-y-2 mt-3">
-                        {[
-                          { 
-                            id: 'gemini-2.5-flash', 
-                            name: 'Gemini 2.5 Flash', 
-                            tag: 'RECOMMENDED', 
-                            speed: '⚡ Lightning Fast (1.2s)', 
-                            desc: 'Best overall performance, generous quota, and surgical stock accuracy.' 
-                          },
-                          { 
-                            id: 'gemini-2.5-flash-lite', 
-                            name: 'Gemini 2.5 Flash-Lite', 
-                            tag: 'HIGH QUOTA', 
-                            speed: '🚀 Ultra Fast (0.8s)', 
-                            desc: 'Lightweight model ideal for massive batches and rapid processing.' 
-                          },
-                          { 
-                            id: 'gemini-3.1-flash-lite', 
-                            name: 'Gemini 3.1 Flash-Lite', 
-                            tag: 'NEXT-GEN', 
-                            speed: '🌟 Fast & Balanced (1.5s)', 
-                            desc: 'Modern multimodal vision pipeline with excellent visual nuances.' 
-                          },
-                          { 
-                            id: 'gemini-3.8-flash', 
-                            name: 'Gemini 3.8 Flash', 
-                            tag: 'DEEP REASONING', 
-                            speed: '🧠 Thorough (2.1s)', 
-                            desc: 'Maximum depth for complex conceptual themes, numbers, and signs.' 
-                          }
-                        ].map(model => (
-                          <div
-                            key={model.id}
-                            onClick={() => setSettings(prev => ({ ...prev, aiModel: model.id as any }))}
-                            className={cn(
-                              "flex items-center justify-between p-2.5 rounded-md border cursor-pointer transition-all",
-                              settings.aiModel === model.id
-                                ? "bg-primary/10 border-primary shadow-sm ring-1 ring-primary/30"
-                                : "bg-secondary/60 hover:bg-secondary border-border"
-                            )}
-                          >
-                            <div className="flex flex-col">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-foreground">{model.name}</span>
-                                <span className={cn(
-                                  "text-[9px] font-mono px-1.5 py-0.2 rounded font-bold uppercase",
-                                  model.tag === 'RECOMMENDED' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
-                                )}>
-                                  {model.tag}
-                                </span>
-                              </div>
-                              <span className="text-[10px] text-muted-foreground mt-0.5">{model.desc}</span>
-                            </div>
-                            <div className="text-right shrink-0 ml-3">
-                              <span className="text-[10px] font-mono text-muted-foreground block">{model.speed}</span>
-                              {settings.aiModel === model.id ? (
-                                <span className="text-[10px] font-black text-primary">SELECTED</span>
-                              ) : (
-                                <span className="text-[10px] text-muted-foreground">CLICK TO USE</span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Title & Keywords Prefix / Suffix Engine */}
-                <div className="space-y-4 border border-border p-5 rounded-md bg-muted/20 shadow-sm">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
-                    <div>
-                      <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2">
-                        <SlidersHorizontal size={16} className="text-primary" />
-                        Title & Keywords Custom Affixes (Prefix / Suffix Engine)
-                      </h4>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Automatically append or prepend custom words or tags to titles and keywords on generation, or apply them to all loaded files.
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleApplyAffixesToAllFiles}
-                      className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-black uppercase tracking-wider rounded-md transition-all shadow-sm flex items-center gap-2 shrink-0 self-start sm:self-auto cursor-pointer"
-                    >
-                      <Zap size={14} />
-                      Apply Affixes to All Current Files
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Title Prefix & Suffix */}
-                    <div className="space-y-3 p-3.5 bg-secondary rounded-md border border-border">
-                      <span className="text-xs font-black text-primary uppercase tracking-wider block">
-                        Title Customization (Beginning & End)
-                      </span>
-                      
-                      <div className="space-y-2">
-                        <div>
-                          <label className="text-[11px] font-bold text-muted-foreground uppercase">Title Prefix (Adds to beginning):</label>
-                          <input
-                            type="text"
-                            value={settings.titlePrefix || ''}
-                            onChange={(e) => setSettings(prev => ({ ...prev, titlePrefix: e.target.value }))}
-                            placeholder="e.g., Aerial view of, Isolated, Scenic panorama of..."
-                            className="w-full bg-background border border-border text-xs h-9 rounded-md px-3 mt-1 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-medium"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-[11px] font-bold text-muted-foreground uppercase">Title Suffix (Adds to end):</label>
-                          <input
-                            type="text"
-                            value={settings.titleSuffix || ''}
-                            onChange={(e) => setSettings(prev => ({ ...prev, titleSuffix: e.target.value }))}
-                            placeholder="e.g., with copy space, 4k background, vector illustration..."
-                            className="w-full bg-background border border-border text-xs h-9 rounded-md px-3 mt-1 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-medium"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Live Title Preview */}
-                      <div className="mt-2 p-2.5 bg-muted/60 rounded border border-border text-[11px]">
-                        <span className="font-bold text-muted-foreground block mb-0.5">Live Title Preview:</span>
-                        <span className="font-medium text-foreground">
-                          <strong className="text-primary">{settings.titlePrefix?.trim() ? `${settings.titlePrefix.trim()} ` : ''}</strong>
-                          <span className="text-muted-foreground italic">Asphalt Road Winding Through Pine Forest</span>
-                          <strong className="text-primary">{settings.titleSuffix?.trim() ? ` ${settings.titleSuffix.trim()}` : ''}</strong>
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Keywords Prefix & Suffix */}
-                    <div className="space-y-3 p-3.5 bg-secondary rounded-md border border-border">
-                      <span className="text-xs font-black text-primary uppercase tracking-wider block">
-                        Keywords / Tags Customization (Beginning & End)
-                      </span>
-                      
-                      <div className="space-y-2">
-                        <div>
-                          <label className="text-[11px] font-bold text-muted-foreground uppercase">Keywords Prefix (Prepends to tags list):</label>
-                          <input
-                            type="text"
-                            value={settings.keywordsPrefix || ''}
-                            onChange={(e) => setSettings(prev => ({ ...prev, keywordsPrefix: e.target.value }))}
-                            placeholder="e.g., aerial, highway, nature, landscape (comma-separated)..."
-                            className="w-full bg-background border border-border text-xs h-9 rounded-md px-3 mt-1 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-medium"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-[11px] font-bold text-muted-foreground uppercase">Keywords Suffix (Appends to tags list):</label>
-                          <input
-                            type="text"
-                            value={settings.keywordsSuffix || ''}
-                            onChange={(e) => setSettings(prev => ({ ...prev, keywordsSuffix: e.target.value }))}
-                            placeholder="e.g., 4k resolution, high quality, commercial, modern..."
-                            className="w-full bg-background border border-border text-xs h-9 rounded-md px-3 mt-1 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 font-medium"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Live Keywords Preview */}
-                      <div className="mt-2 p-2.5 bg-muted/60 rounded border border-border text-[11px]">
-                        <span className="font-bold text-muted-foreground block mb-0.5">Live Keywords Preview:</span>
-                        <span className="font-medium text-foreground">
-                          <strong className="text-primary">{settings.keywordsPrefix?.trim() ? `${settings.keywordsPrefix.trim()}, ` : ''}</strong>
-                          <span className="text-muted-foreground italic">road, forest, journey, trees, 2027</span>
-                          <strong className="text-primary">{settings.keywordsSuffix?.trim() ? `, ${settings.keywordsSuffix.trim()}` : ''}</strong>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Automatic Filename & Title Synchronization Section */}
-                <div className="space-y-4 border border-border p-5 rounded-xl bg-card/60 shadow-sm">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
-                        <FileText size={18} />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider">
-                            Automatic Filename & Title Synchronization
-                          </h4>
-                          <span className="text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded">
-                            STOCK SEO COMPLIANT
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Automatically synchronizes physical filenames with generated or edited titles for seamless marketplace indexing.
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={renameAllByTitle}
-                      className="px-3.5 py-1.5 bg-secondary hover:bg-accent text-foreground border border-border hover:border-primary/40 text-xs font-bold uppercase tracking-wider rounded-md transition-all shadow-xs flex items-center gap-2 shrink-0 self-start sm:self-auto cursor-pointer"
-                      title="Rename all current files using their respective titles"
-                    >
-                      <RefreshCw size={13} className="text-primary" />
-                      Apply to All Current Files Now
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                    {/* Auto-Sync Toggle */}
-                    <div className="p-3.5 bg-secondary/50 rounded-lg border border-border flex flex-col justify-between">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <span className="text-xs font-black text-foreground uppercase tracking-wider block">
-                            Auto-Sync Filename With Title
-                          </span>
-                          <p className="text-[11px] text-muted-foreground mt-1">
-                            When enabled, generating new metadata, editing title cells, or applying affixes immediately updates filenames.
-                          </p>
-                        </div>
-                        <button 
-                          type="button"
-                          onClick={() => setSettings(prev => ({ ...prev, autoSyncFilenameWithTitle: prev.autoSyncFilenameWithTitle === false ? true : false }))}
-                          className={cn(
-                            "w-11 h-6 rounded-full transition-all relative border border-border shrink-0 cursor-pointer",
-                            settings.autoSyncFilenameWithTitle !== false ? "bg-primary border-primary" : "bg-muted"
-                          )}
-                        >
-                          <div className={cn(
-                            "absolute top-0.5 w-4.5 h-4.5 rounded-full bg-white transition-all shadow-sm",
-                            settings.autoSyncFilenameWithTitle !== false ? "left-5.5" : "left-0.5"
-                          )} />
-                        </button>
-                      </div>
-
-                      <div className="mt-3 pt-2.5 border-t border-border/60 flex items-center justify-between text-[11px] text-muted-foreground">
-                        <span>Current Status:</span>
-                        <span className={cn("font-bold font-mono", settings.autoSyncFilenameWithTitle !== false ? "text-emerald-500" : "text-amber-500")}>
-                          {settings.autoSyncFilenameWithTitle !== false ? "✓ ACTIVE (Automatic)" : "⏸ PAUSED (Manual Only)"}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Format Selector */}
-                    <div className="p-3.5 bg-secondary/50 rounded-lg border border-border space-y-2">
-                      <span className="text-xs font-black text-foreground uppercase tracking-wider block">
-                        Filename Formatting Style
-                      </span>
-                      <p className="text-[11px] text-muted-foreground">
-                        Choose how sanitized filenames are formatted for agency guidelines:
-                      </p>
-
-                      <div className="grid grid-cols-3 gap-2 pt-1">
-                        {[
-                          { id: 'exact_title', label: 'Exact Title Case', preview: 'Forest Road.jpg', badge: 'Recommended' },
-                          { id: 'kebab_case', label: 'Hyphenated (SEO)', preview: 'forest-road.jpg', badge: 'Web Standard' },
-                          { id: 'snake_case', label: 'Underscore', preview: 'forest_road.jpg', badge: 'Microstock' }
-                        ].map(fmt => (
-                          <button
-                            key={fmt.id}
-                            type="button"
-                            onClick={() => setSettings(prev => ({ ...prev, filenameFormat: fmt.id as any }))}
-                            className={cn(
-                              "flex flex-col p-2 rounded-md border text-left transition-all cursor-pointer",
-                              (settings.filenameFormat || 'exact_title') === fmt.id
-                                ? "bg-primary/10 border-primary text-foreground shadow-xs ring-1 ring-primary/30"
-                                : "bg-card/70 hover:bg-accent border-border text-muted-foreground hover:text-foreground"
-                            )}
-                          >
-                            <div className="flex items-center justify-between w-full">
-                              <span className="text-[11px] font-bold text-foreground truncate">{fmt.label}</span>
-                              {(settings.filenameFormat || 'exact_title') === fmt.id && (
-                                <Check size={12} className="text-primary shrink-0" />
-                              )}
-                            </div>
-                            <span className="text-[10px] font-mono text-muted-foreground truncate mt-0.5">{fmt.preview}</span>
-                            <span className="text-[9px] font-semibold text-primary/80 uppercase mt-1">{fmt.badge}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Live Filename Preview Box */}
-                  <div className="p-3 bg-muted/40 rounded-lg border border-border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-muted-foreground uppercase text-[10px] tracking-wider shrink-0">
-                        Live Filename Output:
-                      </span>
-                      <span className="font-mono text-foreground font-semibold bg-background px-2.5 py-1 rounded border border-border/80 truncate max-w-xl">
-                        {sanitizeStockFilename(
-                          `${settings.titlePrefix?.trim() ? `${settings.titlePrefix.trim()} ` : ''}Sunset Over Majestic Mountain Valley with Lake Reflection${settings.titleSuffix?.trim() ? ` ${settings.titleSuffix.trim()}` : ''}`,
-                          'image.jpg',
-                          'jpg',
-                          settings.filenameFormat || 'exact_title'
-                        )}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground font-mono shrink-0">
-                      Filesystem-Safe • 150 Max Chars Limit
-                    </span>
-                  </div>
-                </div>
-
-                {/* Generation Parameters - Studio Calibrator */}
-                <div className="space-y-6 border-2 border-primary/30 p-6 md:p-7 rounded-2xl bg-gradient-to-br from-card/90 via-card to-secondary/30 shadow-xl relative overflow-hidden">
-                  {/* Subtle decorative glow */}
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
-
-                  {/* Header Row */}
-                  <div className="flex items-center justify-between flex-wrap gap-4 pb-4 border-b border-border/80 relative z-10">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-primary/15 border border-primary/40 flex items-center justify-center shadow-inner">
-                        <Zap size={22} className="text-primary fill-primary/30" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm md:text-base font-black text-foreground uppercase tracking-wider flex items-center gap-2">
-                          Metadata & Generation Range Parameters
-                          <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30">
-                            Studio Pro
-                          </span>
-                        </h4>
-                        <p className="text-xs font-medium text-muted-foreground mt-0.5">
-                          Fine-tune exact word counts, tag density, and algorithmic requirements for stock marketplaces.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSettings(prev => ({
-                            ...prev,
-                            promptMode: 'default',
-                            minTitleWords: 7,
-                            maxTitleWords: 15,
-                            minDescriptionWords: 20,
-                            maxDescriptionWords: 45,
-                            minKeywords: 35,
-                            maxKeywords: 50
-                          }));
-                          showNotification("রেন্জ প্যারামিটার স্টক রিকমেন্ডেড ডিফল্টে রিসেট করা হয়েছে", 'info');
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-accent text-xs font-bold text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-xs active:scale-95"
-                        title="Reset word and keyword ranges to recommended stock defaults"
-                      >
-                        <RefreshCw size={13} />
-                        <span>Recommended Defaults</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 4 Major Studio Controllers Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 relative z-10">
-                    
-                    {/* 1. PLATFORM PRESET & PROFILE */}
-                    <div className="space-y-3 p-4 rounded-xl bg-secondary/70 border border-border flex flex-col justify-between shadow-xs">
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="text-xs font-black text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                            <Bookmark size={13} className="text-primary" />
-                            <span>Platform Preset</span>
-                          </label>
-                          <span className="text-[10px] font-black uppercase text-primary tracking-wider">
-                            {settings.promptMode === 'adobe' ? 'Adobe Spec' : settings.promptMode === 'shutterstock' ? 'Shutter Spec' : 'Universal'}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-muted-foreground font-medium mb-3">
-                          Select preset to auto-align prompts and metadata lengths with specific agency submission algorithms.
-                        </p>
-
-                        <div className="flex flex-col gap-2">
-                          {[
-                            { 
-                              id: 'default', 
-                              label: 'Standard', 
-                              desc: 'Universal Balanced SEO (All Sites)', 
-                              minT: 7, maxT: 15, minD: 20, maxD: 45, minK: 35, maxK: 50 
-                            },
-                            { 
-                              id: 'adobe', 
-                              label: 'Adobe Stock', 
-                              desc: '7-14 Words • 1st-10 Focus • 40-50 Tags', 
-                              minT: 7, maxT: 14, minD: 20, maxD: 40, minK: 40, maxK: 50 
-                            },
-                            { 
-                              id: 'shutterstock', 
-                              label: 'Shutterstock', 
-                              desc: '10-18 Words • No Trademarks • 50 Tags', 
-                              minT: 10, maxT: 18, minD: 25, maxD: 50, minK: 45, maxK: 50 
-                            }
-                          ].map(mode => {
-                            const isSelected = settings.promptMode === mode.id;
-                            return (
-                              <button 
-                                key={mode.id}
-                                type="button"
-                                onClick={() => {
-                                  setSettings(prev => ({ 
-                                    ...prev, 
-                                    promptMode: mode.id as any,
-                                    minTitleWords: mode.minT,
-                                    maxTitleWords: mode.maxT,
-                                    minDescriptionWords: mode.minD,
-                                    maxDescriptionWords: mode.maxD,
-                                    minKeywords: mode.minK,
-                                    maxKeywords: mode.maxK
-                                  }));
-                                  showNotification(`Applied ${mode.label} preset specifications!`, 'success');
-                                }}
-                                className={cn(
-                                  "w-full text-left p-2.5 rounded-lg border transition-all cursor-pointer group flex flex-col gap-0.5",
-                                  isSelected 
-                                    ? "bg-primary text-primary-foreground border-primary shadow-md shadow-primary/20 scale-[1.01]" 
-                                    : "bg-background/80 hover:bg-accent border-border text-foreground hover:border-primary/50"
-                                )}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-black uppercase tracking-wider">{mode.label}</span>
-                                  {isSelected && <CheckCircle2 size={13} className="shrink-0" />}
-                                </div>
-                                <span className={cn(
-                                  "text-[10px] font-medium leading-tight",
-                                  isSelected ? "text-primary-foreground/90 font-semibold" : "text-muted-foreground"
-                                )}>
-                                  {mode.desc}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Small Tip Box */}
-                      <div className="p-2.5 rounded-lg bg-background/60 border border-border text-[10px] text-muted-foreground mt-2">
-                        <span className="font-bold text-foreground block mb-0.5">💡 Agency Best Practice:</span>
-                        Titles under 15 words ensure Google Images and Adobe search algorithms display full titles without truncating.
-                      </div>
-                    </div>
-
-                    {/* 2. TITLE WORD RANGE (Blue Theme) */}
-                    <div className="p-4 rounded-xl bg-blue-950/20 border-2 border-blue-500/40 flex flex-col justify-between shadow-xs space-y-4">
-                      <div>
-                        {/* Header & Large Glowing Digital Badge */}
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <label className="text-xs font-black text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
-                            <FileText size={14} className="text-blue-400" />
-                            <span>Title Word Range</span>
-                          </label>
-                          <div className="px-2.5 py-1 rounded-md bg-blue-500/20 border border-blue-400/50 text-blue-300 font-mono font-black text-xs shadow-xs">
-                            {settings.minTitleWords} - {settings.maxTitleWords} words
-                          </div>
-                        </div>
-
-                        <p className="text-[11px] text-muted-foreground font-medium mb-3">
-                          Controls the minimum and maximum words in the SEO file title.
-                        </p>
-
-                        {/* Visual Range Indicator Bar */}
-                        <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden mb-4 relative flex items-center">
-                          <div 
-                            className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all"
-                            style={{
-                              marginLeft: `${Math.min(100, (settings.minTitleWords / 60) * 100)}%`,
-                              width: `${Math.max(4, Math.min(100, ((settings.maxTitleWords - settings.minTitleWords) / 60) * 100))}%`
-                            }}
-                          />
-                        </div>
-
-                        {/* Interactive Steppers & Sliders */}
-                        <div className="space-y-3.5 bg-background/70 p-3 rounded-lg border border-blue-500/20">
-                          {/* MIN Word Control */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-[11px] font-black text-blue-300 uppercase">Min Words:</span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, minTitleWords: Math.max(1, prev.minTitleWords - 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-blue-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Minus size={11} />
-                                </button>
-                                <input 
-                                  type="number" 
-                                  min="1" 
-                                  max={settings.maxTitleWords} 
-                                  value={settings.minTitleWords}
-                                  onChange={(e) => {
-                                    const val = Math.max(1, Math.min(parseInt(e.target.value) || 1, settings.maxTitleWords));
-                                    setSettings(prev => ({ ...prev, minTitleWords: val }));
-                                  }}
-                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-blue-400/40 rounded text-foreground focus:outline-none focus:border-blue-400"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, minTitleWords: Math.min(prev.maxTitleWords, prev.minTitleWords + 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-blue-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Plus size={11} />
-                                </button>
-                              </div>
-                            </div>
-                            <input 
-                              type="range" 
-                              min="1" 
-                              max="60" 
-                              value={settings.minTitleWords}
-                              onChange={(e) => setSettings(prev => ({ ...prev, minTitleWords: Math.min(parseInt(e.target.value), prev.maxTitleWords) }))}
-                              className="modern-slider slider-blue"
-                            />
-                          </div>
-
-                          {/* MAX Word Control */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-[11px] font-black text-blue-300 uppercase">Max Words:</span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, maxTitleWords: Math.max(prev.minTitleWords, prev.maxTitleWords - 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-blue-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Minus size={11} />
-                                </button>
-                                <input 
-                                  type="number" 
-                                  min={settings.minTitleWords} 
-                                  max="60" 
-                                  value={settings.maxTitleWords}
-                                  onChange={(e) => {
-                                    const val = Math.max(settings.minTitleWords, Math.min(parseInt(e.target.value) || settings.minTitleWords, 60));
-                                    setSettings(prev => ({ ...prev, maxTitleWords: val }));
-                                  }}
-                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-blue-400/40 rounded text-foreground focus:outline-none focus:border-blue-400"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, maxTitleWords: Math.min(60, prev.maxTitleWords + 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-blue-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Plus size={11} />
-                                </button>
-                              </div>
-                            </div>
-                            <input 
-                              type="range" 
-                              min="1" 
-                              max="60" 
-                              value={settings.maxTitleWords}
-                              onChange={(e) => setSettings(prev => ({ ...prev, maxTitleWords: Math.max(parseInt(e.target.value), prev.minTitleWords) }))}
-                              className="modern-slider slider-blue"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Quick Presets Pills */}
-                      <div className="pt-2 border-t border-blue-500/20">
-                        <span className="text-[10px] font-bold text-muted-foreground block mb-1.5 uppercase tracking-wider">Quick Presets:</span>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {[
-                            { label: '5 - 10 words', min: 5, max: 10 },
-                            { label: '8 - 15 words', min: 8, max: 15 },
-                            { label: '15 - 25 words', min: 15, max: 25 },
-                            { label: '30 - 50 words', min: 30, max: 50 },
-                          ].map(preset => (
-                            <button
-                              key={preset.label}
-                              type="button"
-                              onClick={() => setSettings(prev => ({ ...prev, minTitleWords: preset.min, maxTitleWords: preset.max }))}
-                              className={cn(
-                                "text-[10px] font-bold py-1 px-1.5 rounded text-center transition-all cursor-pointer border",
-                                settings.minTitleWords === preset.min && settings.maxTitleWords === preset.max
-                                  ? "bg-blue-600 text-white border-blue-400 font-black shadow-xs"
-                                  : "bg-background/80 hover:bg-accent text-muted-foreground hover:text-foreground border-border"
-                              )}
-                            >
-                              {preset.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 3. DESCRIPTION WORD RANGE (Cyan Theme) */}
-                    <div className="p-4 rounded-xl bg-cyan-950/20 border-2 border-cyan-500/40 flex flex-col justify-between shadow-xs space-y-4">
-                      <div>
-                        {/* Header & Large Glowing Digital Badge */}
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <label className="text-xs font-black text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
-                            <FileText size={14} className="text-cyan-400" />
-                            <span>Description Range</span>
-                          </label>
-                          <div className="px-2.5 py-1 rounded-md bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 font-mono font-black text-xs shadow-xs">
-                            {settings.minDescriptionWords} - {settings.maxDescriptionWords} words
-                          </div>
-                        </div>
-
-                        <p className="text-[11px] text-muted-foreground font-medium mb-3">
-                          Controls descriptive context & caption depth.
-                        </p>
-
-                        {/* Visual Range Indicator Bar */}
-                        <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden mb-4 relative flex items-center">
-                          <div 
-                            className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full transition-all"
-                            style={{
-                              marginLeft: `${Math.min(100, (settings.minDescriptionWords / 150) * 100)}%`,
-                              width: `${Math.max(4, Math.min(100, ((settings.maxDescriptionWords - settings.minDescriptionWords) / 150) * 100))}%`
-                            }}
-                          />
-                        </div>
-
-                        {/* Interactive Steppers & Sliders */}
-                        <div className="space-y-3.5 bg-background/70 p-3 rounded-lg border border-cyan-500/20">
-                          {/* MIN Word Control */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-[11px] font-black text-cyan-300 uppercase">Min Words:</span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, minDescriptionWords: Math.max(5, prev.minDescriptionWords - 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-cyan-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Minus size={11} />
-                                </button>
-                                <input 
-                                  type="number" 
-                                  min="5" 
-                                  max={settings.maxDescriptionWords} 
-                                  value={settings.minDescriptionWords}
-                                  onChange={(e) => {
-                                    const val = Math.max(5, Math.min(parseInt(e.target.value) || 5, settings.maxDescriptionWords));
-                                    setSettings(prev => ({ ...prev, minDescriptionWords: val }));
-                                  }}
-                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-cyan-400/40 rounded text-foreground focus:outline-none focus:border-cyan-400"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, minDescriptionWords: Math.min(prev.maxDescriptionWords, prev.minDescriptionWords + 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-cyan-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Plus size={11} />
-                                </button>
-                              </div>
-                            </div>
-                            <input 
-                              type="range" 
-                              min="5" 
-                              max="150" 
-                              value={settings.minDescriptionWords}
-                              onChange={(e) => setSettings(prev => ({ ...prev, minDescriptionWords: Math.min(parseInt(e.target.value), prev.maxDescriptionWords) }))}
-                              className="modern-slider slider-cyan"
-                            />
-                          </div>
-
-                          {/* MAX Word Control */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-[11px] font-black text-cyan-300 uppercase">Max Words:</span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, maxDescriptionWords: Math.max(prev.minDescriptionWords, prev.maxDescriptionWords - 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-cyan-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Minus size={11} />
-                                </button>
-                                <input 
-                                  type="number" 
-                                  min={settings.minDescriptionWords} 
-                                  max="150" 
-                                  value={settings.maxDescriptionWords}
-                                  onChange={(e) => {
-                                    const val = Math.max(settings.minDescriptionWords, Math.min(parseInt(e.target.value) || settings.minDescriptionWords, 150));
-                                    setSettings(prev => ({ ...prev, maxDescriptionWords: val }));
-                                  }}
-                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-cyan-400/40 rounded text-foreground focus:outline-none focus:border-cyan-400"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, maxDescriptionWords: Math.min(150, prev.maxDescriptionWords + 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-cyan-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Plus size={11} />
-                                </button>
-                              </div>
-                            </div>
-                            <input 
-                              type="range" 
-                              min="5" 
-                              max="150" 
-                              value={settings.maxDescriptionWords}
-                              onChange={(e) => setSettings(prev => ({ ...prev, maxDescriptionWords: Math.max(parseInt(e.target.value), prev.minDescriptionWords) }))}
-                              className="modern-slider slider-cyan"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Quick Presets Pills */}
-                      <div className="pt-2 border-t border-cyan-500/20">
-                        <span className="text-[10px] font-bold text-muted-foreground block mb-1.5 uppercase tracking-wider">Quick Presets:</span>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {[
-                            { label: '15 - 25 words', min: 15, max: 25 },
-                            { label: '25 - 45 words', min: 25, max: 45 },
-                            { label: '45 - 80 words', min: 45, max: 80 },
-                            { label: '80 - 120 words', min: 80, max: 120 },
-                          ].map(preset => (
-                            <button
-                              key={preset.label}
-                              type="button"
-                              onClick={() => setSettings(prev => ({ ...prev, minDescriptionWords: preset.min, maxDescriptionWords: preset.max }))}
-                              className={cn(
-                                "text-[10px] font-bold py-1 px-1.5 rounded text-center transition-all cursor-pointer border",
-                                settings.minDescriptionWords === preset.min && settings.maxDescriptionWords === preset.max
-                                  ? "bg-cyan-600 text-white border-cyan-400 font-black shadow-xs"
-                                  : "bg-background/80 hover:bg-accent text-muted-foreground hover:text-foreground border-border"
-                              )}
-                            >
-                              {preset.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 4. KEYWORD COUNT RANGE (Emerald Theme) */}
-                    <div className="p-4 rounded-xl bg-emerald-950/20 border-2 border-emerald-500/40 flex flex-col justify-between shadow-xs space-y-4">
-                      <div>
-                        {/* Header & Large Glowing Digital Badge */}
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <label className="text-xs font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                            <Tag size={14} className="text-emerald-400" />
-                            <span>Keyword Count Range</span>
-                          </label>
-                          <div className="px-2.5 py-1 rounded-md bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-mono font-black text-xs shadow-xs flex items-center gap-1">
-                            <span>{settings.minKeywords} - {settings.maxKeywords} tags</span>
-                            {settings.maxKeywords === 50 && (
-                              <span className="text-[9px] bg-emerald-500 text-slate-950 px-1 py-0.2 rounded font-black tracking-tight">100%</span>
-                            )}
-                          </div>
-                        </div>
-
-                        <p className="text-[11px] text-muted-foreground font-medium mb-3">
-                          Controls the number of indexed keyword tags (Up to 50 max).
-                        </p>
-
-                        {/* Tag Capacity Meter */}
-                        <div className="space-y-1 mb-4">
-                          <div className="flex justify-between text-[10px] font-bold text-emerald-400">
-                            <span>Density Capacity</span>
-                            <span>{settings.maxKeywords} / 50 Tags ({Math.round((settings.maxKeywords / 50) * 100)}%)</span>
-                          </div>
-                          <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden relative flex items-center">
-                            <div 
-                              className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full transition-all"
-                              style={{ width: `${(settings.maxKeywords / 50) * 100}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        {/* Interactive Steppers & Sliders */}
-                        <div className="space-y-3.5 bg-background/70 p-3 rounded-lg border border-emerald-500/20">
-                          {/* MIN Tag Control */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-[11px] font-black text-emerald-300 uppercase">Min Tags:</span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, minKeywords: Math.max(5, prev.minKeywords - 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-emerald-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Minus size={11} />
-                                </button>
-                                <input 
-                                  type="number" 
-                                  min="5" 
-                                  max={settings.maxKeywords} 
-                                  value={settings.minKeywords}
-                                  onChange={(e) => {
-                                    const val = Math.max(5, Math.min(parseInt(e.target.value) || 5, settings.maxKeywords));
-                                    setSettings(prev => ({ ...prev, minKeywords: val }));
-                                  }}
-                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-emerald-400/40 rounded text-foreground focus:outline-none focus:border-emerald-400"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, minKeywords: Math.min(prev.maxKeywords, prev.minKeywords + 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-emerald-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Plus size={11} />
-                                </button>
-                              </div>
-                            </div>
-                            <input 
-                              type="range" 
-                              min="5" 
-                              max="50" 
-                              value={settings.minKeywords}
-                              onChange={(e) => setSettings(prev => ({ ...prev, minKeywords: Math.min(parseInt(e.target.value), prev.maxKeywords) }))}
-                              className="modern-slider slider-emerald"
-                            />
-                          </div>
-
-                          {/* MAX Tag Control */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-[11px] font-black text-emerald-300 uppercase">Max Tags:</span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, maxKeywords: Math.max(prev.minKeywords, prev.maxKeywords - 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-emerald-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Minus size={11} />
-                                </button>
-                                <input 
-                                  type="number" 
-                                  min={settings.minKeywords} 
-                                  max="50" 
-                                  value={settings.maxKeywords}
-                                  onChange={(e) => {
-                                    const val = Math.max(settings.minKeywords, Math.min(parseInt(e.target.value) || settings.minKeywords, 50));
-                                    setSettings(prev => ({ ...prev, maxKeywords: val }));
-                                  }}
-                                  className="w-12 h-6 text-center text-xs font-mono font-black bg-background border border-emerald-400/40 rounded text-foreground focus:outline-none focus:border-emerald-400"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setSettings(prev => ({ ...prev, maxKeywords: Math.min(50, prev.maxKeywords + 1) }))}
-                                  className="w-6 h-6 rounded bg-secondary hover:bg-emerald-600 hover:text-white text-muted-foreground flex items-center justify-center font-bold text-xs cursor-pointer transition-colors border border-border"
-                                >
-                                  <Plus size={11} />
-                                </button>
-                              </div>
-                            </div>
-                            <input 
-                              type="range" 
-                              min="5" 
-                              max="50" 
-                              value={settings.maxKeywords}
-                              onChange={(e) => setSettings(prev => ({ ...prev, maxKeywords: Math.max(parseInt(e.target.value), prev.minKeywords) }))}
-                              className="modern-slider slider-emerald"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Quick Presets Pills */}
-                      <div className="pt-2 border-t border-emerald-500/20">
-                        <span className="text-[10px] font-bold text-muted-foreground block mb-1.5 uppercase tracking-wider">Quick Presets:</span>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {[
-                            { label: '25 - 35 tags', min: 25, max: 35 },
-                            { label: '35 - 45 tags', min: 35, max: 45 },
-                            { label: '40 - 50 tags', min: 40, max: 50 },
-                            { label: '50 - 50 (Max)', min: 50, max: 50 },
-                          ].map(preset => (
-                            <button
-                              key={preset.label}
-                              type="button"
-                              onClick={() => setSettings(prev => ({ ...prev, minKeywords: preset.min, maxKeywords: preset.max }))}
-                              className={cn(
-                                "text-[10px] font-bold py-1 px-1.5 rounded text-center transition-all cursor-pointer border",
-                                settings.minKeywords === preset.min && settings.maxKeywords === preset.max
-                                  ? "bg-emerald-600 text-white border-emerald-400 font-black shadow-xs"
-                                  : "bg-background/80 hover:bg-accent text-muted-foreground hover:text-foreground border-border"
-                              )}
-                            >
-                              {preset.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                  </div>
-
-                  {/* Batch Processing Concurrency Strip */}
-                  <div className="p-4 md:p-5 rounded-xl bg-purple-950/20 border-2 border-purple-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs relative z-10">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Cpu size={16} className="text-purple-400" />
-                        <label className="text-xs md:text-sm font-black text-purple-300 uppercase tracking-wider">
-                          Batch Processing Concurrency (Simultaneous Requests)
-                        </label>
-                      </div>
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Higher concurrency speeds up bulk generation. Lower concurrency prevents 429 quota rate limits.
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
-                      <div className="flex items-center gap-1.5 bg-background/80 border border-purple-500/30 px-3 py-1.5 rounded-lg shadow-xs">
-                        <span className="text-xs font-mono font-black text-purple-400 text-center w-24">
-                          {settings.concurrency} {settings.concurrency === 1 ? 'Worker' : 'Parallel Files'}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        {[
-                          { val: 1, label: '1 (Safe)' },
-                          { val: 3, label: '3 (Rec.)' },
-                          { val: 5, label: '5 (Fast)' },
-                          { val: 10, label: '10 (Turbo)' },
-                        ].map(speed => (
-                          <button
-                            key={speed.val}
-                            type="button"
-                            onClick={() => setSettings(prev => ({ ...prev, concurrency: speed.val }))}
-                            className={cn(
-                              "px-2.5 py-1 text-xs font-black rounded-md border transition-all cursor-pointer",
-                              settings.concurrency === speed.val
-                                ? "bg-purple-600 text-white border-purple-400 shadow-xs"
-                                : "bg-background/80 hover:bg-accent text-muted-foreground border-border hover:text-foreground"
-                            )}
-                          >
-                            {speed.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Custom Global Instructions */}
-                <div className="space-y-3 transition-all duration-300">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs md:text-sm font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2">
-                      <span>Custom Global AI Prompt Instructions</span>
-                      {settings.customPromptEnabled ? (
-                        <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">ACTIVE</span>
-                      ) : (
-                        <span className="text-[10px] font-bold text-muted-foreground bg-secondary px-2 py-0.5 rounded border border-border">DISABLED</span>
-                      )}
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setSettings(prev => ({ ...prev, customPromptEnabled: !prev.customPromptEnabled }))}
-                      className={cn(
-                        "text-xs font-bold px-2.5 py-1 rounded transition-colors",
-                        settings.customPromptEnabled 
-                          ? "bg-primary text-primary-foreground" 
-                          : "bg-secondary text-muted-foreground hover:text-foreground border border-border"
-                      )}
-                    >
-                      {settings.customPromptEnabled ? "Disable Custom Prompt" : "Enable Custom Prompt"}
-                    </button>
-                  </div>
-
-                  {/* 1-Click Subject-Accuracy Presets */}
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <span className="text-[11px] font-bold text-muted-foreground">Quick 100% Presets:</span>
-                    <button
-                      type="button"
-                      onClick={() => setSettings(prev => ({
-                        ...prev,
-                        customPromptEnabled: true,
-                        customPrompt: "Analyze the exact visual content of the file with 100% accuracy. If there are visible numbers, year digits, road signs, or specific subjects, feature them prominently in the title, description, and keywords. Generate exactly 50 hyper-relevant commercial stock keywords with zero generic filler."
-                      }))}
-                      className="text-[11px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      🎯 100% Exact Subject & Numbers
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSettings(prev => ({
-                        ...prev,
-                        customPromptEnabled: true,
-                        customPrompt: "Strictly identify the exact landscape, road markings, painted numbers/years (such as 2027), drone perspective, and forest setting. Include future roadmap, journey, and new year celebration concepts."
-                      }))}
-                      className="text-[11px] font-semibold bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      🌲 Aerial Road & Year 2027
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSettings(prev => ({
-                        ...prev,
-                        customPromptEnabled: true,
-                        customPrompt: "World-class commercial stock metadata: Literal descriptive title, comprehensive 35-word description, and exactly 50 high-ranking stock keywords categorized by primary subject, environment, and commercial search intent."
-                      }))}
-                      className="text-[11px] font-semibold bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30 px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      ⭐ 50 Full Keywords & 5-Star Rank
-                    </button>
-                  </div>
-
-                  <div className={cn("transition-all duration-300", !settings.customPromptEnabled && "opacity-40")}>
-                    <textarea 
-                      value={settings.customPrompt}
-                      onChange={(e) => setSettings(prev => ({ ...prev, customPrompt: e.target.value }))}
-                      placeholder="Provide additional rules for the AI (e.g., 'Always emphasize lighting and mood', 'Keep titles concise and editorial', 'Avoid brand names')..."
-                      className="w-full bg-secondary border border-border text-xs md:text-sm p-4 rounded-md h-28 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all text-foreground placeholder:text-muted-foreground/40 resize-none font-medium leading-relaxed"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="p-4 md:px-8 bg-muted border-t border-border flex items-center justify-between shrink-0 shadow-inner">
-              <span className="text-xs text-muted-foreground font-medium hidden sm:inline">All settings and API keys persist across browser sessions</span>
-              <div className="flex items-center gap-3 ml-auto">
-                <button 
-                  onClick={() => setIsSettingsOpen(false)}
-                  className="px-5 py-2.5 rounded-md text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-secondary transition-all border border-border"
-                >
-                  CANCEL
-                </button>
-                <button 
-                  onClick={() => {
-                    try {
-                      localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiConfig, settings, activeKey }));
-                      showNotification("Settings & API Keys saved permanently!", "success");
-                    } catch (e) {
-                      console.error("Save error:", e);
-                    }
-                    setIsSettingsOpen(false);
-                  }}
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground text-xs md:text-sm font-extrabold px-8 py-2.5 rounded-md transition-all shadow-lg uppercase tracking-wider active:scale-95 flex items-center gap-2"
-                >
-                  <CheckCircle2 size={16} />
-                  SAVE & CLOSE
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Settings Modal (Dedicated Clean Dropdown Component) */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        setSettings={setSettings}
+        setIsManageKeysOpen={setIsManageKeysOpen}
+        showNotification={showNotification}
+        renameAllByTitle={renameAllByTitle}
+        handleApplyAffixesToAllFiles={handleApplyAffixesToAllFiles}
+        newKeyword={newKeyword}
+        setNewKeyword={setNewKeyword}
+      />
 
       {/* History Modal (Windows Style) */}
       {isHistoryOpen && (
@@ -4609,19 +3449,56 @@ export default function App() {
       <ExtensionsModal
         isOpen={isExtensionsOpen}
         onClose={() => setIsExtensionsOpen(false)}
+        initialTab={extensionInitialTab}
         workspaceFiles={files}
         fileObjects={fileObjects}
         apiConfig={apiConfig}
         activeKey={activeKey}
         activeModel={settings.aiModel}
         showNotification={showNotification}
+        onOpenAdmin={() => setIsAdminModalOpen(true)}
+        onAdminStatusChanged={refreshLicenseStatus}
+      />
+
+      {/* Multi-Provider API Key Manager Modal (Gemini, Groq, Mistral) */}
+      <ManageKeysModal
+        isOpen={isManageKeysOpen}
+        onClose={() => setIsManageKeysOpen(false)}
+        apiConfig={apiConfig}
+        setApiConfig={setApiConfig}
+        activeKey={activeKey}
+        setActiveKey={setActiveKey}
+        handleTestConnection={handleTestConnection}
+        apiStatus={apiStatus}
+        showNotification={showNotification}
+        storageKey={STORAGE_KEY}
+        settings={settings}
       />
 
       <ContactModal
         isOpen={isContactOpen}
         onClose={() => setIsContactOpen(false)}
         showNotification={showNotification}
+        onOpenAdmin={() => setIsAdminModalOpen(true)}
       />
+
+      {/* Admin Panel Modal (License Generator, Socials, Admin Mode Toggle) */}
+      <AdminPanelModal
+        isOpen={isAdminModalOpen}
+        onClose={() => setIsAdminModalOpen(false)}
+        showNotification={showNotification}
+        onStatusChanged={refreshLicenseStatus}
+      />
+
+      {/* License Gatekeeper Lock Screen - App is locked if not Admin and no valid key */}
+      {!licenseStatus.isUnlocked && (
+        <LicenseLockScreen
+          licenseStatus={licenseStatus}
+          onActivated={refreshLicenseStatus}
+          showNotification={showNotification}
+          onOpenAdmin={() => setIsAdminModalOpen(true)}
+        />
+      )}
 
       <input 
         type="file" 
