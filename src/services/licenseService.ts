@@ -4,13 +4,14 @@
  * Admin bypass mode, and contact channel synchronization.
  */
 
-export type LicenseDuration = '1m' | '6m' | '1y' | 'lifetime';
+export type LicenseDuration = '1m' | '6m' | '1y' | 'lifetime' | 'custom';
 
 export interface LicenseKeyRecord {
   id: string;
   key: string;
   duration: LicenseDuration;
   durationDays: number;
+  customDays?: number;
   clientName?: string;
   createdAt: number;
   expiresAt: number; // timestamp in ms; 0 or large number for lifetime
@@ -20,7 +21,9 @@ export interface LicenseKeyRecord {
 
 export interface AdminConfig {
   isAdmin: boolean;
-  adminPin: string;
+  adminUsername: string; // Default: 'SHAMIM'
+  adminPassword: string; // Default: '321'
+  adminPin: string;      // Backwards compatible PIN
   website: string;
   whatsapp: string;
   youtube: string;
@@ -32,10 +35,67 @@ export interface ActiveLicenseState {
   key: string;
   duration: LicenseDuration;
   durationDays: number;
+  customDays?: number;
   activatedAt: number;
   expiresAt: number;
   clientName?: string;
 }
+
+export interface PricingPlan {
+  id: string;
+  name: string;
+  nameBangla: string;
+  durationLabel: string;
+  duration: LicenseDuration;
+  priceTaka: number;
+  originalPrice?: number;
+  popular?: boolean;
+  features: string[];
+}
+
+export const OFFICIAL_PRICING_PLANS: PricingPlan[] = [
+  {
+    id: 'plan_1m',
+    name: '1 Month Standard',
+    nameBangla: '১ মাস মেয়াদী',
+    durationLabel: '30 Days Access',
+    duration: '1m',
+    priceTaka: 199,
+    originalPrice: 350,
+    features: ['৩০ দিন ফুল অ্যাক্সেস', 'আনলিমিটেড মেটাডাটা জেনারেটর', 'সবগুলো স্টক মার্কেটপ্লেস এসইও', 'সিএসভি ফাইল এক্সপোর্ট']
+  },
+  {
+    id: 'plan_6m',
+    name: '6 Months Pro',
+    nameBangla: '৬ মাস মেয়াদী',
+    durationLabel: '180 Days Access',
+    duration: '6m',
+    priceTaka: 500,
+    originalPrice: 1194,
+    popular: true,
+    features: ['১৮০ দিন একটানা অ্যাক্সেস', '৳ ৬৯৪ টাকা বিশাল সাশ্রয়', 'ফাস্ট এআই ট্যাগিং ও প্রম্পট জেন', '২৪/৭ ডিরেক্ট সাপোর্ট']
+  },
+  {
+    id: 'plan_1y',
+    name: '1 Year Business',
+    nameBangla: '১ বছর মেয়াদী',
+    durationLabel: '365 Days Access',
+    duration: '1y',
+    priceTaka: 900,
+    originalPrice: 2388,
+    features: ['৩৬৫ দিন সম্পূর্ণ অ্যাক্সেস', '৳ ১,৪৮৮ টাকা সেরা ডিসকাউন্ট', 'অল এক্সটেনশন স্টুডিও ফিচারস', 'ভিআইপি প্রায়োরিটি সাপোর্ট']
+  },
+  {
+    id: 'plan_lifetime',
+    name: 'Lifetime Unlimited',
+    nameBangla: 'লাইফটাইম পার্মানেন্ট',
+    durationLabel: 'Unlimited Permanent',
+    duration: 'lifetime',
+    priceTaka: 1500,
+    originalPrice: 4999,
+    features: ['সারাজীবনের জন্য পার্মানেন্ট আনলক', 'কোনো মেয়াদ শেষ হবে না', 'ভবিষ্যতের সমস্ত প্রিমিয়াম আপডেট ফ্রি', 'অ্যাডমিন ডিরেক্ট সহায়তা']
+  }
+];
 
 export interface LicenseStatusResult {
   isUnlocked: boolean;
@@ -72,13 +132,31 @@ export const MASTER_ADMIN_RECORD: LicenseKeyRecord = {
 // Default Admin Configuration
 const DEFAULT_ADMIN_CONFIG: AdminConfig = {
   isAdmin: false, // User can toggle this in Admin panel with tickbox or by entering ADMIN-SHAMIM-321!
-  adminPin: 'admin786',
+  adminUsername: 'SHAMIM',
+  adminPassword: '321',
+  adminPin: '321',
   website: 'https://metamaster.app',
   whatsapp: '+8801700000000',
   youtube: 'https://youtube.com',
   email: 'contact@metamaster.app',
   developerName: 'Shamim (Developer & Creator)'
 };
+
+/**
+ * Verify Admin credentials (Username: SHAMIM, Password: 321 or saved updates)
+ */
+export function verifyAdminCredentials(user: string, pass: string): boolean {
+  const config = getAdminConfig();
+  const validUser = (config.adminUsername || 'SHAMIM').trim().toUpperCase();
+  const validPass = (config.adminPassword || '321').trim();
+  const enteredUser = (user || '').trim().toUpperCase();
+  const enteredPass = (pass || '').trim();
+
+  return (
+    (enteredUser === validUser && enteredPass === validPass) ||
+    (enteredUser === 'SHAMIM' && enteredPass === '321')
+  );
+}
 
 /**
  * Get the current Admin Configuration
@@ -159,7 +237,7 @@ function randomChunk(length: number): string {
 /**
  * Duration in days
  */
-export function getDurationDays(duration: LicenseDuration): number {
+export function getDurationDays(duration: LicenseDuration, customDays?: number): number {
   switch (duration) {
     case '1m':
       return 30;
@@ -169,6 +247,8 @@ export function getDurationDays(duration: LicenseDuration): number {
       return 365;
     case 'lifetime':
       return 36500; // 100 years
+    case 'custom':
+      return Math.max(1, customDays || 30);
     default:
       return 30;
   }
@@ -177,17 +257,20 @@ export function getDurationDays(duration: LicenseDuration): number {
 /**
  * Generate a brand new, completely unique, collision-proof license key
  */
-export function generateLicenseKey(duration: LicenseDuration, clientName?: string): LicenseKeyRecord {
-  const durationDays = getDurationDays(duration);
+export function generateLicenseKey(duration: LicenseDuration, clientName?: string, customDays?: number): LicenseKeyRecord {
+  const durationDays = getDurationDays(duration, customDays);
   const now = Date.now();
-  const expiresAt = duration === 'lifetime' ? now + (100 * 365 * 24 * 60 * 60 * 1000) : now + (durationDays * 24 * 60 * 60 * 1000);
+  const expiresAt = duration === 'lifetime' 
+    ? now + (100 * 365 * 24 * 60 * 60 * 1000) 
+    : now + (durationDays * 24 * 60 * 60 * 1000);
 
-  // Prefix based on duration
+  // Prefix based on duration (e.g. 1M, 6M, 1Y, LIFE, 33D)
   const prefixMap: Record<LicenseDuration, string> = {
     '1m': '1M',
     '6m': '6M',
     '1y': '1Y',
-    'lifetime': 'LIFE'
+    'lifetime': 'LIFE',
+    'custom': customDays ? `${customDays}D` : 'CUST'
   };
 
   // Unique timestamp component to prevent collision even if generated at the exact same moment
@@ -196,7 +279,7 @@ export function generateLicenseKey(duration: LicenseDuration, clientName?: strin
   const chunk2 = randomChunk(4);
   const chunk3 = randomChunk(4);
 
-  // Full key format: SSM-1M-A8F2-99C1-7E0B
+  // Full key format: SSM-33D-A8F2-99C1-7E0B
   const key = `SSM-${prefixMap[duration]}-${timeHex}${chunk1.slice(0, 1)}-${chunk2}-${chunk3}`;
 
   const record: LicenseKeyRecord = {
@@ -204,6 +287,7 @@ export function generateLicenseKey(duration: LicenseDuration, clientName?: strin
     key,
     duration,
     durationDays,
+    customDays: duration === 'custom' ? durationDays : undefined,
     clientName: clientName?.trim() || 'Valued User',
     createdAt: now,
     expiresAt,
@@ -361,17 +445,31 @@ export function validateAndActivateKey(rawKey: string): { success: boolean; mess
   }
 
   // Offline / Algorithmic Verification Fallback:
-  // If the key matches standard pattern SSM-(1M|6M|1Y|LIFE)-XXXX-XXXX-XXXX
-  const pattern = /^SSM-(1M|6M|1Y|LIFE)-[A-Z0-9]{4,5}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+  // If the key matches standard pattern SSM-(1M|6M|1Y|LIFE|33D)-XXXX-XXXX-XXXX
+  const pattern = /^SSM-(1M|6M|1Y|LIFE|[0-9]{1,4}D|CUST)-[A-Z0-9]{4,5}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
   if (pattern.test(cleaned)) {
     const parts = cleaned.split('-');
     const durationCode = parts[1];
     let duration: LicenseDuration = '1m';
-    if (durationCode === '6M') duration = '6m';
-    else if (durationCode === '1Y') duration = '1y';
-    else if (durationCode === 'LIFE') duration = 'lifetime';
+    let durationDays = 30;
 
-    const durationDays = getDurationDays(duration);
+    if (durationCode === '6M') {
+      duration = '6m';
+      durationDays = 180;
+    } else if (durationCode === '1Y') {
+      duration = '1y';
+      durationDays = 365;
+    } else if (durationCode === 'LIFE') {
+      duration = 'lifetime';
+      durationDays = 36500;
+    } else if (durationCode.endsWith('D')) {
+      duration = 'custom';
+      durationDays = Math.max(1, parseInt(durationCode.replace('D', ''), 10) || 30);
+    } else {
+      duration = '1m';
+      durationDays = 30;
+    }
+
     const now = Date.now();
     const expiresAt = duration === 'lifetime' ? now + (100 * 365 * 24 * 60 * 60 * 1000) : now + (durationDays * 24 * 60 * 60 * 1000);
 
@@ -379,6 +477,7 @@ export function validateAndActivateKey(rawKey: string): { success: boolean; mess
       key: cleaned,
       duration,
       durationDays,
+      customDays: duration === 'custom' ? durationDays : undefined,
       activatedAt: now,
       expiresAt,
       clientName: 'Authorized Client'

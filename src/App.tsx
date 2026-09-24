@@ -78,6 +78,7 @@ import { ContactModal } from './components/ContactModal';
 import { ManageKeysModal } from './components/ManageKeysModal';
 import { SettingsModal } from './components/SettingsModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
+import { AdminLoginModal } from './components/AdminLoginModal';
 import { LicenseLockScreen } from './components/LicenseLockScreen';
 import { checkCurrentLicenseStatus, LicenseStatusResult } from './services/licenseService';
 import { cn, sanitizeFilenameForFs, sanitizeStockFilename } from './lib/utils';
@@ -889,6 +890,7 @@ export default function App() {
   const [isExtensionsOpen, setIsExtensionsOpen] = useState(false);
   const [isManageKeysOpen, setIsManageKeysOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatusResult>(checkCurrentLicenseStatus);
 
   const refreshLicenseStatus = useCallback(() => {
@@ -2828,6 +2830,7 @@ export default function App() {
         setIsExtensionsOpen={setIsExtensionsOpen}
         setIsManageKeysOpen={setIsManageKeysOpen}
         onOpenAdmin={() => setIsAdminModalOpen(true)}
+        onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
         openExtensionsWithTab={(tab) => {
           setExtensionInitialTab(tab);
           setIsExtensionsOpen(true);

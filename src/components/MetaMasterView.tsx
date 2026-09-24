@@ -60,6 +60,7 @@ interface MetaMasterViewProps {
   setIsExtensionsOpen: (open: boolean) => void;
   setIsManageKeysOpen?: (open: boolean) => void;
   onOpenAdmin?: () => void;
+  onOpenAdminLogin?: () => void;
   openExtensionsWithTab?: (tab: 'hub' | 'image-to-prompt' | 'prompt-expander' | 'palette-scout' | 'upscaler-advisor') => void;
   handleFileSelectDirect: () => void;
   handleDirectorySelect: () => void;
@@ -98,6 +99,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   setIsExtensionsOpen,
   setIsManageKeysOpen,
   onOpenAdmin,
+  onOpenAdminLogin,
   openExtensionsWithTab,
   handleFileSelectDirect,
   handleDirectorySelect,
@@ -230,7 +232,15 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
         {/* Left: Brand Logo & Title */}
         <div className="flex items-center gap-3">
           {/* New Modern SS SMART META Custom Monogram Logo */}
-          <div className="relative w-9 h-9 flex items-center justify-center shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenAdminLogin) onOpenAdminLogin();
+              else if (onOpenAdmin) onOpenAdmin();
+            }}
+            className="relative w-9 h-9 flex items-center justify-center shrink-0 cursor-pointer hover:scale-105 active:scale-95 transition-transform"
+            title="👑 Admin Panel (লগইন করতে ক্লিক করুন: SHAMIM / 321)"
+          >
             <svg className="w-9 h-9 shrink-0 drop-shadow-[0_2px_8px_rgba(6,182,212,0.35)]" viewBox="0 0 36 36" fill="none">
               <rect width="36" height="36" rx="8" fill="url(#ssGradBg)" />
               {/* First S */}
@@ -247,7 +257,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 </linearGradient>
               </defs>
             </svg>
-          </div>
+          </button>
           <div className="flex flex-col">
             <h1 className={cn("text-2xl font-bold tracking-tight leading-none", isBlue ? "text-cyan-300 drop-shadow-[0_0_8px_rgba(34,211,238,0.4)]" : (isDark ? "text-white" : "text-slate-900"))}>SS SMART META</h1>
             <span className={cn("text-[11px] font-medium leading-tight mt-1", isBlue ? "text-blue-300 font-semibold" : (isDark ? "text-cyan-400" : "text-cyan-600 font-semibold"))}>Developed By Shamim</span>
@@ -351,6 +361,25 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           >
             <span className="text-[#ef4444] text-xs">▶</span>
             <span>YouTube</span>
+          </button>
+
+          {/* Admin Panel Quick Access */}
+          <button 
+            type="button"
+            onClick={() => {
+              if (onOpenAdminLogin) onOpenAdminLogin();
+              else if (onOpenAdmin) onOpenAdmin();
+            }}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-all cursor-pointer shadow-xs",
+              isBlue 
+                ? "bg-[#0c2246] hover:bg-[#143265] text-cyan-300 border border-cyan-400/80 shadow-[0_0_8px_rgba(6,182,212,0.3)]" 
+                : (isDark ? "bg-[#172535] hover:bg-[#203247] text-cyan-300 border border-cyan-500" : "bg-white hover:bg-cyan-50 text-cyan-700 border border-cyan-400 shadow-2xs")
+            )}
+            title="👑 Admin Panel (লগইন করুন: SHAMIM / 321)"
+          >
+            <Layers size={13} className="text-cyan-400" />
+            <span>Admin</span>
           </button>
         </div>
       </header>

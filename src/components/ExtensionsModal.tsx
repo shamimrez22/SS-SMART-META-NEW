@@ -42,6 +42,7 @@ import {
   formatBatchSimplePromptsText
 } from '../services/imageToPromptService';
 import { AdminPanelModal } from './AdminPanelModal';
+import { AdminLoginModal } from './AdminLoginModal';
 import { cn } from '../lib/utils';
 
 interface ExtensionsModalProps {
@@ -75,6 +76,7 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
   const [activeTab, setActiveTab] = useState<'hub' | 'image-to-prompt' | 'prompt-expander' | 'palette-scout' | 'upscaler-advisor'>(initialTab || 'hub');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -622,9 +624,14 @@ Return ONLY a JSON object:
       {/* 1. EXTENSIONS HUB HEADER */}
       <header className="px-5 py-3 border-b border-[#1b2d45] bg-[#091524] flex items-center justify-between shrink-0 shadow-sm z-20">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border-2 border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.25)]">
+          <button
+            type="button"
+            onClick={() => setIsAdminLoginOpen(true)}
+            className="w-10 h-10 rounded-xl bg-cyan-500/20 border-2 border-cyan-400/40 hover:border-cyan-300 hover:bg-cyan-500/30 flex items-center justify-center text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.25)] cursor-pointer hover:scale-105 active:scale-95 transition-all"
+            title="👑 Admin Panel Access (লগইন করতে ক্লিক করুন: SHAMIM / 321)"
+          >
             <Layers size={22} />
-          </div>
+          </button>
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base md:text-lg font-black text-white uppercase tracking-wider">
@@ -2117,6 +2124,17 @@ Return ONLY a JSON object:
         onClose={() => setIsAdminModalOpen(false)}
         showNotification={showNotification}
         onStatusChanged={onAdminStatusChanged}
+      />
+
+      {/* Admin Authentication Gate Modal */}
+      <AdminLoginModal
+        isOpen={isAdminLoginOpen}
+        onClose={() => setIsAdminLoginOpen(false)}
+        onSuccess={() => {
+          setIsAdminModalOpen(true);
+          if (onAdminStatusChanged) onAdminStatusChanged();
+        }}
+        showNotification={showNotification}
       />
     </div>
   );
