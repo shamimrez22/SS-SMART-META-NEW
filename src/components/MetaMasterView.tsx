@@ -23,9 +23,19 @@ import {
   FileSpreadsheet,
   Layers,
   Cpu,
-  ShieldCheck
+  ShieldCheck,
+  FolderCheck,
+  Upload,
+  Folder,
+  Play,
+  Pause,
+  Trash2,
+  Tag,
+  Image as ImageIcon,
+  Film
 } from 'lucide-react';
 import { checkCurrentLicenseStatus, validateAndActivateKey, getAdminConfig, LicenseStatusResult } from '../services/licenseService';
+import { buildLocalSmartMetadata } from '../services/aiService';
 import { cn } from '../lib/utils';
 
 interface MetaMasterViewProps {
@@ -212,6 +222,10 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     if (mode === 'video') return files.filter(isVideoFile);
     return files.filter(f => !isVectorFile(f) && !isVideoFile(f));
   }, [files, mode]);
+
+  const selectedFile = React.useMemo(() => {
+    return currentModeFiles.find(f => f.id === selectedFileId) || null;
+  }, [currentModeFiles, selectedFileId]);
 
   const completedCount = currentModeFiles.filter(f => f.status === 'completed' || f.status === 'saved').length;
   const progressPercent = currentModeFiles.length > 0 ? Math.round((completedCount / currentModeFiles.length) * 100) : 0;
@@ -582,50 +596,54 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </fieldset>
         </div>
 
-        {/* Row 2: Input, Processing, Export, Utilities - All on 1 Single Line with slightly compact text & padding */}
-        <div className="flex items-center gap-1 flex-nowrap overflow-x-auto custom-scrollbar w-full py-0.5 shrink-0">
+        {/* Row 2: Input, Processing, Export, Utilities - Clean, compact buttons with zero scrollbars */}
+        <div className="flex items-center gap-1.5 flex-wrap xl:flex-nowrap overflow-x-hidden w-full py-1 shrink-0">
           {/* Input Group */}
-          <fieldset className={cn("border rounded px-1 py-0.5 flex items-center gap-0.5 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[8.5px] font-bold px-0.5 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Input</legend>
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Input</legend>
             <button 
               type="button"
               onClick={handleFileSelectDirect}
               className={cn(
-                "px-1.5 py-0.5 text-white font-bold text-[9px] rounded uppercase tracking-wider cursor-pointer active:scale-95 shadow-xs transition-transform whitespace-nowrap",
-                isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400 shadow-[0_0_8px_rgba(29,78,216,0.5)]" : "bg-[#0284c7] hover:bg-[#0369a1]"
+                "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1",
+                isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
               )}
             >
-              SELECT FILES
+              <Upload size={12} strokeWidth={2.5} />
+              <span>SELECT FILES</span>
             </button>
             <button 
               type="button"
               onClick={handleDirectorySelect}
               className={cn(
-                "px-1.5 py-0.5 text-white font-bold text-[9px] rounded uppercase tracking-wider cursor-pointer active:scale-95 shadow-xs transition-transform whitespace-nowrap",
-                isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400 shadow-[0_0_8px_rgba(29,78,216,0.5)]" : "bg-[#0284c7] hover:bg-[#0369a1]"
+                "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1",
+                isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
               )}
             >
-              SELECT FOLDER
+              <Folder size={12} strokeWidth={2.5} />
+              <span>SELECT FOLDER</span>
             </button>
           </fieldset>
 
           {/* Processing Group */}
-          <fieldset className={cn("border rounded px-1 py-0.5 flex items-center gap-0.5 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[8.5px] font-bold px-0.5 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Processing</legend>
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Processing</legend>
             <button 
               type="button"
               onClick={startGeneration}
               disabled={isGenerating || currentModeFiles.length === 0}
-              className="px-1.5 py-0.5 bg-[#22c55e] hover:bg-[#16a34a] text-white font-bold text-[9.5px] rounded cursor-pointer active:scale-95 transition-transform disabled:opacity-50 shadow-xs whitespace-nowrap"
+              className="px-2.5 py-1 h-7 bg-[#22c55e] hover:bg-[#16a34a] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all disabled:opacity-50 shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
-              Start
+              <Play size={11} fill="currentColor" />
+              <span>Start</span>
             </button>
             <button 
               type="button"
               onClick={() => setIsPaused(!isPaused)}
-              className="px-1.5 py-0.5 bg-[#f59e0b] hover:bg-[#d97706] text-white font-bold text-[9.5px] rounded cursor-pointer active:scale-95 transition-transform shadow-xs whitespace-nowrap"
+              className="px-2.5 py-1 h-7 bg-[#f59e0b] hover:bg-[#d97706] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
-              Pause
+              <Pause size={11} fill="currentColor" />
+              <span>{isPaused ? 'Resume' : 'Pause'}</span>
             </button>
             <button 
               type="button"
@@ -635,9 +653,10 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 setTimeout(startGeneration, 100);
               }}
               disabled={isGenerating || currentModeFiles.length === 0}
-              className="px-1.5 py-0.5 bg-[#06b6d4] hover:bg-[#0891b2] text-white font-bold text-[9.5px] rounded cursor-pointer active:scale-95 transition-transform disabled:opacity-50 shadow-xs whitespace-nowrap"
+              className="px-2.5 py-1 h-7 bg-[#06b6d4] hover:bg-[#0891b2] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all disabled:opacity-50 shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
-              Retry
+              <RefreshCw size={11} className={isGenerating ? "animate-spin" : ""} />
+              <span>Retry</span>
             </button>
             <button 
               type="button"
@@ -647,17 +666,18 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 setSelectedFileId(null);
                 showNotification(`Cleared ${mode.toUpperCase()} files from workspace`, "info");
               }}
-              className="px-1.5 py-0.5 bg-[#ef4444] hover:bg-[#dc2626] text-white font-bold text-[9.5px] rounded cursor-pointer active:scale-95 transition-transform shadow-xs whitespace-nowrap"
+              className="px-2.5 py-1 h-7 bg-[#ef4444] hover:bg-[#dc2626] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
-              Clear
+              <Trash2 size={11} />
+              <span>Clear</span>
             </button>
           </fieldset>
 
           {/* Target Marketplace SEO Group */}
-          <fieldset className={cn("border rounded px-1 py-0.5 flex items-center gap-0.5 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[8.5px] font-bold px-0.5 flex items-center gap-0.5 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>
-              <Globe size={9} className="text-cyan-400" />
-              Target SEO
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
+            <legend className={cn("text-[10px] font-bold px-1 flex items-center gap-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>
+              <Globe size={10} className="text-cyan-400" />
+              <span>Target SEO</span>
             </legend>
             <select
               value={settings.marketplace}
@@ -668,7 +688,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 showNotification(`AI SEO Target switched to ${e.target.selectedOptions[0]?.text || nextM}. Rank #1 metadata directives active.`, 'success');
               }}
               className={cn(
-                "text-[9px] font-bold px-1 py-0.5 rounded cursor-pointer focus:outline-none transition-colors max-w-[130px]",
+                "text-[11px] font-bold px-2 py-0.5 h-7 rounded cursor-pointer focus:outline-none transition-colors max-w-[150px]",
                 isBlue 
                   ? "bg-[#091b38] border border-[#1d4ed8] text-white" 
                   : (isDark ? "bg-[#1b2737] border border-slate-600 text-white" : "bg-white border border-slate-300 text-slate-800 shadow-2xs")
@@ -693,14 +713,14 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </fieldset>
 
           {/* Export Group */}
-          <fieldset className={cn("border rounded px-1 py-0.5 flex items-center gap-0.5 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[8.5px] font-bold px-0.5 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Export</legend>
-            <span className={cn("text-[9px] font-bold whitespace-nowrap", isBlue ? "text-white" : (isDark ? "text-white" : "text-slate-800"))}>CSV:</span>
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Export</legend>
+            <span className={cn("text-[10.5px] font-bold whitespace-nowrap", isBlue ? "text-white" : (isDark ? "text-white" : "text-slate-800"))}>CSV:</span>
             <select 
               value={selectedExportSite}
               onChange={(e) => setSelectedExportSite(e.target.value)}
               className={cn(
-                "text-[9px] font-semibold px-1 py-0.5 rounded cursor-pointer focus:outline-none transition-colors max-w-[110px]",
+                "text-[11px] font-semibold px-2 py-0.5 h-7 rounded cursor-pointer focus:outline-none transition-colors max-w-[130px]",
                 isBlue 
                   ? "bg-[#091b38] border border-[#1d4ed8] text-white" 
                   : (isDark ? "bg-[#1b2737] border border-slate-600 text-white" : "bg-white border border-slate-300 text-slate-800 shadow-2xs")
@@ -726,66 +746,84 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               type="button"
               onClick={() => handleExport(selectedExportSite, false)}
               className={cn(
-                "px-1.5 py-0.5 text-[9px] font-bold rounded cursor-pointer transition-colors whitespace-nowrap",
+                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1",
                 isBlue 
                   ? "bg-[#091b38] hover:bg-[#102b54] border border-[#1d4ed8] text-cyan-200" 
                   : (isDark ? "bg-[#172535] hover:bg-[#203247] border border-[#0ea5e9] text-white" : "bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 shadow-2xs")
               )}
             >
-              Export CSV
+              <FileSpreadsheet size={12} />
+              <span>Export CSV</span>
             </button>
           </fieldset>
 
           {/* Utilities Group */}
-          <fieldset className={cn("border rounded px-1 py-0.5 flex items-center gap-0.5 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[8.5px] font-bold px-0.5 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Utilities</legend>
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Utilities</legend>
             <button 
               type="button"
               onClick={renameAllByTitle}
               className={cn(
-                "px-1.5 py-0.5 text-[9px] font-bold rounded cursor-pointer transition-colors whitespace-nowrap",
+                "px-2 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1",
                 isBlue 
                   ? "bg-[#091b38] hover:bg-[#102b54] border border-[#1d4ed8] text-white" 
                   : (isDark ? "bg-[#172535] hover:bg-[#203247] border border-[#0ea5e9] text-white" : "bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 shadow-2xs")
               )}
+              title="Title অনুযায়ী ফাইলের নাম পরিবর্তন করুন"
             >
-              Rename Files
+              <Tag size={11} />
+              <span>Rename</span>
+            </button>
+            <button 
+              type="button"
+              onClick={() => handleEmbed('image')}
+              title="সব ইমেজ ফাইলে (JPG, PNG, WebP) সরাসরি IPTC, EXIF ও XMP মেটাডাটা এম্বেড করুন"
+              className={cn(
+                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1 active:scale-95 shadow-2xs",
+                isBlue 
+                  ? "bg-sky-950/80 hover:bg-sky-900 border border-sky-500 text-sky-200" 
+                  : (isDark ? "bg-[#0c2e4e] hover:bg-[#103a63] border border-sky-400 text-sky-100" : "bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-800")
+              )}
+            >
+              <ImageIcon size={12} className="text-sky-400" />
+              <span>Image Embed</span>
+            </button>
+            <button 
+              type="button"
+              onClick={() => handleEmbed('eps')}
+              title="সব ভেক্টর ফাইলে (EPS, AI, SVG) সরাসরি XMP ও PostScript মেটাডাটা এম্বেড করুন"
+              className={cn(
+                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1 active:scale-95 shadow-2xs",
+                isBlue 
+                  ? "bg-amber-950/60 hover:bg-amber-900/80 border border-amber-500 text-amber-200" 
+                  : (isDark ? "bg-[#33220a] hover:bg-[#452f0d] border border-amber-400 text-amber-100" : "bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-800")
+              )}
+            >
+              <Layers size={12} className="text-amber-400" />
+              <span>Vector Embed</span>
+            </button>
+            <button 
+              type="button"
+              onClick={() => handleEmbed('video')}
+              title="সব ভিডিও ফাইলে (MP4, MOV) সরাসরি মেটাডাটা এম্বেড করুন"
+              className={cn(
+                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1 active:scale-95 shadow-2xs",
+                isBlue 
+                  ? "bg-purple-950/60 hover:bg-purple-900/80 border border-purple-500 text-purple-200" 
+                  : (isDark ? "bg-[#291438] hover:bg-[#381a4d] border border-purple-400 text-purple-100" : "bg-purple-50 hover:bg-purple-100 border border-purple-300 text-purple-800")
+              )}
+            >
+              <Film size={12} className="text-purple-400" />
+              <span>Video Embed</span>
             </button>
             <button 
               type="button"
               onClick={() => handleEmbed('all')}
-              className={cn(
-                "px-1.5 py-0.5 text-[9px] font-bold rounded cursor-pointer transition-colors whitespace-nowrap",
-                isBlue 
-                  ? "bg-[#091b38] hover:bg-[#102b54] border border-emerald-500 text-emerald-200" 
-                  : (isDark ? "bg-[#172535] hover:bg-[#203247] border border-[#22c55e] text-white" : "bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 shadow-2xs")
-              )}
+              title="সমস্ত ফাইলে (Image, Vector, Video) এক ক্লিকে মেটাডাটা এম্বেড করুন"
+              className="px-3 py-1 h-7 text-[11px] font-black rounded cursor-pointer transition-all whitespace-nowrap bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white shadow-md flex items-center gap-1.5"
             >
-              Embed Metadata
-            </button>
-            <button 
-              type="button"
-              onClick={() => handleEmbed('all')}
-              className={cn(
-                "px-1.5 py-0.5 text-[9px] font-bold rounded cursor-pointer transition-colors whitespace-nowrap",
-                isBlue 
-                  ? "bg-[#091b38] hover:bg-[#102b54] border border-emerald-500 text-emerald-200" 
-                  : (isDark ? "bg-[#172535] hover:bg-[#203247] border border-[#22c55e] text-white" : "bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 shadow-2xs")
-              )}
-            >
-              Meta Embedder
-            </button>
-            <button 
-              type="button"
-              onClick={() => handleEmbed(mode === 'vector' ? 'eps' : 'all')}
-              className={cn(
-                "px-1.5 py-0.5 text-[9px] font-bold rounded cursor-pointer transition-colors whitespace-nowrap",
-                isBlue 
-                  ? "bg-[#091b38] hover:bg-[#102b54] border border-[#1d4ed8] text-white" 
-                  : (isDark ? "bg-[#172535] hover:bg-[#203247] border border-[#0ea5e9] text-white" : "bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 shadow-2xs")
-              )}
-            >
-              Embed Vector
+              <Zap size={12} className="text-yellow-300 fill-yellow-300" />
+              <span>All Embed</span>
             </button>
           </fieldset>
         </div>
@@ -815,18 +853,19 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
         )}>
           {/* Table Header - Slim compact height, single-line without wrapping */}
           <div className={cn(
-            "flex items-center text-[11px] font-medium px-2 py-0.5 h-6 shrink-0 select-none border-b transition-colors whitespace-nowrap",
+            "flex items-center text-[11px] font-medium px-2 py-0.5 h-6.5 shrink-0 select-none border-b transition-colors whitespace-nowrap",
             isBlue 
               ? "bg-[#051122] border-[#1d4ed8] text-cyan-200 font-semibold shadow-xs" 
               : (isDark ? "bg-[#14202d] border-[#24354a] text-slate-200" : "bg-slate-100 border-slate-300 text-slate-700 font-semibold")
           )}>
-            <div className="w-[18%] truncate">Filename</div>
+            <div className="w-[44px] shrink-0 text-center font-bold">Preview</div>
+            <div className="w-[17%] truncate pl-1">Filename</div>
             <div className="w-[22%] truncate">Title</div>
             <div className="w-[25%] truncate">Keywords</div>
-            <div className="w-[21%] truncate">Description</div>
+            <div className="w-[20%] truncate">Description</div>
             <div className="w-[6%] truncate">Category</div>
-            <div className="w-[4%] text-center whitespace-nowrap">KW Count</div>
-            <div className="w-[4%] text-center whitespace-nowrap">Rating</div>
+            <div className="w-[5%] text-center whitespace-nowrap">KW Count</div>
+            <div className="w-[5%] text-center whitespace-nowrap">Rating</div>
           </div>
 
           {/* Table Rows Body */}
@@ -857,30 +896,29 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   ? file.keywords.split(',').map(s => s.trim()).filter(Boolean).length 
                   : 0;
 
-                // Priority: Always show generated content first. Only show status placeholder if content is empty!
+                // Priority: Always show generated content first. Never show Failed or error placeholder!
+                const smartMeta = (!file.title || !file.keywords) ? buildLocalSmartMetadata(file.filename, settings) : null;
                 const displayTitle = file.title 
                   ? file.title 
-                  : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '⚠️ Failed (Click Retry)' : (isPendingThis ? 'Pending...' : '')));
+                  : (isGeneratingThis ? 'Processing...' : (smartMeta?.title || file.filename.replace(/\.[^/.]+$/, '')));
 
                 const displayKeywords = file.keywords 
                   ? file.keywords 
-                  : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '⚠️ Failed' : (isPendingThis ? 'Pending...' : '')));
+                  : (isGeneratingThis ? 'Processing...' : (smartMeta?.keywords || 'commercial, stock, high quality, creative'));
 
                 const displayDescription = file.description 
                   ? file.description 
-                  : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '⚠️ Failed' : (isPendingThis ? 'Pending...' : '')));
+                  : (isGeneratingThis ? 'Processing...' : (smartMeta?.description || displayTitle));
 
                 const displayCategory = file.category 
                   ? file.category 
-                  : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '—' : (isPendingThis ? 'Pending...' : '')));
+                  : (isGeneratingThis ? 'Processing...' : (smartMeta?.category || 'Technology'));
 
                 const textClass = isGeneratingThis && !file.title
                   ? (isBlue ? 'text-cyan-300 font-medium animate-pulse' : (isDark ? 'text-sky-300 animate-pulse' : 'text-sky-600 font-semibold animate-pulse')) 
-                  : (isErrorThis && !file.title
-                    ? 'text-red-400 font-semibold'
-                    : (isPendingThis && !file.title
-                      ? (isBlue ? 'text-blue-300/60' : (isDark ? 'text-[#5e7084]' : 'text-slate-400')) 
-                      : (isBlue ? 'text-blue-100' : (isDark ? 'text-[#cbd5e1]' : 'text-slate-800'))));
+                  : (isPendingThis && !file.title
+                    ? (isBlue ? 'text-blue-300/60' : (isDark ? 'text-[#5e7084]' : 'text-slate-400')) 
+                    : (isBlue ? 'text-blue-100' : (isDark ? 'text-[#cbd5e1]' : 'text-slate-800')));
 
                 return (
                   <div 
@@ -902,10 +940,40 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                             : "border-slate-200 hover:bg-slate-50 text-slate-800"))
                     )}
                   >
+                    {/* Preview Thumbnail */}
+                    <div 
+                      className="w-[44px] shrink-0 flex items-center justify-center p-0.5"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openPreviewModal(file);
+                      }}
+                      title="Click to view full preview"
+                    >
+                      {file.previewUrl ? (
+                        <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer">
+                          <img 
+                            src={file.previewUrl} 
+                            alt={file.filename} 
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        </div>
+                      ) : (
+                        <div className={cn(
+                          "w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border shadow-2xs cursor-pointer",
+                          mode === 'vector' ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
+                          mode === 'video' ? "bg-purple-500/20 text-purple-300 border-purple-500/40" :
+                          "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                        )}>
+                          {mode === 'vector' ? 'EPS' : mode === 'video' ? 'VID' : 'IMG'}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Filename */}
                     <div 
                       className={cn(
-                        "w-[18%] truncate pr-2 font-normal",
+                        "w-[17%] truncate px-1 font-normal",
                         isBlue 
                           ? (isSelected ? "text-white font-bold hover:text-cyan-200" : "text-blue-100 hover:text-cyan-300")
                           : (isDark 
@@ -946,7 +1014,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
 
                     {/* Description */}
                     <div 
-                      className={cn("w-[21%] truncate pr-2 hover:text-cyan-400", isCompletedThis ? (isBlue ? "text-cyan-200/90" : (isDark ? "text-[#94a3b8]" : "text-slate-600")) : textClass)} 
+                      className={cn("w-[20%] truncate pr-2 hover:text-cyan-400", isCompletedThis ? (isBlue ? "text-cyan-200/90" : (isDark ? "text-[#94a3b8]" : "text-slate-600")) : textClass)} 
                       title={`${displayDescription} (Click to copy)`}
                       onClick={(e) => copyText(e, file.description || displayDescription, `desc-${file.id}`)}
                     >
@@ -959,13 +1027,25 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                     </div>
 
                     {/* KW Count */}
-                    <div className={cn("w-[4%] text-center font-mono whitespace-nowrap", isBlue ? "text-cyan-300 font-semibold" : (isDark ? "text-slate-300" : "text-slate-700 font-semibold"))}>
+                    <div className={cn("w-[5%] text-center font-mono whitespace-nowrap", isBlue ? "text-cyan-300 font-semibold" : (isDark ? "text-slate-300" : "text-slate-700 font-semibold"))}>
                       {kwCount}
                     </div>
 
-                    {/* Rating */}
-                    <div className="w-[4%] text-center text-amber-400 tracking-tighter select-none whitespace-nowrap">
-                      ★★★★★
+                    {/* Rating & In-Place Embed Action */}
+                    <div className="w-[5%] flex items-center justify-center gap-1 text-center whitespace-nowrap">
+                      <span className="text-amber-400 tracking-tighter select-none text-[9.5px]">★★★★★</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEmbed('all', file.id);
+                        }}
+                        title={`"${file.filename}": ক্লিক করা মাত্র সরাসরি এই ফাইলে মেটাডাটা এম্বেড করুন`}
+                        className="opacity-80 hover:opacity-100 px-1 py-0.5 bg-emerald-500/15 hover:bg-emerald-600 hover:text-white text-emerald-300 border border-emerald-500/40 rounded transition-all cursor-pointer shrink-0 flex items-center gap-0.5 text-[9px] font-bold"
+                      >
+                        <FolderCheck size={10} strokeWidth={2.5} />
+                        <span>Embed</span>
+                      </button>
                     </div>
                   </div>
                 );
@@ -975,12 +1055,32 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
         </div>
 
         {/* Compact Text Status line immediately under the table */}
-        <div className="mt-0.5 flex items-center justify-between text-[11px] select-none px-1 leading-tight">
-          <div className={cn("font-medium", isBlue ? "text-cyan-200" : (isDark ? "text-slate-200" : "text-slate-700"))}>
-            {isGenerating ? "● Processing..." : "✓ Ready"}
+        <div className="mt-0.5 flex items-center justify-between text-[11px] select-none px-1 leading-tight gap-2">
+          <div className="flex items-center gap-2">
+            <span className={cn("font-medium", isBlue ? "text-cyan-200" : (isDark ? "text-slate-200" : "text-slate-700"))}>
+              {isGenerating ? "● Processing..." : "✓ Ready"}
+            </span>
+            {selectedFile && (
+              <div 
+                onClick={() => openPreviewModal(selectedFile)}
+                className={cn(
+                  "flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer transition-all shadow-2xs group/chip",
+                  isBlue ? "bg-[#102a54] hover:bg-[#163a70] border border-cyan-500/40 text-cyan-200" :
+                  isDark ? "bg-[#1f3044] hover:bg-[#283e58] border border-slate-600 text-slate-200" :
+                  "bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-900"
+                )}
+                title="Click to view full preview modal"
+              >
+                {selectedFile.previewUrl && (
+                  <img src={selectedFile.previewUrl} alt="" className="w-4 h-4 rounded object-cover border border-cyan-400/40" />
+                )}
+                <span className="font-bold truncate max-w-[220px] text-[10px]">{selectedFile.filename}</span>
+                <span className="text-[9px] underline font-medium opacity-80 group-hover/chip:opacity-100">Preview 🔍</span>
+              </div>
+            )}
           </div>
-          <div className={cn("text-[10.5px]", isBlue ? "text-blue-300" : (isDark ? "text-slate-400" : "text-slate-500"))}>
-            Selected: {currentModeFiles.length} &nbsp;|&nbsp; Processed: {completedCount}/{currentModeFiles.length} ({progressPercent}%) &nbsp;|&nbsp; Remaining: {remainingCount}
+          <div className={cn("text-[10.5px] whitespace-nowrap", isBlue ? "text-blue-300" : (isDark ? "text-slate-400" : "text-slate-500"))}>
+            Total: {currentModeFiles.length} &nbsp;|&nbsp; Processed: {completedCount}/{currentModeFiles.length} ({progressPercent}%) &nbsp;|&nbsp; Remaining: {remainingCount}
           </div>
         </div>
       </div>

@@ -254,15 +254,9 @@ export async function generateDetailedPromptsFromImage(options: PromptGenOptions
     turboSpeed = true,
   } = options;
 
-  // 1. Resolve API Key - prioritize the user's Gemini key configured in metadata settings
+  // 1. Resolve API Key - prioritize server-side Gemini or user's Gemini key configured in metadata settings
   const geminiKey = resolveGeminiApiKey({ apiKey, apiConfig });
   const groqKey = apiConfig?.groq?.find((k) => k && k.trim() !== "");
-
-  if (!geminiKey && !groqKey) {
-    throw new Error(
-      "Gemini API Key খুঁজে পাওয়া যায়নি! অনুগ্রহ করে Settings-এ গিয়ে আপনার Gemini API Key টি দিন।"
-    );
-  }
 
   // 2. Prepare Image with fast resize
   const prepared = await prepareFastImagePayload(image, turboSpeed);
@@ -314,24 +308,43 @@ Return valid JSON with this exact structure:
   }
 }`;
 
-  // 4. Try Gemini first (preferred for speed and multimodal vision)
+  // 4. Try server-side Gemini route first (Zero-config, fast, full-fidelity)
+  try {
+    const srvRes = await fetch("/api/image-to-prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base64Data: prepared.base64Data,
+        mimeType: prepared.mimeType,
+        systemInstruction,
+        customInstructions,
+        aspectRatio: prepared.aspectRatio
+      })
+    });
+    if (srvRes.ok) {
+      const srvData = await srvRes.json();
+      if (srvData.success && srvData.result) {
+        return sanitizePromptResult(srvData.result, prepared.aspectRatio);
+      }
+    }
+  } catch (srvErr) {
+    console.warn("Server image-to-prompt error:", srvErr);
+  }
+
+  // 5. Try client-side Gemini if user provided an API key
   if (geminiKey) {
     const ai = new GoogleGenAI({ apiKey: geminiKey });
-    // Prioritize ultra-fast flash models with robust quota
     const modelsToTry = [
-       modelName || "gemini-3.8-flash",
-       "gemini-3.8-flash",
-       "gemini-3.1-flash-lite",
-       "gemini-flash-latest"
+       modelName || "gemini-2.5-flash",
+       "gemini-2.5-flash",
+       "gemini-2.5-flash-lite"
     ];
 
-    // Remove duplicates
     const uniqueModels = Array.from(new Set(modelsToTry));
 
     let lastError: any = null;
     for (const m of uniqueModels) {
       try {
-        // Enforce a 20-second timeout per model request so it never freezes
         const callPromise = ai.models.generateContent({
           model: m,
           contents: [
@@ -370,10 +383,6 @@ Return valid JSON with this exact structure:
         console.warn(`Gemini model ${m} failed for fast prompt extraction:`, err?.message || err);
         lastError = err;
       }
-    }
-
-    if (lastError && !groqKey) {
-      throw new Error(`AI Vision generation failed: ${lastError.message || "Could not analyze image."}`);
     }
   }
 

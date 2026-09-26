@@ -454,17 +454,17 @@ export const AssetInspector: React.FC<AssetInspectorProps> = ({
         <button
           onClick={() => regenerateSingleFile(file.id)}
           disabled={file.status === 'generating' || file.status === 'retrying'}
-          className="flex-1 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 active:scale-98 text-white rounded font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+          className="flex-1 px-3 py-2 h-8.5 bg-blue-600 hover:bg-blue-500 active:scale-98 text-white rounded font-bold uppercase tracking-wider text-[11px] flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50"
           title="Generate AI Metadata"
         >
           {file.status === 'generating' || file.status === 'retrying' ? (
             <>
-              <RefreshCw size={11} className="animate-spin" />
+              <RefreshCw size={13} className="animate-spin" />
               <span>Generating...</span>
             </>
           ) : (
             <>
-              <Sparkles size={11} />
+              <Sparkles size={13} />
               <span>{file.title ? 'Regenerate AI' : 'Generate AI'}</span>
             </>
           )}
@@ -472,19 +472,19 @@ export const AssetInspector: React.FC<AssetInspectorProps> = ({
 
         <button
           onClick={() => downloadWithMetadata(file.id)}
-          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white rounded font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+          className="px-3.5 py-2 h-8.5 bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white rounded font-bold uppercase tracking-wider text-[11px] flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
           title="কোনো ডাউনলোড ছাড়াই সরাসরি এই আসল ফাইলে ৫-স্টার মেটাডাটা সেভ করুন"
         >
-          <FolderCheck size={12} strokeWidth={2.5} />
+          <FolderCheck size={13} strokeWidth={2.5} />
           <span>Embed & Save</span>
         </button>
 
         <button
           onClick={() => deleteFile(file.id)}
-          className="p-1.5 bg-slate-800 hover:bg-red-500/20 text-slate-300 hover:text-red-400 rounded border border-slate-700 hover:border-red-500/40 transition-all cursor-pointer"
+          className="p-2 h-8.5 w-8.5 flex items-center justify-center bg-slate-800 hover:bg-red-500/20 text-slate-300 hover:text-red-400 rounded border border-slate-700 hover:border-red-500/40 transition-all cursor-pointer"
           title="Delete this asset"
         >
-          <Trash2 size={12} />
+          <Trash2 size={13} />
         </button>
       </div>
     </div>

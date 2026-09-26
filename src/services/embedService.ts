@@ -1397,7 +1397,19 @@ export async function prepareEmbeddedBlob(
 ): Promise<Blob> {
   try {
     const filename = metadata.filename || (file instanceof File ? file.name : 'asset.jpg');
-    const ext = (metadata.fileType || filename.split('.').pop() || '').toLowerCase();
+    let ext = (metadata.fileType || filename.split('.').pop() || '').toLowerCase();
+
+    // Resolve abstract/generic types
+    if (['image', 'photo'].includes(ext)) {
+      const realExt = (filename.split('.').pop() || 'jpg').toLowerCase();
+      ext = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif'].includes(realExt) ? realExt : 'jpg';
+    } else if (['vector'].includes(ext)) {
+      const realExt = (filename.split('.').pop() || 'eps').toLowerCase();
+      ext = ['eps', 'ai', 'svg'].includes(realExt) ? realExt : 'eps';
+    } else if (['video', 'footage'].includes(ext)) {
+      const realExt = (filename.split('.').pop() || 'mp4').toLowerCase();
+      ext = ['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', 'wmv'].includes(realExt) ? realExt : 'mp4';
+    }
 
     if (['jpg', 'jpeg'].includes(ext)) {
       return await embedMetadataInImageBlob(file, metadata);
@@ -1416,10 +1428,22 @@ export async function prepareEmbeddedBlob(
     if (['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', 'wmv'].includes(ext)) {
       return await embedMetadataInMp4Blob(file as File, metadata);
     }
+
+    // Check MIME type fallbacks
+    if (file.type === 'image/jpeg' || file.type === 'image/jpg') {
+      return await embedMetadataInImageBlob(file, metadata);
+    }
+    if (file.type === 'image/png') {
+      return await embedMetadataInPngBlob(file, metadata);
+    }
+    if (file.type === 'application/postscript' || file.type === 'image/x-eps') {
+      return await embedMetadataInEpsBlob(file, metadata);
+    }
+
     // Other binary formats
     return file;
   } catch (err) {
-    console.error("prepareEmbeddedBlob error:", err);
+    console.warn("prepareEmbeddedBlob warning:", err);
     return file;
   }
 }
