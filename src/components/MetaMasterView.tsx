@@ -85,6 +85,8 @@ interface MetaMasterViewProps {
   renameAllByTitle: () => void;
   handleEmbed: (type: 'image' | 'video' | 'eps' | 'all', targetSingleId?: string) => void | Promise<void>;
   showNotification: (msg: string, type: 'info' | 'error' | 'success') => void;
+  folderName?: string;
+  directoryHandle?: any;
 }
 
 export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
@@ -124,6 +126,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   renameAllByTitle,
   handleEmbed,
   showNotification,
+  folderName,
+  directoryHandle,
 }) => {
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
 
@@ -222,6 +226,11 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     if (mode === 'video') return files.filter(isVideoFile);
     return files.filter(f => !isVectorFile(f) && !isVideoFile(f));
   }, [files, mode]);
+
+  const imageFilesCount = React.useMemo(() => files.filter(f => !isVectorFile(f) && !isVideoFile(f)).length, [files]);
+  const vectorFilesCount = React.useMemo(() => files.filter(isVectorFile).length, [files]);
+  const videoFilesCount = React.useMemo(() => files.filter(isVideoFile).length, [files]);
+  const allFilesCount = files.length;
 
   const selectedFile = React.useMemo(() => {
     return currentModeFiles.find(f => f.id === selectedFileId) || null;
@@ -367,6 +376,22 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           >
             <span className="text-[#22c55e] text-xs">💬</span>
             <span>WhatsApp</span>
+          </button>
+
+          {/* Full Window Direct Disk Button */}
+          <button 
+            type="button"
+            onClick={() => window.open(window.location.href, '_blank')}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-all cursor-pointer shadow-xs",
+              isBlue 
+                ? "bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white border border-cyan-400" 
+                : (isDark ? "bg-[#0284c7] hover:bg-[#0369a1] text-white border border-cyan-400" : "bg-cyan-600 hover:bg-cyan-700 text-white shadow-xs")
+            )}
+            title="Open in full browser tab for direct 100% in-place disk write without iframe restrictions"
+          >
+            <ExternalLink size={12} />
+            <span>Full Window</span>
           </button>
 
           {/* YouTube Channel */}
@@ -623,6 +648,16 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               <Folder size={12} strokeWidth={2.5} />
               <span>SELECT FOLDER</span>
             </button>
+            {folderName && (
+              <span 
+                title={`Connected folder: ${folderName} (Direct in-place disk write active)`}
+                className="px-2 py-0.5 h-7 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 font-mono text-[10.5px] font-bold flex items-center gap-1 shrink-0 animate-in fade-in"
+              >
+                <FolderCheck size={12} className="text-emerald-400 shrink-0" />
+                <span className="truncate max-w-[130px]">{folderName}</span>
+                <span className="text-[8.5px] bg-emerald-500/40 text-emerald-200 px-1 rounded ml-0.5">IN-PLACE</span>
+              </span>
+            )}
           </fieldset>
 
           {/* Processing Group */}
@@ -757,6 +792,101 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             </button>
           </fieldset>
 
+          {/* Dedicated Embed Metadata Action Group */}
+          <fieldset className={cn(
+            "border rounded px-2 py-0.5 flex items-center gap-1.5 shrink-0 flex-nowrap transition-colors",
+            isBlue 
+              ? "border-emerald-500/80 bg-[#082832]/90 shadow-[0_1px_8px_rgba(16,185,129,0.3)]" 
+              : (isDark ? "border-emerald-500/70 bg-[#0f2d27]/80" : "border-emerald-400 bg-emerald-50/50 shadow-2xs")
+          )}>
+            <legend className={cn(
+              "text-[10px] font-black px-1.5 whitespace-nowrap flex items-center gap-1",
+              isBlue ? "text-emerald-300" : (isDark ? "text-emerald-300" : "text-emerald-700")
+            )}>
+              <Sparkles size={11} className="text-emerald-400 animate-pulse" />
+              <span>Embed Metadata</span>
+            </legend>
+            
+            {/* 1. Image Embed */}
+            <button 
+              type="button"
+              onClick={() => handleEmbed('image')}
+              title={`সব ইমেজ ফাইলে (JPG, PNG, WebP) সরাসরি IPTC, EXIF ও XMP মেটাডাটা এম্বেড করুন (${imageFilesCount}টি ফাইল)`}
+              className={cn(
+                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 active:scale-95 shadow-2xs hover:brightness-110",
+                isBlue 
+                  ? "bg-sky-950/90 hover:bg-sky-900 border border-sky-400 text-sky-100" 
+                  : (isDark ? "bg-[#0c2e4e] hover:bg-[#103a63] border border-sky-400 text-sky-100" : "bg-sky-50 hover:bg-sky-100 border border-sky-400 text-sky-900")
+              )}
+            >
+              <ImageIcon size={13} className="text-sky-400 shrink-0" />
+              <span>Image Embed</span>
+              {imageFilesCount > 0 && (
+                <span className="px-1 py-0.2 text-[9.5px] rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40 font-mono">
+                  {imageFilesCount}
+                </span>
+              )}
+            </button>
+
+            {/* 2. Vector Embed */}
+            <button 
+              type="button"
+              onClick={() => handleEmbed('eps')}
+              title={`সব ভেক্টর ফাইলে (EPS, AI, SVG) সরাসরি XMP ও PostScript মেটাডাটা এম্বেড করুন (${vectorFilesCount}টি ফাইল)`}
+              className={cn(
+                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 active:scale-95 shadow-2xs hover:brightness-110",
+                isBlue 
+                  ? "bg-amber-950/80 hover:bg-amber-900 border border-amber-400 text-amber-100" 
+                  : (isDark ? "bg-[#33220a] hover:bg-[#452f0d] border border-amber-400 text-amber-100" : "bg-amber-50 hover:bg-amber-100 border border-amber-400 text-amber-900")
+              )}
+            >
+              <Layers size={13} className="text-amber-400 shrink-0" />
+              <span>Vector Embed</span>
+              {vectorFilesCount > 0 && (
+                <span className="px-1 py-0.2 text-[9.5px] rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono">
+                  {vectorFilesCount}
+                </span>
+              )}
+            </button>
+
+            {/* 3. Video Embed */}
+            <button 
+              type="button"
+              onClick={() => handleEmbed('video')}
+              title={`সব ভিডিও ফাইলে (MP4, MOV) সরাসরি মেটাডাটা এম্বেড করুন (${videoFilesCount}টি ফাইল)`}
+              className={cn(
+                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 active:scale-95 shadow-2xs hover:brightness-110",
+                isBlue 
+                  ? "bg-purple-950/80 hover:bg-purple-900 border border-purple-400 text-purple-100" 
+                  : (isDark ? "bg-[#291438] hover:bg-[#381a4d] border border-purple-400 text-purple-100" : "bg-purple-50 hover:bg-purple-100 border border-purple-400 text-purple-900")
+              )}
+            >
+              <Film size={13} className="text-purple-400 shrink-0" />
+              <span>Video Embed</span>
+              {videoFilesCount > 0 && (
+                <span className="px-1 py-0.2 text-[9.5px] rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 font-mono">
+                  {videoFilesCount}
+                </span>
+              )}
+            </button>
+
+            {/* 4. All Embed */}
+            <button 
+              type="button"
+              onClick={() => handleEmbed('all')}
+              title={`সমস্ত ফাইলে (Image, Vector, Video) এক ক্লিকে সরাসরি মেটাডাটা এম্বেড করুন (${allFilesCount}টি ফাইল)`}
+              className="px-3 py-1 h-7 text-[11px] font-black rounded cursor-pointer transition-all whitespace-nowrap bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)] border border-emerald-300/40 flex items-center gap-1.5"
+            >
+              <Zap size={13} className="text-yellow-300 fill-yellow-300" />
+              <span>All Embed</span>
+              {allFilesCount > 0 && (
+                <span className="px-1.5 py-0.2 text-[9.5px] font-bold rounded-full bg-white/20 text-white font-mono">
+                  {allFilesCount}
+                </span>
+              )}
+            </button>
+          </fieldset>
+
           {/* Utilities Group */}
           <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
             <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Utilities</legend>
@@ -773,57 +903,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             >
               <Tag size={11} />
               <span>Rename</span>
-            </button>
-            <button 
-              type="button"
-              onClick={() => handleEmbed('image')}
-              title="সব ইমেজ ফাইলে (JPG, PNG, WebP) সরাসরি IPTC, EXIF ও XMP মেটাডাটা এম্বেড করুন"
-              className={cn(
-                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1 active:scale-95 shadow-2xs",
-                isBlue 
-                  ? "bg-sky-950/80 hover:bg-sky-900 border border-sky-500 text-sky-200" 
-                  : (isDark ? "bg-[#0c2e4e] hover:bg-[#103a63] border border-sky-400 text-sky-100" : "bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-800")
-              )}
-            >
-              <ImageIcon size={12} className="text-sky-400" />
-              <span>Image Embed</span>
-            </button>
-            <button 
-              type="button"
-              onClick={() => handleEmbed('eps')}
-              title="সব ভেক্টর ফাইলে (EPS, AI, SVG) সরাসরি XMP ও PostScript মেটাডাটা এম্বেড করুন"
-              className={cn(
-                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1 active:scale-95 shadow-2xs",
-                isBlue 
-                  ? "bg-amber-950/60 hover:bg-amber-900/80 border border-amber-500 text-amber-200" 
-                  : (isDark ? "bg-[#33220a] hover:bg-[#452f0d] border border-amber-400 text-amber-100" : "bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-800")
-              )}
-            >
-              <Layers size={12} className="text-amber-400" />
-              <span>Vector Embed</span>
-            </button>
-            <button 
-              type="button"
-              onClick={() => handleEmbed('video')}
-              title="সব ভিডিও ফাইলে (MP4, MOV) সরাসরি মেটাডাটা এম্বেড করুন"
-              className={cn(
-                "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1 active:scale-95 shadow-2xs",
-                isBlue 
-                  ? "bg-purple-950/60 hover:bg-purple-900/80 border border-purple-500 text-purple-200" 
-                  : (isDark ? "bg-[#291438] hover:bg-[#381a4d] border border-purple-400 text-purple-100" : "bg-purple-50 hover:bg-purple-100 border border-purple-300 text-purple-800")
-              )}
-            >
-              <Film size={12} className="text-purple-400" />
-              <span>Video Embed</span>
-            </button>
-            <button 
-              type="button"
-              onClick={() => handleEmbed('all')}
-              title="সমস্ত ফাইলে (Image, Vector, Video) এক ক্লিকে মেটাডাটা এম্বেড করুন"
-              className="px-3 py-1 h-7 text-[11px] font-black rounded cursor-pointer transition-all whitespace-nowrap bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white shadow-md flex items-center gap-1.5"
-            >
-              <Zap size={12} className="text-yellow-300 fill-yellow-300" />
-              <span>All Embed</span>
             </button>
           </fieldset>
         </div>
@@ -891,20 +970,26 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 const isCompletedThis = file.status === 'completed' || file.status === 'saved';
                 const isErrorThis = file.status === 'error';
 
-                // Always calculate actual keyword count if keywords exist
-                const kwCount = file.keywords 
-                  ? file.keywords.split(',').map(s => s.trim()).filter(Boolean).length 
-                  : 0;
-
                 // Priority: Always show generated content first. Never show Failed or error placeholder!
                 const smartMeta = (!file.title || !file.keywords) ? buildLocalSmartMetadata(file.filename, settings) : null;
                 const displayTitle = file.title 
                   ? file.title 
                   : (isGeneratingThis ? 'Processing...' : (smartMeta?.title || file.filename.replace(/\.[^/.]+$/, '')));
 
-                const displayKeywords = file.keywords 
+                const rawKwStr = file.keywords 
                   ? file.keywords 
                   : (isGeneratingThis ? 'Processing...' : (smartMeta?.keywords || 'commercial, stock, high quality, creative'));
+
+                const displayKeywords = rawKwStr
+                  .split(',')
+                  .map(s => s.trim())
+                  .filter(s => s && !['universal', 'marketplace', 'marketplaces'].includes(s.toLowerCase()))
+                  .join(', ');
+
+                // Always calculate actual keyword count based on clean keywords
+                const kwCount = displayKeywords 
+                  ? displayKeywords.split(',').map(s => s.trim()).filter(Boolean).length 
+                  : 0;
 
                 const displayDescription = file.description 
                   ? file.description 

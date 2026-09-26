@@ -759,7 +759,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                   <div className="flex items-center gap-2.5">
                     <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                      {settings.aiModel || 'gemini-2.5-flash'}
+                      {settings.aiModel || 'gemini-3.8-flash'}
                     </span>
                     {openDropdowns.aiModel ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </div>
@@ -768,10 +768,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {openDropdowns.aiModel && (
                   <div className="p-4 border-t border-border bg-background/50 space-y-2 animate-in slide-in-from-top-1 duration-150">
                     {[
-                      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', tag: 'RECOMMENDED', speed: '⚡ Fast (0.8s)', desc: 'Official stable flagship model with highest multimodal accuracy and zero quota spikes.' },
-                      { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', tag: 'ULTRA-FAST', speed: '🚀 Ultra Fast (0.5s)', desc: 'Lowest latency lightweight model for ultra-high throughput processing.' },
-                      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', tag: 'HIGH-SPEED', speed: '⚡ Fast (0.7s)', desc: 'Next-generation lightweight model for high-efficiency metadata analysis.' },
-                      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', tag: 'ADVANCED', speed: '⚡ Deep (1.2s)', desc: 'Advanced preview reasoning model with comprehensive visual perception.' }
+                      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', tag: 'RECOMMENDED', speed: '⚡ Fast (0.7s)', desc: 'Official next-generation flagship vision model with unmatched multimodal accuracy and fresh quota.' },
+                      { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', tag: 'STABLE', speed: '⚡ Fast (0.8s)', desc: 'High-accuracy multimodal stock photo inspector with deep visual reasoning.' },
+                      { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', tag: 'HIGH-SPEED', speed: '🚀 Ultra Fast (0.5s)', desc: 'Lightweight high-efficiency model for fast bulk metadata generation.' },
+                      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', tag: 'LITE', speed: '🚀 Ultra Fast (0.4s)', desc: 'Lowest latency lightweight model for ultra-high throughput processing.' },
+                      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', tag: 'LEGACY', speed: '⚡ Standard (1.0s)', desc: 'Previous generation model (subject to free-tier rate limits).' }
                     ].map(model => (
                       <div
                         key={model.id}

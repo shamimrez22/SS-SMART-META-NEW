@@ -335,9 +335,10 @@ Return valid JSON with this exact structure:
   if (geminiKey) {
     const ai = new GoogleGenAI({ apiKey: geminiKey });
     const modelsToTry = [
-       modelName || "gemini-2.5-flash",
-       "gemini-2.5-flash",
-       "gemini-2.5-flash-lite"
+       modelName || "gemini-3.8-flash",
+       "gemini-3.8-flash",
+       "gemini-3.7-flash",
+       "gemini-2.5-flash"
     ];
 
     const uniqueModels = Array.from(new Set(modelsToTry));

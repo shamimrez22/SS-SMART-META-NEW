@@ -172,6 +172,10 @@ const modelCooloffUntil = new Map<string, number>();
 
 function getAvailableGeminiModels(preferredModel?: string): string[] {
   const allowed = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite"
   ];
@@ -194,43 +198,56 @@ function generateSmartFallbackMetadata(filename: string) {
     .replace(/\d+/g, '')
     .replace(/Commercial Stock Asset/gi, '')
     .replace(/Commercial Stock Photogr/gi, '')
+    .replace(/Stock Photo/gi, '')
     .replace(/Concept/gi, '')
     .trim();
 
   if (!cleanName || cleanName.length < 3) {
-    cleanName = 'Modern Creative Asset';
+    cleanName = 'Creative Subject';
   }
 
-  const capitalized = cleanName
-    .split(' ')
-    .filter(Boolean)
+  const words = cleanName.split(/\s+/).filter(Boolean);
+  const capitalized = words
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ');
 
-  const title = `${capitalized} High Quality Commercial Stock Photo`;
-  const description = `Stunning high quality commercial stock photography of ${cleanName.toLowerCase()} with copy space, perfect for advertising, branding, web banners, and editorial publication.`;
+  const title = words.length >= 5 
+    ? capitalized 
+    : `${capitalized} Detailed Composition`;
 
-  const baseWords = cleanName.toLowerCase().split(' ').filter(w => w.length > 2);
-  const commonCommercialKeywords = [
-    'background', 'concept', 'design', 'modern', 'creative', 'isolated', 'white', 'bright',
-    'commercial', 'professional', 'close up', 'nature', 'lifestyle', 'detail', 'color',
-    'view', 'outdoor', 'indoor', 'nobody', 'horizontal', 'composition', 'texture', 'pattern',
-    'artistic', 'abstract', 'clean', 'simple', 'graphic', 'elegance', 'inspiration', 'space',
-    'copy space', 'advertising', 'presentation', 'fresh', 'beautiful', 'style', 'collection',
-    'quality', 'wallpaper', 'photo', 'digital', 'technology', 'seasonal', 'decoration', 'light'
-  ];
+  const description = `Detailed view of ${cleanName.toLowerCase()}, highlighting visual elements, natural colors, and fine textures suitable for creative and editorial publication.`;
 
   const uniqueKwSet = new Set<string>();
-  baseWords.forEach(w => uniqueKwSet.add(w));
-  commonCommercialKeywords.forEach(w => {
-    if (uniqueKwSet.size < 48) uniqueKwSet.add(w);
+  
+  // Add core words and pairs from actual filename
+  words.forEach(w => {
+    const lw = w.toLowerCase();
+    if (lw.length > 2 && !['and', 'the', 'for', 'with', 'from', 'this', 'that', 'jpg', 'jpeg', 'png'].includes(lw)) {
+      uniqueKwSet.add(lw);
+    }
+  });
+
+  for (let i = 0; i < words.length - 1; i++) {
+    const pair = `${words[i].toLowerCase()} ${words[i+1].toLowerCase()}`;
+    if (pair.length > 5) uniqueKwSet.add(pair);
+  }
+
+  // Common contextual tags strictly related to photography composition (no fake isolated/white/buzzwords)
+  const safeDescriptors = [
+    'photography', 'composition', 'texture', 'detail', 'color', 'lighting', 'horizontal', 
+    'perspective', 'element', 'surface', 'pattern', 'still life', 'angle', 'visual', 
+    'clarity', 'focus', 'presentation', 'palette', 'tone', 'scene'
+  ];
+
+  safeDescriptors.forEach(kw => {
+    if (uniqueKwSet.size < 35) uniqueKwSet.add(kw);
   });
 
   return {
     title,
     description,
-    keywords: Array.from(uniqueKwSet).slice(0, 48).join(', '),
-    category: 'Lifestyle',
+    keywords: Array.from(uniqueKwSet).join(', '),
+    category: 'Objects',
     rating: 5
   };
 }
@@ -249,7 +266,7 @@ function generateSmartFallbackMetadata(filename: string) {
           apiKey: cleanKey,
           httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
         });
-        const testModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
+        const testModels = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-2.5-flash"];
         let lastError: any = null;
         for (const model of testModels) {
           try {
@@ -395,9 +412,11 @@ function generateSmartFallbackMetadata(filename: string) {
             if (is404) {
               modelCooloffUntil.set(model, Date.now() + 86400000);
             } else if (is429) {
-              modelCooloffUntil.set(model, Date.now() + 60000);
+              modelCooloffUntil.set(model, Date.now() + 2500);
+              await new Promise(r => setTimeout(r, 1200));
             } else if (is503) {
-              modelCooloffUntil.set(model, Date.now() + 15000);
+              modelCooloffUntil.set(model, Date.now() + 3000);
+              await new Promise(r => setTimeout(r, 800));
             }
           }
         }
@@ -447,6 +466,26 @@ function generateSmartFallbackMetadata(filename: string) {
         }
       }
 
+      if (parsed) {
+        if (Array.isArray(parsed.keywords)) {
+          parsed.keywords = parsed.keywords.map((k: any) => String(k).trim()).filter(Boolean).join(', ');
+        }
+        if (typeof parsed.keywords === 'string') {
+          // Remove unwanted generic buzzwords like "concept", "commercial", "stock photo"
+          parsed.keywords = parsed.keywords
+            .split(',')
+            .map((k: string) => k.trim())
+            .filter((k: string) => {
+              const lk = k.toLowerCase();
+              return lk && !['universal', 'marketplace', 'marketplaces', 'concept', 'commercial', 'stock photo', 'stock image', 'asset'].includes(lk);
+            })
+            .join(', ');
+        }
+        if (typeof parsed.title === 'string') {
+          parsed.title = parsed.title.replace(/^["'`\s]+|["'`\s]+$/g, '').trim();
+        }
+      }
+
       if (!parsed || !parsed.title) {
         console.warn(`[API] Gemini models exhausted/failed for ${filename || 'file'}, using smart high-quality commercial fallback metadata.`);
         parsed = generateSmartFallbackMetadata(filename || 'commercial_stock_image');
@@ -488,7 +527,7 @@ function generateSmartFallbackMetadata(filename: string) {
       const promptText = `${systemInstruction || 'Analyze this image and generate detailed creative prompts.'}\n${customInstructions ? `USER CUSTOM INSTRUCTION: ${customInstructions}` : ""}`;
       parts.push({ text: promptText });
 
-      const modelsToTry = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
+      const modelsToTry = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-2.5-flash"];
       let response: any = null;
       let lastErr: any = null;
 

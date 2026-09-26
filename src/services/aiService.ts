@@ -64,45 +64,60 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
     .replace(/[-_]+/g, ' ')
     .replace(/\(\d+\)/g, '')
     .replace(/\d+/g, '')
-    .trim() || 'Commercial Stock Asset';
+    .replace(/Commercial Stock Asset/gi, '')
+    .replace(/Stock Photo/gi, '')
+    .replace(/Concept/gi, '')
+    .trim() || 'Creative Subject';
 
-  const capitalized = cleanName
-    .split(' ')
-    .filter(Boolean)
+  const words = cleanName.split(/\s+/).filter(Boolean);
+  const capitalized = words
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ');
 
-  const rawTitle = `${capitalized} High Quality Commercial Stock Photography Concept`;
+  const rawTitle = words.length >= 5 
+    ? capitalized 
+    : `${capitalized} Detailed Composition`;
+
   const sanitizedTitleObj = sanitizeStockTitle(rawTitle, settings?.marketplace || 'universal');
   const title = sanitizedTitleObj?.title || rawTitle;
 
-  const description = `Stunning high quality commercial stock photography of ${cleanName.toLowerCase()} with copy space, perfect for advertising, branding, web banners, and editorial publication.`;
-
-  const baseWords = cleanName.toLowerCase().split(' ').filter(w => w.length > 2);
-  const commonCommercialKeywords = [
-    'background', 'concept', 'design', 'modern', 'creative', 'isolated', 'white', 'bright',
-    'commercial', 'professional', 'close up', 'nature', 'lifestyle', 'detail', 'color',
-    'view', 'outdoor', 'indoor', 'nobody', 'horizontal', 'composition', 'texture', 'pattern',
-    'artistic', 'abstract', 'clean', 'simple', 'graphic', 'elegance', 'inspiration', 'space',
-    'copy space', 'advertising', 'presentation', 'fresh', 'beautiful', 'style', 'collection',
-    'quality', 'wallpaper', 'photo', 'digital', 'technology', 'seasonal', 'decoration', 'light'
-  ];
+  const description = `Detailed perspective of ${cleanName.toLowerCase()}, highlighting key visual features, fine textures, and balanced composition suitable for creative publication.`;
 
   const uniqueKwSet = new Set<string>();
-  baseWords.forEach(w => uniqueKwSet.add(w));
-  commonCommercialKeywords.forEach(w => {
-    if (uniqueKwSet.size < 48) uniqueKwSet.add(w);
+  
+  // Extract core keywords and bigram phrases directly from filename
+  words.forEach(w => {
+    const lw = w.toLowerCase();
+    if (lw.length > 2 && !['and', 'the', 'for', 'with', 'from', 'this', 'that', 'jpg', 'jpeg', 'png', 'eps', 'svg'].includes(lw)) {
+      uniqueKwSet.add(lw);
+    }
   });
 
-  const rawKw = Array.from(uniqueKwSet).slice(0, 48).join(', ');
-  const sanitizedKwObj = sanitizeStockKeywords(rawKw, settings?.marketplace || 'universal');
+  for (let i = 0; i < words.length - 1; i++) {
+    const pair = `${words[i].toLowerCase()} ${words[i+1].toLowerCase()}`;
+    if (pair.length > 5) uniqueKwSet.add(pair);
+  }
+
+  // Safe visual descriptors (never spammy buzzwords like isolated, white, concept, copy space)
+  const safeVisualTags = [
+    'photography', 'composition', 'texture', 'detail', 'color', 'lighting', 'horizontal', 
+    'perspective', 'element', 'surface', 'pattern', 'still life', 'angle', 'visual', 
+    'clarity', 'focus', 'presentation', 'palette', 'tone', 'scene'
+  ];
+
+  safeVisualTags.forEach(w => {
+    if (uniqueKwSet.size < (settings?.maxKeywords || 45)) uniqueKwSet.add(w);
+  });
+
+  const rawKw = Array.from(uniqueKwSet).slice(0, settings?.maxKeywords || 48).join(', ');
+  const sanitizedKwObj = sanitizeStockKeywords(rawKw, title, settings?.maxKeywords || 50, settings?.singleWordKeywords);
   const keywords = sanitizedKwObj?.keywords || rawKw;
 
   return {
     title,
     description,
     keywords,
-    category: 'Lifestyle',
+    category: 'Objects',
     rating: 5
   };
 }
@@ -157,7 +172,7 @@ export async function callServerGemini(
       filename: file.name,
       prompt,
       apiKey: apiKey || '',
-      model: settings.aiModel || 'gemini-2.5-flash'
+      model: settings.aiModel || 'gemini-3.8-flash'
     })
   });
   clearTimeout(timeoutId);
@@ -170,7 +185,7 @@ export async function callServerGemini(
       const cleanTitle = sanitizedTitleObj?.title || rawTitle;
 
       const rawKeywords = String(data.metadata.keywords || '').trim();
-      const sanitizedKwObj = sanitizeStockKeywords(rawKeywords, settings.marketplace || 'universal');
+      const sanitizedKwObj = sanitizeStockKeywords(rawKeywords, cleanTitle, settings?.maxKeywords || 50, settings?.singleWordKeywords);
       const cleanKeywords = sanitizedKwObj?.keywords || rawKeywords;
 
       return {
@@ -1004,11 +1019,12 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
   
   // Base list of fast valid models
   const baseModels = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite",
     "gemini-3.8-flash",
-    "gemini-flash-latest"
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite"
   ];
 
   // If user selected a specific AI model in settings, try it first
@@ -1618,8 +1634,8 @@ ${marketplaceRules}
    - Ordered in strict SEO tiers for maximum marketplace sales:
      * Keywords 1-10 (PRIMARY SUBJECT & CORE VISUAL NOUNS): The exact literal elements, main subject, visible numbers (e.g. 2027), nouns, key objects, and materials. (Adobe Stock indexes these 10 tags with highest weight!)
      * Keywords 11-25 (ENVIRONMENT, SETTING & TECHNIQUE): Specific location type, weather, lighting, color palette, camera angle (aerial, top view, isometric, flat lay), style (minimalist, modern, corporate, vintage).
-     * Keywords 26-38 (COMMERCIAL UTILITY & DESIGN VALUE): Template, banner, background, copy space, graphic element, layout, corporate branding, presentation, marketing, isolated.
-     * Keywords 39-${targetCount} (HIGH-VOLUME BUYER SEARCH PHRASES): Common search terms, industry concepts, and buyer intent tags.
+     * Keywords 26-38 (COMMERCIAL CONTEXT & INDUSTRY RELEVANCE): Accurate search terms describing the specific context, theme, and real-world usage of this exact subject matter (e.g. culinary, dining for food; domestic animal, pet care for pets; landscape, scenic for nature). NEVER include "isolated", "copy space", "white background", or "template" unless they factually apply to this specific asset!
+     * Keywords 39-${targetCount} (HIGH-VOLUME BUYER SEARCH PHRASES): Common factual search terms, industry concepts, and buyer intent tags matching this exact visual content.
    - ${singleWordKeywords ? "Format: strictly single words." : "Format: mix of precise single words and high-converting 2-word stock phrases."}
    - No duplicate keywords. No irrelevant spam. No useless filler words.
 
