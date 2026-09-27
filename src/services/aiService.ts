@@ -59,6 +59,10 @@ export async function urlToBase64(url?: string): Promise<string> {
 }
 
 export function buildLocalSmartMetadata(filename: string, settings: any) {
+  const ext = (filename || '').split('.').pop()?.toLowerCase() || '';
+  const isVector = ['eps', 'ai', 'svg'].includes(ext);
+  const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
+
   const cleanName = (filename || 'stock_asset')
     .replace(/\.[^/.]+$/, '')
     .replace(/[-_]+/g, ' ')
@@ -66,6 +70,8 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
     .replace(/\d+/g, '')
     .replace(/Commercial Stock Asset/gi, '')
     .replace(/Stock Photo/gi, '')
+    .replace(/Stock Footage/gi, '')
+    .replace(/Vector Illustration/gi, '')
     .replace(/Concept/gi, '')
     .trim() || 'Creative Subject';
 
@@ -74,21 +80,39 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ');
 
-  const rawTitle = words.length >= 5 
-    ? capitalized 
-    : `${capitalized} Detailed Composition`;
+  let rawTitle: string;
+  let description: string;
+  let category = 'Objects';
+
+  if (isVector) {
+    rawTitle = words.length >= 5 
+      ? `${capitalized} Vector Illustration Design` 
+      : `${capitalized} Modern Scalable Vector Illustration Graphic`;
+    description = `High quality commercial scalable vector illustration of ${cleanName.toLowerCase()}, featuring modern vector graphic paths, clean shapes, and versatile design utility.`;
+    category = 'Graphics';
+  } else if (isVideo) {
+    rawTitle = words.length >= 5 
+      ? `${capitalized} Stock Video Footage Clip` 
+      : `Cinematic 4K Stock Video Footage of ${capitalized} in Motion`;
+    description = `High definition cinematic stock video footage capturing ${cleanName.toLowerCase()} with authentic camera motion, real-time lighting, and vibrant dynamic visual composition.`;
+    category = 'Movement';
+  } else {
+    rawTitle = words.length >= 5 
+      ? capitalized 
+      : `${capitalized} Detailed Composition`;
+    description = `Detailed perspective of ${cleanName.toLowerCase()}, highlighting key visual features, fine textures, and balanced composition suitable for creative publication.`;
+    category = 'Objects';
+  }
 
   const sanitizedTitleObj = sanitizeStockTitle(rawTitle, settings?.marketplace || 'universal');
   const title = sanitizedTitleObj?.title || rawTitle;
-
-  const description = `Detailed perspective of ${cleanName.toLowerCase()}, highlighting key visual features, fine textures, and balanced composition suitable for creative publication.`;
 
   const uniqueKwSet = new Set<string>();
   
   // Extract core keywords and bigram phrases directly from filename
   words.forEach(w => {
     const lw = w.toLowerCase();
-    if (lw.length > 2 && !['and', 'the', 'for', 'with', 'from', 'this', 'that', 'jpg', 'jpeg', 'png', 'eps', 'svg'].includes(lw)) {
+    if (lw.length > 2 && !['and', 'the', 'for', 'with', 'from', 'this', 'that', 'jpg', 'jpeg', 'png', 'eps', 'svg', 'mp4', 'mov'].includes(lw)) {
       uniqueKwSet.add(lw);
     }
   });
@@ -98,14 +122,30 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
     if (pair.length > 5) uniqueKwSet.add(pair);
   }
 
-  // Safe visual descriptors (never spammy buzzwords like isolated, white, concept, copy space)
-  const safeVisualTags = [
-    'photography', 'composition', 'texture', 'detail', 'color', 'lighting', 'horizontal', 
-    'perspective', 'element', 'surface', 'pattern', 'still life', 'angle', 'visual', 
-    'clarity', 'focus', 'presentation', 'palette', 'tone', 'scene'
-  ];
+  // Format-specific high-converting SEO tags
+  let formatTags: string[];
+  if (isVector) {
+    formatTags = [
+      'vector', 'illustration', 'graphic', 'design', 'template', 'artwork', 'icon', 'symbol', 
+      'element', 'scalable', 'background', 'editable', 'creative', 'modern', 'decorative', 
+      'drawing', 'art', 'banner', 'sign', 'concept', 'eps', 'layout', 'clipart', 'isolated', 
+      'style', 'visual', 'set', 'collection', 'flat', 'shape'
+    ];
+  } else if (isVideo) {
+    formatTags = [
+      'footage', 'video', 'motion', 'cinematic', '4k', 'b-roll', 'clip', 'movement', 
+      'scene', 'real-time', 'dynamic', 'capture', 'slow motion', 'high definition', 'atmosphere', 
+      'visual', 'background', 'film', 'shot', 'camera', 'live action', 'recording', 'panning'
+    ];
+  } else {
+    formatTags = [
+      'photography', 'composition', 'texture', 'detail', 'color', 'lighting', 'horizontal', 
+      'perspective', 'element', 'surface', 'pattern', 'still life', 'angle', 'visual', 
+      'clarity', 'focus', 'presentation', 'palette', 'tone', 'scene'
+    ];
+  }
 
-  safeVisualTags.forEach(w => {
+  formatTags.forEach(w => {
     if (uniqueKwSet.size < (settings?.maxKeywords || 45)) uniqueKwSet.add(w);
   });
 
@@ -117,7 +157,7 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
     title,
     description,
     keywords,
-    category: 'Objects',
+    category,
     rating: 5
   };
 }
@@ -130,9 +170,11 @@ export async function callServerGemini(
 ) {
   let base64 = '';
   const ext = file?.name?.split('.').pop()?.toLowerCase() || '';
-  const isSupportedImage = file && (
+  const isVector = ['eps', 'ai', 'svg'].includes(ext) || file?.type === 'application/postscript';
+  const isVideo = file?.type?.startsWith('video/') || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
+  const isSupportedImage = !isVector && !isVideo && file && (
     SUPPORTED_GEMINI_MIMES.includes(file.type) || 
-    ['jpg', 'jpeg', 'png', 'webp', 'svg', 'bmp', 'gif', 'avif', 'tif', 'tiff'].includes(ext) ||
+    ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif', 'avif', 'tif', 'tiff'].includes(ext) ||
     Boolean(file.type?.startsWith('image/'))
   );
 
@@ -142,21 +184,40 @@ export async function callServerGemini(
     } catch {
       base64 = await fileToBase64(file);
     }
-  } else if (ext === 'eps' || ext === 'ai') {
-    const thumb = await extractEpsThumbnail(file, true);
-    if (thumb) base64 = thumb;
-  } else if (file.type?.startsWith('video/') || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext)) {
-    const vThumb = await extractVideoThumbnail(file);
-    if (vThumb) base64 = vThumb;
+  } else if (isVector) {
+    try {
+      const thumb = await extractEpsThumbnail(file, true);
+      if (thumb) base64 = thumb;
+    } catch (e) {
+      console.warn("EPS thumbnail extraction for AI:", e);
+    }
+  } else if (isVideo) {
+    try {
+      const vThumb = await extractVideoThumbnail(file);
+      if (vThumb) base64 = vThumb;
+    } catch (e) {
+      console.warn("Video thumbnail extraction for AI:", e);
+    }
   }
 
   // Fallback: If file-based extraction was empty, use previewUrl if available
-  if (!base64 && previewUrl) {
-    base64 = await urlToBase64(previewUrl);
+  if (!base64 && previewUrl && typeof previewUrl === 'string' && previewUrl.startsWith('data:')) {
+    base64 = previewUrl;
   }
 
-  const isVideo = file?.type?.startsWith('video/') || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
-  const prompt = getPrompt(settings, file?.name || "unnamed_file", isVideo);
+  let epsInfo = '';
+  if (isVector) {
+    try {
+      epsInfo = await extractEpsMetadata(file);
+    } catch {}
+  }
+
+  let prompt = getPrompt(settings, file?.name || "unnamed_file", isVideo, isVector);
+  if (isVector) {
+    prompt += `\n\n[FILE CONTEXT]\nAsset Type: EPS Scalable Vector Illustration & Graphic Art\nFilename: ${file.name}\n${epsInfo}\nDirective: Generate top-ranking commercial stock metadata strictly for Vector/Illustration categories. Keywords MUST include high-demand vector tags (vector, illustration, graphic, design, template, artwork, icon, symbol, element, editable, background, creative). Never include photo/camera keywords!`;
+  } else if (isVideo) {
+    prompt += `\n\n[FILE CONTEXT]\nAsset Type: Stock Video Footage Clip\nFilename: ${file.name}\nDirective: Generate top-ranking commercial stock metadata strictly for Video/Footage categories. Keywords MUST include high-demand video tags (footage, video, motion, b-roll, 4k, cinematic, slow motion, movement, scene, clip).`;
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 35000);
@@ -1579,7 +1640,7 @@ function getMarketplaceDirectives(marketplace: string = 'universal'): string {
   }
 }
 
-function getPrompt(settings: any, filename: string, isVideo: boolean = false) {
+function getPrompt(settings: any, filename: string, isVideo: boolean = false, isVector: boolean = false) {
   const { 
     metadataFor, 
     marketplace = 'universal',
@@ -1642,6 +1703,7 @@ ${marketplaceRules}
 5. CATEGORY SELECTION:
    - Primary Stock Category: Landscapes, Nature, Business, Technology, People, Architecture, Travel, Food & Drink, Animals, Transportation, Backgrounds/Textures, Holidays/Celebrations.
 
+${isVector ? "- FOR VECTOR ASSETS: This is an EPS/SVG scalable vector illustration! The title, description, and keywords MUST emphasize vector graphic styling, scalable paths, and design utility. Include high-demand vector tags: vector, illustration, graphic, design, template, artwork, icon, symbol, element, editable, background, creative, eps. NEVER include camera or photography terms!" : ""}
 ${isVideo ? "- FOR VIDEO ASSETS: Include footage-specific descriptors where appropriate (e.g., 4k footage, aerial, drone, b-roll, slow motion, cinematic, camera movement, panning, tracking)." : ""}
 ${silhouette ? "- ASSET IS A SILHOUETTE: Emphasize shadow, outline, backlit profile, shape contrast." : ""}
 ${transparentBackground ? "- ISOLATED ASSET: Clearly include: isolated, white background, cutout, transparent, clipping path." : ""}

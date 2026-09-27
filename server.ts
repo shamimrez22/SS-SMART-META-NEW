@@ -171,11 +171,15 @@ async function startServer() {
 const modelCooloffUntil = new Map<string, number>();
 
 function getAvailableGeminiModels(preferredModel?: string): string[] {
+  // Reliable models ordered by capability, speed, and generous rate limits
   const allowed = [
     "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest",
     "gemini-3.7-flash",
     "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite"
   ];
@@ -203,7 +207,7 @@ function generateSmartFallbackMetadata(filename: string) {
     .trim();
 
   if (!cleanName || cleanName.length < 3) {
-    cleanName = 'Creative Subject';
+    cleanName = 'Visual Subject';
   }
 
   const words = cleanName.split(/\s+/).filter(Boolean);
@@ -213,16 +217,16 @@ function generateSmartFallbackMetadata(filename: string) {
 
   const title = words.length >= 5 
     ? capitalized 
-    : `${capitalized} Detailed Composition`;
+    : `${capitalized} High Resolution Visual`;
 
-  const description = `Detailed view of ${cleanName.toLowerCase()}, highlighting visual elements, natural colors, and fine textures suitable for creative and editorial publication.`;
+  const description = `Detailed perspective of ${cleanName.toLowerCase()}, showcasing key visual features, fine textures, and clean background composition suitable for creative publication.`;
 
   const uniqueKwSet = new Set<string>();
   
-  // Add core words and pairs from actual filename
+  // Extract core keywords and phrases directly from the actual filename
   words.forEach(w => {
     const lw = w.toLowerCase();
-    if (lw.length > 2 && !['and', 'the', 'for', 'with', 'from', 'this', 'that', 'jpg', 'jpeg', 'png'].includes(lw)) {
+    if (lw.length > 2 && !['and', 'the', 'for', 'with', 'from', 'this', 'that', 'jpg', 'jpeg', 'png', 'eps', 'svg'].includes(lw)) {
       uniqueKwSet.add(lw);
     }
   });
@@ -232,14 +236,14 @@ function generateSmartFallbackMetadata(filename: string) {
     if (pair.length > 5) uniqueKwSet.add(pair);
   }
 
-  // Common contextual tags strictly related to photography composition (no fake isolated/white/buzzwords)
-  const safeDescriptors = [
-    'photography', 'composition', 'texture', 'detail', 'color', 'lighting', 'horizontal', 
-    'perspective', 'element', 'surface', 'pattern', 'still life', 'angle', 'visual', 
-    'clarity', 'focus', 'presentation', 'palette', 'tone', 'scene'
+  // Safe visual and composition descriptors directly relevant to stock visuals
+  const safeStockTags = [
+    'design', 'creative', 'graphic', 'visual', 'composition', 'color', 'detail', 
+    'modern', 'texture', 'style', 'element', 'backdrop', 'presentation', 'art', 
+    'clean', 'clarity', 'focus', 'palette', 'contemporary', 'pattern'
   ];
 
-  safeDescriptors.forEach(kw => {
+  safeStockTags.forEach(kw => {
     if (uniqueKwSet.size < 35) uniqueKwSet.add(kw);
   });
 
@@ -412,11 +416,12 @@ function generateSmartFallbackMetadata(filename: string) {
             if (is404) {
               modelCooloffUntil.set(model, Date.now() + 86400000);
             } else if (is429) {
-              modelCooloffUntil.set(model, Date.now() + 2500);
-              await new Promise(r => setTimeout(r, 1200));
+              const isDailyQuota = errMsg.includes('limit: 20') || errMsg.includes('FreeTier') || errMsg.includes('per_day');
+              modelCooloffUntil.set(model, Date.now() + (isDailyQuota ? 7200000 : 3000));
+              await new Promise(r => setTimeout(r, 600));
             } else if (is503) {
-              modelCooloffUntil.set(model, Date.now() + 3000);
-              await new Promise(r => setTimeout(r, 800));
+              modelCooloffUntil.set(model, Date.now() + 2000);
+              await new Promise(r => setTimeout(r, 400));
             }
           }
         }
@@ -556,6 +561,468 @@ function generateSmartFallbackMetadata(filename: string) {
     } catch (err: any) {
       console.warn("Server image-to-prompt error:", err?.message || err);
       return res.status(500).json({ error: { message: err?.message || "Failed to analyze image" } });
+    }
+  });
+
+  // ==========================================
+  // SERVER-AUTHORITATIVE LICENSE & USER TRACKING SYSTEM
+  // ==========================================
+  const LICENSES_FILE = path.join(process.cwd(), 'data', 'licenses.json');
+  const ADMIN_MASTER_LICENSE_KEY = 'ADMIN-SHAMIM-321';
+  const MASTER_ADMIN_RECORD = {
+    id: 'master-admin-shamim-key',
+    key: ADMIN_MASTER_LICENSE_KEY,
+    duration: 'lifetime',
+    durationDays: 36500,
+    clientName: '👑 Master Admin (Shamim) - Permanent Lifetime',
+    createdAt: 1774320000000,
+    expiresAt: 4927536000000,
+    status: 'active',
+    activatedAt: 1774320000000,
+    activeUsers: []
+  };
+
+  function parseDeviceLabel(ua?: string): string {
+    if (!ua) return 'Web Client';
+    let browser = 'Browser';
+    if (ua.includes('Edg/')) browser = 'Edge';
+    else if (ua.includes('Chrome/')) browser = 'Chrome';
+    else if (ua.includes('Firefox/')) browser = 'Firefox';
+    else if (ua.includes('Safari/') && !ua.includes('Chrome/')) browser = 'Safari';
+    else if (ua.includes('Opera/') || ua.includes('OPR/')) browser = 'Opera';
+
+    let os = 'Device';
+    if (ua.includes('Windows NT 10.0')) os = 'Windows 10/11';
+    else if (ua.includes('Windows')) os = 'Windows';
+    else if (ua.includes('Mac OS X')) os = 'macOS';
+    else if (ua.includes('Android')) os = 'Android';
+    else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+    else if (ua.includes('Linux')) os = 'Linux';
+
+    return `${browser} on ${os}`;
+  }
+
+  function loadLicenses(): any[] {
+    try {
+      if (fs.existsSync(LICENSES_FILE)) {
+        const data = fs.readFileSync(LICENSES_FILE, 'utf8');
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) {
+          if (!parsed.some(l => l.key?.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
+            parsed.unshift(MASTER_ADMIN_RECORD);
+            saveLicenses(parsed);
+          }
+          return parsed;
+        }
+      }
+    } catch (err) {
+      console.error('Error loading licenses:', err);
+    }
+    return [MASTER_ADMIN_RECORD];
+  }
+
+  function saveLicenses(list: any[]): void {
+    try {
+      fs.mkdirSync(path.dirname(LICENSES_FILE), { recursive: true });
+      fs.writeFileSync(LICENSES_FILE, JSON.stringify(list, null, 2), 'utf8');
+    } catch (err) {
+      console.error('Error saving licenses:', err);
+    }
+  }
+
+  // 1. GET ALL LICENSES (with live active user counts and devices for Admin Panel)
+  app.get('/api/licenses', (req, res) => {
+    try {
+      const list = loadLicenses();
+      const now = Date.now();
+      // Calculate online status (heartbeat within 90s)
+      const enriched = list.map(item => {
+        const users = Array.isArray(item.activeUsers) ? item.activeUsers : [];
+        const onlineUsers = users.filter((u: any) => now - (u.lastActiveAt || 0) <= 90000);
+        return {
+          ...item,
+          activeUsers: users,
+          activeUsersCount: users.length,
+          onlineUsersCount: onlineUsers.length,
+          isOnline: onlineUsers.length > 0
+        };
+      });
+      return res.json({ success: true, licenses: enriched });
+    } catch (err: any) {
+      return res.status(500).json({ error: { message: err?.message || 'Failed to get licenses' } });
+    }
+  });
+
+  // 2. VALIDATE & ACTIVATE LICENSE KEY
+  app.post('/api/licenses/validate', (req, res) => {
+    try {
+      const { key, sessionId, deviceLabel } = req.body || {};
+      const cleanKey = (key || '').trim().toUpperCase();
+      if (!cleanKey) {
+        return res.status(400).json({ valid: false, message: 'Please enter a license key.' });
+      }
+
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '127.0.0.1';
+      const userAgent = req.headers['user-agent'] || '';
+      const resolvedDevice = deviceLabel || parseDeviceLabel(userAgent);
+      const now = Date.now();
+
+      // Master Admin Key
+      if (cleanKey === ADMIN_MASTER_LICENSE_KEY) {
+        return res.json({
+          valid: true,
+          isAdmin: true,
+          message: 'Master Admin Key (ADMIN-SHAMIM-321) verified successfully.',
+          license: MASTER_ADMIN_RECORD
+        });
+      }
+
+      const licenses = loadLicenses();
+      let record = licenses.find(l => l.key?.toUpperCase() === cleanKey);
+
+      // Algorithmic self-registration fallback if key follows SSM standard
+      if (!record && /^SSM-(1M|6M|1Y|LIFE|[0-9]{1,4}D|CUST)-[A-Z0-9]{4,5}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(cleanKey)) {
+        const parts = cleanKey.split('-');
+        const code = parts[1];
+        let duration = '1m';
+        let days = 30;
+        if (code === '6M') { duration = '6m'; days = 180; }
+        else if (code === '1Y') { duration = '1y'; days = 365; }
+        else if (code === 'LIFE') { duration = 'lifetime'; days = 36500; }
+        else if (code.endsWith('D')) { duration = 'custom'; days = Math.max(1, parseInt(code.replace('D', ''), 10) || 30); }
+
+        record = {
+          id: `lic_${now}_${Math.random().toString(36).slice(2, 7)}`,
+          key: cleanKey,
+          duration,
+          durationDays: days,
+          clientName: 'Authorized Client',
+          createdAt: now,
+          expiresAt: duration === 'lifetime' ? now + (100 * 365 * 24 * 60 * 60 * 1000) : now + (days * 24 * 60 * 60 * 1000),
+          status: 'active',
+          activatedAt: now,
+          activeUsers: []
+        };
+        licenses.unshift(record);
+      }
+
+      if (!record) {
+        return res.status(404).json({ valid: false, message: 'Invalid license key. Key does not exist.' });
+      }
+
+      if (record.status === 'revoked') {
+        return res.status(403).json({ valid: false, revoked: true, message: 'This license key has been revoked by the administrator.' });
+      }
+
+      if (record.duration !== 'lifetime' && now > record.expiresAt) {
+        return res.status(403).json({ valid: false, expired: true, message: 'This license key has expired. Please contact admin to renew.' });
+      }
+
+      // Track active user session
+      if (!Array.isArray(record.activeUsers)) {
+        record.activeUsers = [];
+      }
+
+      const activeSessionId = sessionId || `sess_${Math.random().toString(36).slice(2, 9)}`;
+      const existingUserIdx = record.activeUsers.findIndex((u: any) => u.sessionId === activeSessionId);
+
+      const sessionObj = {
+        sessionId: activeSessionId,
+        ip: clientIp,
+        userAgent,
+        deviceLabel: resolvedDevice,
+        activatedAt: existingUserIdx >= 0 ? record.activeUsers[existingUserIdx].activatedAt : now,
+        lastActiveAt: now
+      };
+
+      if (existingUserIdx >= 0) {
+        record.activeUsers[existingUserIdx] = sessionObj;
+      } else {
+        record.activeUsers.unshift(sessionObj);
+      }
+
+      // Limit stored sessions per key to last 50 devices
+      if (record.activeUsers.length > 50) {
+        record.activeUsers = record.activeUsers.slice(0, 50);
+      }
+
+      if (!record.activatedAt) {
+        record.activatedAt = now;
+      }
+
+      saveLicenses(licenses);
+
+      const daysRemaining = record.duration === 'lifetime' 
+        ? 9999 
+        : Math.max(0, Math.ceil((record.expiresAt - now) / (1000 * 60 * 60 * 24)));
+
+      return res.json({
+        valid: true,
+        sessionId: activeSessionId,
+        daysRemaining,
+        license: {
+          key: record.key,
+          duration: record.duration,
+          durationDays: record.durationDays,
+          expiresAt: record.expiresAt,
+          activatedAt: record.activatedAt,
+          clientName: record.clientName
+        },
+        message: `License successfully verified! (${record.duration === 'lifetime' ? 'Lifetime Access' : `${record.durationDays} Days Valid`})`
+      });
+    } catch (err: any) {
+      return res.status(500).json({ valid: false, message: err?.message || 'Server error verifying license.' });
+    }
+  });
+
+  // 3. CONTINUOUS HEARTBEAT & REAL-TIME REVOCATION CHECK
+  // Clients ping this every 15s. If Admin deleted the key, it returns valid: false!
+  app.post('/api/licenses/heartbeat', (req, res) => {
+    try {
+      const { key, sessionId, deviceLabel } = req.body || {};
+      const cleanKey = (key || '').trim().toUpperCase();
+      if (!cleanKey) {
+        return res.json({ valid: false, message: 'No license key provided.' });
+      }
+
+      if (cleanKey === ADMIN_MASTER_LICENSE_KEY) {
+        return res.json({ valid: true, isAdmin: true });
+      }
+
+      const licenses = loadLicenses();
+      const record = licenses.find(l => l.key?.toUpperCase() === cleanKey);
+
+      // IF KEY WAS DELETED OR DOES NOT EXIST ON SERVER -> INSTANT TERMINATION!
+      if (!record) {
+        return res.json({
+          valid: false,
+          terminated: true,
+          message: '⚠️ আপনার লাইসেন্সটি অ্যাডমিন দ্বারা মুছে ফেলা হয়েছে। অনুগ্রহ করে নতুন লাইসেন্স কী দিন।'
+        });
+      }
+
+      // IF KEY WAS REVOKED -> INSTANT TERMINATION!
+      if (record.status === 'revoked') {
+        return res.json({
+          valid: false,
+          terminated: true,
+          message: '⚠️ এই লাইসেন্সটি অ্যাডমিন বাতিল করেছেন। অনুগ্রহ করে নতুন লাইসেন্স কী দিন।'
+        });
+      }
+
+      const now = Date.now();
+      if (record.duration !== 'lifetime' && now > record.expiresAt) {
+        return res.json({
+          valid: false,
+          expired: true,
+          message: '⚠️ এই লাইসেন্সটির মেয়াদ শেষ হয়েছে। অনুগ্রহ করে নতুন লাইসেন্স কী দিন।'
+        });
+      }
+
+      // Update user last active timestamp
+      if (Array.isArray(record.activeUsers) && sessionId) {
+        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '127.0.0.1';
+        const userIdx = record.activeUsers.findIndex((u: any) => u.sessionId === sessionId);
+        if (userIdx >= 0) {
+          record.activeUsers[userIdx].lastActiveAt = now;
+          if (deviceLabel) record.activeUsers[userIdx].deviceLabel = deviceLabel;
+        } else {
+          record.activeUsers.unshift({
+            sessionId,
+            ip: clientIp,
+            userAgent: req.headers['user-agent'] || '',
+            deviceLabel: deviceLabel || parseDeviceLabel(req.headers['user-agent']),
+            activatedAt: now,
+            lastActiveAt: now
+          });
+        }
+        saveLicenses(licenses);
+      }
+
+      return res.json({ valid: true });
+    } catch (err: any) {
+      return res.json({ valid: true }); // Transient network error won't immediately lock out
+    }
+  });
+
+  // 4. GENERATE NEW LICENSE (from Admin Panel)
+  app.post('/api/licenses/generate', (req, res) => {
+    try {
+      const { duration, clientName, customDays } = req.body || {};
+      const now = Date.now();
+
+      let durationDays = 30;
+      switch (duration) {
+        case '1m': durationDays = 30; break;
+        case '6m': durationDays = 180; break;
+        case '1y': durationDays = 365; break;
+        case 'lifetime': durationDays = 36500; break;
+        case 'custom': durationDays = Math.max(1, Number(customDays) || 30); break;
+        default: durationDays = 30;
+      }
+
+      const prefixMap: Record<string, string> = {
+        '1m': '1M',
+        '6m': '6M',
+        '1y': '1Y',
+        'lifetime': 'LIFE',
+        'custom': `${durationDays}D`
+      };
+
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      const randStr = (len: number) => {
+        let s = '';
+        for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+        return s;
+      };
+
+      const timeHex = (now % 10000000).toString(36).toUpperCase().padStart(4, 'X').slice(-4);
+      const key = `SSM-${prefixMap[duration] || '1M'}-${timeHex}${randStr(1)}-${randStr(4)}-${randStr(4)}`;
+
+      const expiresAt = duration === 'lifetime' 
+        ? now + (100 * 365 * 24 * 60 * 60 * 1000) 
+        : now + (durationDays * 24 * 60 * 60 * 1000);
+
+      const record = {
+        id: `lic_${now}_${Math.random().toString(36).slice(2, 7)}`,
+        key,
+        duration: duration || '1m',
+        durationDays,
+        customDays: duration === 'custom' ? durationDays : undefined,
+        clientName: clientName?.trim() || 'Valued User',
+        createdAt: now,
+        expiresAt,
+        status: 'active',
+        activeUsers: []
+      };
+
+      const licenses = loadLicenses();
+      licenses.unshift(record);
+      saveLicenses(licenses);
+
+      return res.json({ success: true, license: record });
+    } catch (err: any) {
+      return res.status(500).json({ error: { message: err?.message || 'Failed to generate license' } });
+    }
+  });
+
+  // 5. DELETE LICENSE (IMMEDIATELY TERMINATES ALL ACTIVE SESSIONS RUNNING THIS KEY!)
+  app.delete('/api/licenses/:id', (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!id || id === ADMIN_MASTER_LICENSE_KEY || id === 'master-admin-shamim-key') {
+        return res.status(400).json({ error: { message: 'Master Admin key cannot be deleted.' } });
+      }
+
+      let licenses = loadLicenses();
+      const target = licenses.find(l => l.id === id || l.key === id);
+      if (!target) {
+        return res.status(404).json({ error: { message: 'License not found.' } });
+      }
+
+      // Remove from server database
+      licenses = licenses.filter(l => l.id !== id && l.key !== id);
+      saveLicenses(licenses);
+
+      console.log(`[LICENSE] Terminated & Deleted license key: ${target.key} (active users disconnected)`);
+
+      return res.json({
+        success: true,
+        message: `✓ License key ${target.key} has been permanently deleted from server. All active users running this key are now immediately terminated and locked out!`
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: { message: err?.message || 'Failed to delete license' } });
+    }
+  });
+
+  // Also support POST /api/licenses/delete for universal browser compatibility
+  app.post('/api/licenses/delete', (req, res) => {
+    try {
+      const { id } = req.body || {};
+      if (!id || id === ADMIN_MASTER_LICENSE_KEY || id === 'master-admin-shamim-key') {
+        return res.status(400).json({ error: { message: 'Master Admin key cannot be deleted.' } });
+      }
+
+      let licenses = loadLicenses();
+      const target = licenses.find(l => l.id === id || l.key === id);
+      if (!target) {
+        return res.status(404).json({ error: { message: 'License not found.' } });
+      }
+
+      licenses = licenses.filter(l => l.id !== id && l.key !== id);
+      saveLicenses(licenses);
+
+      console.log(`[LICENSE] Terminated & Deleted license key: ${target.key}`);
+
+      return res.json({
+        success: true,
+        message: `✓ License key ${target.key} deleted. Active users are now terminated!`
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: { message: err?.message || 'Failed to delete license' } });
+    }
+  });
+
+  // 6. REVOKE LICENSE
+  app.post('/api/licenses/revoke', (req, res) => {
+    try {
+      const { id } = req.body || {};
+      if (!id || id === ADMIN_MASTER_LICENSE_KEY || id === 'master-admin-shamim-key') {
+        return res.status(400).json({ error: { message: 'Master Admin key cannot be revoked.' } });
+      }
+
+      const licenses = loadLicenses();
+      const target = licenses.find(l => l.id === id || l.key === id);
+      if (!target) {
+        return res.status(404).json({ error: { message: 'License not found.' } });
+      }
+
+      target.status = 'revoked';
+      saveLicenses(licenses);
+
+      return res.json({ success: true, message: `License ${target.key} has been revoked.` });
+    } catch (err: any) {
+      return res.status(500).json({ error: { message: err?.message || 'Failed to revoke license' } });
+    }
+  });
+
+  // 7. SYNC LOCAL LICENSES TO SERVER (Ensures no previously generated keys are lost)
+  app.post('/api/licenses/sync', (req, res) => {
+    try {
+      const { keys } = req.body || {};
+      if (!Array.isArray(keys) || keys.length === 0) {
+        return res.json({ success: true, count: 0 });
+      }
+
+      const current = loadLicenses();
+      let added = 0;
+
+      for (const k of keys) {
+        if (!k.key || k.key === ADMIN_MASTER_LICENSE_KEY) continue;
+        if (!current.some(c => c.key?.toUpperCase() === k.key?.toUpperCase())) {
+          current.push({
+            id: k.id || `lic_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            key: k.key,
+            duration: k.duration || '1m',
+            durationDays: k.durationDays || 30,
+            clientName: k.clientName || 'Saved User',
+            createdAt: k.createdAt || Date.now(),
+            expiresAt: k.expiresAt || (Date.now() + 30 * 24 * 60 * 60 * 1000),
+            status: k.status || 'active',
+            activatedAt: k.activatedAt,
+            activeUsers: []
+          });
+          added++;
+        }
+      }
+
+      if (added > 0) {
+        saveLicenses(current);
+      }
+
+      return res.json({ success: true, addedCount: added, total: current.length });
+    } catch (err: any) {
+      return res.status(500).json({ error: { message: err?.message || 'Failed to sync' } });
     }
   });
 

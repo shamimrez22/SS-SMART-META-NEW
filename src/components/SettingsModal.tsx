@@ -8,6 +8,7 @@ import {
   Check,
   Tag,
   Zap,
+  Sparkles,
   RefreshCw,
   Globe,
   Cpu,
@@ -169,26 +170,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Metadata Generation Word & Tag Limits
                   </h4>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSettings(prev => ({
-                      ...prev,
-                      minTitleWords: 7,
-                      maxTitleWords: 15,
-                      minDescriptionWords: 20,
-                      maxDescriptionWords: 45,
-                      minKeywords: 35,
-                      maxKeywords: 50,
-                      concurrency: 3
-                    }));
-                    showNotification("Reset word limits to recommended stock defaults!", "info");
-                  }}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border bg-secondary hover:bg-accent text-[11px] font-bold text-muted-foreground hover:text-foreground transition-all cursor-pointer"
-                >
-                  <RefreshCw size={12} />
-                  <span>Defaults</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettings(prev => ({
+                        ...prev,
+                        marketplace: 'universal',
+                        minTitleWords: 7,
+                        maxTitleWords: 15,
+                        minDescriptionWords: 20,
+                        maxDescriptionWords: 45,
+                        minKeywords: 35,
+                        maxKeywords: 50,
+                        singleWordKeywords: false,
+                        autoSyncFilenameWithTitle: true,
+                        filenameFormat: 'exact_title',
+                        aiModel: 'gemini-3.6-flash',
+                        concurrency: 3
+                      }));
+                      showNotification("✓ Standard Stock Metadata Applied: 50 Keywords, 7-15 Word Title, 20-45 Word Description (100% Adobe Stock & Shutterstock Compliant)", "success");
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-600 hover:to-yellow-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-95 border border-amber-300"
+                    title="Auto-sets official standard stock parameters for Adobe Stock & Shutterstock"
+                  >
+                    <Sparkles size={13} className="text-slate-950 fill-slate-950" />
+                    <span>STANDARD</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettings(prev => ({
+                        ...prev,
+                        minTitleWords: 7,
+                        maxTitleWords: 15,
+                        minDescriptionWords: 20,
+                        maxDescriptionWords: 45,
+                        minKeywords: 35,
+                        maxKeywords: 50,
+                        concurrency: 3
+                      }));
+                      showNotification("Reset word limits to recommended stock defaults!", "info");
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border bg-secondary hover:bg-accent text-[11px] font-bold text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                  >
+                    <RefreshCw size={12} />
+                    <span>Defaults</span>
+                  </button>
+                </div>
               </div>
 
               {/* 1. TITLE WORD LENGTH (FULL WIDTH WIDE ROW) */}

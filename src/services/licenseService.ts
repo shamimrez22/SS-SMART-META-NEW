@@ -6,6 +6,15 @@
 
 export type LicenseDuration = '1m' | '6m' | '1y' | 'lifetime' | 'custom';
 
+export interface ActiveUserSession {
+  sessionId: string;
+  ip: string;
+  userAgent: string;
+  deviceLabel: string;
+  activatedAt: number;
+  lastActiveAt: number;
+}
+
 export interface LicenseKeyRecord {
   id: string;
   key: string;
@@ -17,6 +26,10 @@ export interface LicenseKeyRecord {
   expiresAt: number; // timestamp in ms; 0 or large number for lifetime
   status: 'active' | 'revoked';
   activatedAt?: number;
+  activeUsers?: ActiveUserSession[];
+  activeUsersCount?: number;
+  onlineUsersCount?: number;
+  isOnline?: boolean;
 }
 
 export interface AdminConfig {
@@ -556,5 +569,266 @@ export function checkCurrentLicenseStatus(): LicenseStatusResult {
     daysRemaining,
     activeLicense,
     message: activeLicense.duration === 'lifetime' ? 'Lifetime License Active' : `License Active (${daysRemaining}d remaining)`
+  };
+}
+
+// ==========================================
+// REAL-TIME SERVER LICENSE & SESSION TRACKING
+// ==========================================
+
+export function getOrCreateSessionId(): string {
+  try {
+    let sId = localStorage.getItem('ss_meta_session_id_v1');
+    if (!sId) {
+      sId = 'usr_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
+      localStorage.setItem('ss_meta_session_id_v1', sId);
+    }
+    return sId;
+  } catch {
+    return 'usr_' + Math.random().toString(36).slice(2, 9);
+  }
+}
+
+export function getClientDeviceLabel(): string {
+  if (typeof navigator === 'undefined') return 'Web Client';
+  const ua = navigator.userAgent;
+  let browser = 'Browser';
+  if (ua.includes('Edg/')) browser = 'Edge';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
+  else if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Safari/') && !ua.includes('Chrome/')) browser = 'Safari';
+  else if (ua.includes('OPR/') || ua.includes('Opera/')) browser = 'Opera';
+
+  let os = 'Device';
+  if (ua.includes('Windows NT 10.0')) os = 'Windows 10/11';
+  else if (ua.includes('Windows')) os = 'Windows';
+  else if (ua.includes('Mac OS X')) os = 'macOS';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+  else if (ua.includes('Linux')) os = 'Linux';
+
+  return `${browser} on ${os}`;
+}
+
+/**
+ * Fetch all licenses and active users from centralized server
+ */
+export async function fetchServerLicenses(): Promise<LicenseKeyRecord[]> {
+  try {
+    const res = await fetch('/api/licenses');
+    const data = await res.json();
+    if (data.success && Array.isArray(data.licenses)) {
+      saveGeneratedKeys(data.licenses);
+      return data.licenses;
+    }
+  } catch (err) {
+    console.warn('Failed to fetch licenses from server:', err);
+  }
+  return getAllGeneratedKeys();
+}
+
+/**
+ * Generate a new license directly on server
+ */
+export async function generateLicenseKeyServer(
+  duration: LicenseDuration,
+  clientName?: string,
+  customDays?: number
+): Promise<LicenseKeyRecord> {
+  try {
+    const res = await fetch('/api/licenses/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ duration, clientName, customDays })
+    });
+    const data = await res.json();
+    if (data.success && data.license) {
+      const all = getAllGeneratedKeys();
+      all.unshift(data.license);
+      saveGeneratedKeys(all);
+      return data.license;
+    }
+  } catch (err) {
+    console.warn('Server key generation failed, using local generator:', err);
+  }
+  return generateLicenseKey(duration, clientName, customDays);
+}
+
+/**
+ * Delete a license on the server (Immediately invalidates active users)
+ */
+export async function deleteLicenseKeyServer(keyId: string): Promise<boolean> {
+  if (keyId === ADMIN_MASTER_LICENSE_KEY || keyId === 'master-admin-shamim-key') {
+    return false;
+  }
+  try {
+    await fetch('/api/licenses/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: keyId })
+    });
+  } catch (err) {
+    console.warn('Server key delete notice:', err);
+  }
+  deleteLicenseKey(keyId);
+  return true;
+}
+
+/**
+ * Revoke a license on the server
+ */
+export async function revokeLicenseKeyServer(keyId: string): Promise<boolean> {
+  if (keyId === ADMIN_MASTER_LICENSE_KEY || keyId === 'master-admin-shamim-key') {
+    return false;
+  }
+  try {
+    await fetch('/api/licenses/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: keyId })
+    });
+  } catch (err) {
+    console.warn('Server key revoke notice:', err);
+  }
+  revokeLicenseKey(keyId);
+  return true;
+}
+
+/**
+ * Sync all local keys from browser to server
+ */
+export async function syncLocalKeysToServer(): Promise<void> {
+  try {
+    const localKeys = getAllGeneratedKeys();
+    if (localKeys.length > 0) {
+      await fetch('/api/licenses/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: localKeys })
+      });
+    }
+  } catch {}
+}
+
+/**
+ * Validate and Activate a License Key with real-time server verification
+ */
+export async function validateAndActivateKeyAsync(rawKey: string): Promise<{ success: boolean; message: string; license?: ActiveLicenseState }> {
+  const cleaned = rawKey.trim().toUpperCase();
+  if (!cleaned) {
+    return { success: false, message: 'Please enter a license key' };
+  }
+
+  // Master Admin Key
+  if (cleaned === ADMIN_MASTER_LICENSE_KEY) {
+    saveAdminConfig({ isAdmin: true });
+    const now = Date.now();
+    const farFuture = now + (100 * 365 * 24 * 60 * 60 * 1000);
+    const activeState: ActiveLicenseState = {
+      key: ADMIN_MASTER_LICENSE_KEY,
+      duration: 'lifetime',
+      durationDays: 36500,
+      activatedAt: now,
+      expiresAt: farFuture,
+      clientName: '👑 Master Admin (Shamim)'
+    };
+    setActiveLicense(activeState);
+    return {
+      success: true,
+      message: '✓ Welcome Admin Shamim! Master Lifetime Admin Key (ADMIN-SHAMIM-321) permanently activated with full Admin privileges.',
+      license: activeState
+    };
+  }
+
+  const sessionId = getOrCreateSessionId();
+  const deviceLabel = getClientDeviceLabel();
+
+  try {
+    const res = await fetch('/api/licenses/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: cleaned, sessionId, deviceLabel })
+    });
+    const data = await res.json();
+    if (data.valid && data.license) {
+      const activeState: ActiveLicenseState = {
+        key: data.license.key,
+        duration: data.license.duration,
+        durationDays: data.license.durationDays,
+        activatedAt: data.license.activatedAt || Date.now(),
+        expiresAt: data.license.expiresAt,
+        clientName: data.license.clientName
+      };
+      setActiveLicense(activeState);
+      return {
+        success: true,
+        message: data.message || `License successfully activated!`,
+        license: activeState
+      };
+    } else {
+      return {
+        success: false,
+        message: data.message || 'Invalid or terminated license key.'
+      };
+    }
+  } catch (err) {
+    return validateAndActivateKey(cleaned);
+  }
+}
+
+/**
+ * Real-time background heartbeat to detect if Admin deletes/revokes the key.
+ * If key is deleted on server, client is IMMEDIATELY logged out & locked out.
+ */
+let heartbeatInterval: any = null;
+
+export function startLicenseHeartbeat(onTerminated: (reason: string) => void): () => void {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+  }
+
+  const checkHeartbeat = async () => {
+    const active = getActiveLicense();
+    const adminConfig = getAdminConfig();
+
+    // Master Admin is immune to termination
+    if (adminConfig.isAdmin || (active && active.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
+      return;
+    }
+
+    if (!active || !active.key) {
+      return;
+    }
+
+    const sessionId = getOrCreateSessionId();
+    const deviceLabel = getClientDeviceLabel();
+
+    try {
+      const res = await fetch('/api/licenses/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: active.key, sessionId, deviceLabel })
+      });
+      const data = await res.json();
+
+      if (data && data.valid === false) {
+        // TERMINATED BY ADMIN! IMMEDIATELY CLEAR AND LOCK SCREEN!
+        clearActiveLicense();
+        const reason = data.message || '⚠️ আপনার লাইসেন্সটি অ্যাডমিন দ্বারা মুছে ফেলা বা বাতিল করা হয়েছে। নতুন লাইসেন্স কী দিন।';
+        onTerminated(reason);
+      }
+    } catch {}
+  };
+
+  // Run initial check after 2 seconds, then every 12 seconds
+  const initTimeout = setTimeout(checkHeartbeat, 2000);
+  heartbeatInterval = setInterval(checkHeartbeat, 12000);
+
+  return () => {
+    clearTimeout(initTimeout);
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
   };
 }

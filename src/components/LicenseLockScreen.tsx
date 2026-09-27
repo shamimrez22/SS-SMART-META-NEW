@@ -19,6 +19,7 @@ import {
   KeyRound
 } from 'lucide-react';
 import {
+  validateAndActivateKeyAsync,
   validateAndActivateKey,
   getAdminConfig,
   saveAdminConfig,
@@ -59,7 +60,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
   const adminConfig = getAdminConfig();
 
   // Handle License Key submission
-  const handleActivate = (e: React.FormEvent) => {
+  const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
@@ -69,8 +70,8 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
     }
 
     setIsVerifying(true);
-    setTimeout(() => {
-      const result = validateAndActivateKey(keyInput);
+    try {
+      const result = await validateAndActivateKeyAsync(keyInput);
       setIsVerifying(false);
       if (result.success) {
         showNotification(result.message, 'success');
@@ -79,7 +80,12 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
         setErrorMessage(result.message);
         showNotification(result.message, 'error');
       }
-    }, 600);
+    } catch (err: any) {
+      setIsVerifying(false);
+      const msg = err?.message || 'Verification error';
+      setErrorMessage(msg);
+      showNotification(msg, 'error');
+    }
   };
 
   // Handle Admin Login / Bypass (Credentials: SHAMIM / 321 or PIN)

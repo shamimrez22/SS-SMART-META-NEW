@@ -20,9 +20,15 @@ import {
   Calendar,
   Clock,
   User,
+  Users,
+  Monitor,
+  Laptop,
+  ChevronDown,
+  ChevronUp,
   RefreshCw,
   Sliders,
-  Share2
+  Share2,
+  Radio
 } from 'lucide-react';
 import {
   LicenseDuration,
@@ -31,9 +37,11 @@ import {
   getAdminConfig,
   saveAdminConfig,
   getAllGeneratedKeys,
-  generateLicenseKey,
-  revokeLicenseKey,
-  deleteLicenseKey,
+  fetchServerLicenses,
+  generateLicenseKeyServer,
+  revokeLicenseKeyServer,
+  deleteLicenseKeyServer,
+  syncLocalKeysToServer,
   getDurationDays,
   ADMIN_MASTER_LICENSE_KEY
 } from '../services/licenseService';
@@ -71,6 +79,20 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   // Generated keys list
   const [keysList, setKeysList] = useState<LicenseKeyRecord[]>([]);
+  const [expandedUserKeyId, setExpandedUserKeyId] = useState<string | null>(null);
+  const [isLoadingKeys, setIsLoadingKeys] = useState(false);
+
+  const refreshKeys = async () => {
+    setIsLoadingKeys(true);
+    try {
+      const serverKeys = await fetchServerLicenses();
+      setKeysList(serverKeys);
+    } catch {
+      setKeysList(getAllGeneratedKeys());
+    } finally {
+      setIsLoadingKeys(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -79,7 +101,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       setAdminUsernameInput(currentConfig.adminUsername || 'SHAMIM');
       setAdminPasswordInput(currentConfig.adminPassword || '321');
       setAdminPinInput(currentConfig.adminPin || '321');
-      setKeysList(getAllGeneratedKeys());
+      refreshKeys();
+      syncLocalKeysToServer();
     }
   }, [isOpen]);
 
@@ -130,12 +153,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     showNotification("✓ Admin Login credentials updated successfully!", "success");
   };
 
-  // Generate Key
-  const handleGenerateKey = () => {
+  // Generate Key on Server
+  const handleGenerateKey = async () => {
     const customDaysNum = selectedDuration === 'custom' ? Math.max(1, Number(customDays) || 33) : undefined;
-    const newRecord = generateLicenseKey(selectedDuration, clientNote, customDaysNum);
+    setIsLoadingKeys(true);
+    const newRecord = await generateLicenseKeyServer(selectedDuration, clientNote, customDaysNum);
     setJustGeneratedKey(newRecord);
-    setKeysList(getAllGeneratedKeys());
+    await refreshKeys();
     if (onStatusChanged) onStatusChanged();
     showNotification(
       `✓ Generated unique ${selectedDuration === 'custom' ? `${customDaysNum} Days` : selectedDuration.toUpperCase()} license key!`,
@@ -153,23 +177,25 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }, 2000);
   };
 
-  // Revoke Key
-  const handleRevokeKey = (keyId: string) => {
-    revokeLicenseKey(keyId);
-    setKeysList(getAllGeneratedKeys());
+  // Revoke Key on Server
+  const handleRevokeKey = async (keyId: string) => {
+    setIsLoadingKeys(true);
+    await revokeLicenseKeyServer(keyId);
+    await refreshKeys();
     if (onStatusChanged) onStatusChanged();
-    showNotification("License key revoked successfully!", "info");
+    showNotification("License key revoked successfully! Active users locked out.", "info");
   };
 
-  // Delete Key (Permanently terminates and clears from database)
-  const handleDeleteKey = (keyId: string) => {
-    deleteLicenseKey(keyId);
-    setKeysList(getAllGeneratedKeys());
+  // Delete Key on Server (Immediately terminates all active sessions running this key)
+  const handleDeleteKey = async (keyId: string) => {
+    setIsLoadingKeys(true);
+    await deleteLicenseKeyServer(keyId);
     if (justGeneratedKey && justGeneratedKey.id === keyId) {
       setJustGeneratedKey(null);
     }
+    await refreshKeys();
     if (onStatusChanged) onStatusChanged();
-    showNotification("✓ Expired license key permanently deleted and terminated!", "info");
+    showNotification("✓ লাইসেন্স কী চিরতরে মুছে ফেলা হয়েছে! সমস্ত অ্যাক্টিভ ইউজার সঙ্গে সঙ্গে ডিসকানেক্ট ও লক হয়ে গেছে।", "info");
   };
 
   return (
@@ -752,31 +778,48 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           {/* TAB 4: GENERATED KEYS DATABASE */}
           {activeTab === 'keys-list' && (
             <div className="space-y-4 animate-in fade-in duration-150">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#0a1727] p-3.5 rounded-xl border border-[#1b2d45]">
                 <div>
-                  <h4 className="text-sm font-black text-white uppercase tracking-wider">
-                    All Generated License Keys ({keysList.length})
-                  </h4>
-                  <p className="text-xs text-slate-400">
-                    এখানে তৈরি হওয়া সমস্ত লাইসেন্স কী ও তাদের মেয়াদ সংরক্ষিত থাকে।
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-black text-white uppercase tracking-wider">
+                      Live License Database ({keysList.length})
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                      Server-Authoritative Sync
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    এখানে সমস্ত লাইসেন্স কী এবং কোন কীতে কতজন ইউজার অ্যাক্টিভ রয়েছে তা রিয়েল-টাইমে দেখতে ও নিয়ন্ত্রণ করতে পারবেন।
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const blob = new Blob([JSON.stringify(keysList, null, 2)], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `ss_meta_licenses_${Date.now()}.json`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                    showNotification("Exported all license keys!", "success");
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-[#0f2138] hover:bg-[#152e4d] border border-[#234267] text-xs font-bold text-slate-300 hover:text-white transition-colors cursor-pointer"
-                >
-                  Export JSON Backup
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={refreshKeys}
+                    disabled={isLoadingKeys}
+                    className="px-3 py-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600 text-cyan-300 hover:text-white border border-cyan-500/40 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                    title="রিয়েল-টাইম ইউজার স্ট্যাটাস রিফ্রেশ করুন"
+                  >
+                    <RefreshCw size={13} className={isLoadingKeys ? "animate-spin" : ""} />
+                    <span>Live Refresh</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const blob = new Blob([JSON.stringify(keysList, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `ss_meta_licenses_${Date.now()}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      showNotification("Exported all license keys!", "success");
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-[#0f2138] hover:bg-[#152e4d] border border-[#234267] text-xs font-bold text-slate-300 hover:text-white transition-colors cursor-pointer"
+                  >
+                    Export JSON
+                  </button>
+                </div>
               </div>
 
               {keysList.length === 0 ? (
@@ -792,15 +835,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="space-y-2.5">
+                <div className="space-y-3">
                   {keysList.map(record => {
                     const isMasterAdmin = record.key === ADMIN_MASTER_LICENSE_KEY;
                     const isExpired = (record.duration !== 'lifetime' && Date.now() > record.expiresAt) || record.status === 'revoked';
+                    const isDrawerOpen = expandedUserKeyId === record.id;
+                    const onlineCount = record.onlineUsersCount || 0;
+                    const totalUsersCount = record.activeUsersCount || (record.activeUsers?.length || 0);
+
                     return (
                       <div
                         key={record.id}
                         className={cn(
-                          "p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all",
+                          "rounded-xl border transition-all overflow-hidden",
                           isMasterAdmin
                             ? "bg-gradient-to-r from-amber-950/40 to-[#0b1726] border-amber-500/60 shadow-md"
                             : isExpired
@@ -808,100 +855,209 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             : "bg-[#07121e] border-[#182c44] hover:border-blue-500/40"
                         )}
                       >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={cn(
-                              "font-mono font-black text-xs select-all",
-                              isMasterAdmin ? "text-amber-300 text-sm tracking-wider" : isExpired ? "text-red-300 font-bold tracking-wider" : "text-white"
-                            )}>
-                              {record.key}
-                            </span>
-                            {isMasterAdmin ? (
-                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded border bg-amber-500/25 text-amber-300 border-amber-400/60 shadow-xs flex items-center gap-1">
-                                👑 MASTER ADMIN (SHAMIM)
+                        <div className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="space-y-1.5 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={cn(
+                                "font-mono font-black text-xs select-all",
+                                isMasterAdmin ? "text-amber-300 text-sm tracking-wider" : isExpired ? "text-red-300 font-bold tracking-wider" : "text-white"
+                              )}>
+                                {record.key}
                               </span>
-                            ) : isExpired ? (
-                              <span className="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded border bg-red-600/40 text-red-200 border-red-400 shadow-sm flex items-center gap-1">
-                                ✕ EXPIRED (মেয়াদ শেষ)
+
+                              {isMasterAdmin ? (
+                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded border bg-amber-500/25 text-amber-300 border-amber-400/60 shadow-xs flex items-center gap-1">
+                                  👑 MASTER ADMIN (SHAMIM)
+                                </span>
+                              ) : isExpired ? (
+                                <span className="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded border bg-red-600/40 text-red-200 border-red-400 shadow-sm flex items-center gap-1">
+                                  ✕ EXPIRED (মেয়াদ শেষ)
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-mono font-black uppercase px-2 py-0.2 rounded border bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
+                                  ✓ ACTIVE
+                                </span>
+                              )}
+
+                              <span className={cn(
+                                "text-[10px] font-bold px-1.5 py-0.2 rounded border uppercase",
+                                isMasterAdmin
+                                  ? "text-amber-300 bg-amber-500/15 border-amber-500/30"
+                                  : isExpired
+                                  ? "text-red-300 bg-red-500/20 border-red-500/40 font-bold"
+                                  : "text-cyan-400 bg-cyan-500/10 border-cyan-500/20"
+                              )}>
+                                {record.duration === 'lifetime' ? 'Permanent Lifetime' : `${record.durationDays} Days`}
                               </span>
+
+                              {/* LIVE ACTIVE USERS BADGE */}
+                              {!isMasterAdmin && (
+                                onlineCount > 0 ? (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 flex items-center gap-1.5 shadow-xs animate-pulse">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                                    <span>🟢 {onlineCount} Online ({totalUsersCount} Total)</span>
+                                  </span>
+                                ) : totalUsersCount > 0 ? (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700/50 text-slate-300 border border-slate-600 flex items-center gap-1.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                                    <span>⚪ {totalUsersCount} Devices (Offline)</span>
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-800/60 text-slate-400 border border-slate-700/60">
+                                    💤 0 Users (Unused)
+                                  </span>
+                                )
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-3 text-[11px] text-slate-400 flex-wrap">
+                              <span>Note: <strong className={isMasterAdmin ? "text-amber-200" : isExpired ? "text-red-200 font-semibold" : "text-slate-300"}>{record.clientName || 'General'}</strong></span>
+                              <span>Created: {new Date(record.createdAt).toLocaleDateString()}</span>
+                              <span className={isExpired ? "text-red-400 font-bold" : ""}>
+                                {isExpired ? "Expired On: " : "Valid Till: "}
+                                {record.duration === 'lifetime' ? 'Permanent Lifetime' : new Date(record.expiresAt).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
+                            {/* Toggle Connected Users Drawer */}
+                            {!isMasterAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedUserKeyId(isDrawerOpen ? null : record.id)}
+                                className={cn(
+                                  "px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all border",
+                                  isDrawerOpen
+                                    ? "bg-cyan-600 text-white border-cyan-400 shadow-sm"
+                                    : totalUsersCount > 0
+                                    ? "bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 border-cyan-800/80"
+                                    : "bg-slate-800/60 hover:bg-slate-800 text-slate-400 border-slate-700"
+                                )}
+                                title="কোন কোন ডিভাইসে এই কী চলছে তা দেখুন"
+                              >
+                                <Users size={13} />
+                                <span>Users ({totalUsersCount})</span>
+                                {isDrawerOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleCopyKey(record.key, record.id)}
+                              className={cn(
+                                "p-1.5 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors",
+                                isMasterAdmin
+                                  ? "bg-amber-500/20 hover:bg-amber-500 text-amber-200 hover:text-white border border-amber-500/40"
+                                  : isExpired
+                                  ? "bg-red-500/20 hover:bg-red-600 text-red-200 hover:text-white border border-red-500/40"
+                                  : "bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/30"
+                              )}
+                              title="Copy Key"
+                            >
+                              {copiedKeyId === record.id ? <Check size={13} /> : <Copy size={13} />}
+                              <span className="text-[11px]">Copy</span>
+                            </button>
+
+                            {!isMasterAdmin && !isExpired && record.status === 'active' && (
+                              <button
+                                type="button"
+                                onClick={() => handleRevokeKey(record.id)}
+                                className="p-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                title="Revoke Key (ইউজার সঙ্গে সঙ্গে লক হয়ে যাবে)"
+                              >
+                                <Lock size={13} />
+                                <span className="text-[11px]">Revoke</span>
+                              </button>
+                            )}
+
+                            {!isMasterAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (window.confirm(`⚠️ আপনি কি নিশ্চিতভাবে লাইসেন্স কী "${record.key}" মুছে ফেলতে চান?\n\nএটি মুছে ফেললে এই কী ব্যবহারকারী সমস্ত ইউজার সঙ্গে সঙ্গে ডিসকানেক্ট ও লক হয়ে যাবে এবং তাদের নতুন লাইসেন্স কী দিতে হবে!`)) {
+                                    handleDeleteKey(record.id);
+                                  }
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white border border-red-400 text-xs font-black flex items-center gap-1.5 shadow-md shadow-red-950/60 cursor-pointer transition-all active:scale-95"
+                                title="মুছে ফেলার সঙ্গে সঙ্গে এই কী ব্যবহারকারী সমস্ত ইউজার অবিলম্বে ডিসকানেক্ট ও লক হয়ে যাবে!"
+                              >
+                                <Trash2 size={13} />
+                                <span>Delete (মুছে ফেলুন)</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* EXPANDABLE CONNECTED DEVICES & USERS DRAWER */}
+                        {isDrawerOpen && (
+                          <div className="p-3.5 bg-[#050c14] border-t border-[#182c44] space-y-2.5 animate-in slide-in-from-top-1 duration-150">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                                <Monitor size={14} />
+                                এই লাইসেন্সটি যেসব ডিভাইসে ব্যবহৃত হচ্ছে ({record.activeUsers?.length || 0}):
+                              </span>
+                              <span className="text-[11px] text-slate-400">
+                                লাইসেন্স ডিলিট করলে এই সমস্ত ডিভাইস অবিলম্বে ব্লক হয়ে যাবে।
+                              </span>
+                            </div>
+
+                            {(!record.activeUsers || record.activeUsers.length === 0) ? (
+                              <div className="p-4 text-center rounded-lg bg-[#091522] border border-[#1b314d] text-slate-400 text-xs">
+                                💤 এই লাইসেন্স কী দিয়ে এখনও পর্যন্ত কোনো ইউজার বা ডিভাইস লগইন করেনি।
+                              </div>
                             ) : (
-                              <span className="text-[9px] font-mono font-black uppercase px-2 py-0.2 rounded border bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
-                                ✓ ACTIVE
-                              </span>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                {record.activeUsers.map((userSession, uIdx) => {
+                                  const isUserOnline = (Date.now() - (userSession.lastActiveAt || 0)) <= 90000;
+                                  const diffSec = Math.floor((Date.now() - (userSession.lastActiveAt || 0)) / 1000);
+                                  let timeAgoStr = 'Just now';
+                                  if (diffSec >= 60 && diffSec < 3600) timeAgoStr = `${Math.floor(diffSec / 60)}m ago`;
+                                  else if (diffSec >= 3600 && diffSec < 86400) timeAgoStr = `${Math.floor(diffSec / 3600)}h ago`;
+                                  else if (diffSec >= 86400) timeAgoStr = `${Math.floor(diffSec / 86400)}d ago`;
+
+                                  return (
+                                    <div
+                                      key={userSession.sessionId || uIdx}
+                                      className={cn(
+                                        "p-2.5 rounded-lg border flex items-start justify-between text-xs gap-2 transition-all",
+                                        isUserOnline 
+                                          ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-100" 
+                                          : "bg-[#091522] border-[#1b314d] text-slate-300"
+                                      )}
+                                    >
+                                      <div className="space-y-0.5 flex-1 min-w-0">
+                                        <div className="flex items-center gap-1.5 font-bold truncate">
+                                          <Laptop size={13} className={isUserOnline ? "text-emerald-400" : "text-slate-400"} />
+                                          <span className="truncate">{userSession.deviceLabel || 'Web Client'}</span>
+                                        </div>
+                                        <div className="text-[10.5px] text-slate-400 flex items-center gap-2">
+                                          <span>IP: <strong className="text-slate-200">{userSession.ip || '127.0.0.1'}</strong></span>
+                                          <span>•</span>
+                                          <span>Activated: {new Date(userSession.activatedAt).toLocaleDateString()}</span>
+                                        </div>
+                                      </div>
+                                      <div className="text-right shrink-0">
+                                        <span className={cn(
+                                          "px-2 py-0.5 rounded text-[9.5px] font-bold block",
+                                          isUserOnline
+                                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                                            : "bg-slate-800 text-slate-400 border border-slate-700"
+                                        )}>
+                                          {isUserOnline ? "🟢 Online" : "⚪ Offline"}
+                                        </span>
+                                        <span className="text-[10px] text-slate-400 block mt-0.5">
+                                          {timeAgoStr}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             )}
-                            <span className={cn(
-                              "text-[10px] font-bold px-1.5 py-0.2 rounded border uppercase",
-                              isMasterAdmin
-                                ? "text-amber-300 bg-amber-500/15 border-amber-500/30"
-                                : isExpired
-                                ? "text-red-300 bg-red-500/20 border-red-500/40 font-bold"
-                                : "text-cyan-400 bg-cyan-500/10 border-cyan-500/20"
-                            )}>
-                              {record.duration === 'lifetime' ? 'Permanent Lifetime' : `${record.durationDays} Days`}
-                            </span>
                           </div>
-                          <div className="flex items-center gap-3 text-[11px] text-slate-400 flex-wrap">
-                            <span>Note: <strong className={isMasterAdmin ? "text-amber-200" : isExpired ? "text-red-200 font-semibold" : "text-slate-300"}>{record.clientName || 'General'}</strong></span>
-                            <span>Created: {new Date(record.createdAt).toLocaleDateString()}</span>
-                            <span className={isExpired ? "text-red-400 font-bold" : ""}>
-                              {isExpired ? "Expired On: " : "Valid Till: "}
-                              {record.duration === 'lifetime' ? 'Permanent Lifetime' : new Date(record.expiresAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={() => handleCopyKey(record.key, record.id)}
-                            className={cn(
-                              "p-1.5 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors",
-                              isMasterAdmin
-                                ? "bg-amber-500/20 hover:bg-amber-500 text-amber-200 hover:text-white border border-amber-500/40"
-                                : isExpired
-                                ? "bg-red-500/20 hover:bg-red-600 text-red-200 hover:text-white border border-red-500/40"
-                                : "bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/30"
-                            )}
-                            title="Copy Key"
-                          >
-                            {copiedKeyId === record.id ? <Check size={13} /> : <Copy size={13} />}
-                            <span className="text-[11px]">Copy</span>
-                          </button>
-
-                          {!isMasterAdmin && !isExpired && record.status === 'active' && (
-                            <button
-                              type="button"
-                              onClick={() => handleRevokeKey(record.id)}
-                              className="p-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                              title="Revoke Key"
-                            >
-                              <Lock size={13} />
-                              <span className="text-[11px]">Revoke</span>
-                            </button>
-                          )}
-
-                          {isExpired && !isMasterAdmin ? (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteKey(record.id)}
-                              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white border-2 border-red-400 text-xs font-black flex items-center gap-1.5 shadow-md shadow-red-900/50 cursor-pointer transition-all active:scale-95"
-                              title="মেয়াদোত্তীর্ণ কী চিরতরে মুছে দিন (Delete & Terminate)"
-                            >
-                              <Trash2 size={13} />
-                              <span>Delete (মুছে ফেলুন)</span>
-                            </button>
-                          ) : !isMasterAdmin ? (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteKey(record.id)}
-                              className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/30 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                              title="Delete Key"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          ) : null}
-                        </div>
+                        )}
                       </div>
                     );
                   })}

@@ -34,7 +34,7 @@ import {
   Image as ImageIcon,
   Film
 } from 'lucide-react';
-import { checkCurrentLicenseStatus, validateAndActivateKey, getAdminConfig, LicenseStatusResult } from '../services/licenseService';
+import { checkCurrentLicenseStatus, validateAndActivateKey, validateAndActivateKeyAsync, getAdminConfig, LicenseStatusResult } from '../services/licenseService';
 import { buildLocalSmartMetadata } from '../services/aiService';
 import { cn } from '../lib/utils';
 
@@ -44,8 +44,8 @@ interface MetaMasterViewProps {
   selectedFileId: string | null;
   setSelectedFileId: (id: string | null) => void;
   openPreviewModal: (file: StockMetadata) => void;
-  mode: 'image' | 'vector' | 'video' | 'prompt';
-  setMode: (mode: 'image' | 'vector' | 'video' | 'prompt') => void;
+  mode: 'all' | 'image' | 'vector' | 'video' | 'prompt';
+  setMode: (mode: 'all' | 'image' | 'vector' | 'video' | 'prompt') => void;
   theme: string;
   setTheme: (theme: any) => void;
   settings: GeneratorSettings;
@@ -222,10 +222,35 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   };
 
   const currentModeFiles = React.useMemo(() => {
+    if (mode === 'all') return files;
     if (mode === 'vector') return files.filter(isVectorFile);
     if (mode === 'video') return files.filter(isVideoFile);
     return files.filter(f => !isVectorFile(f) && !isVideoFile(f));
   }, [files, mode]);
+
+  // Ensure files are never hidden: if current mode has 0 files but other modes have files, switch to all
+  React.useEffect(() => {
+    if (files.length > 0 && currentModeFiles.length === 0) {
+      setMode('all');
+    }
+  }, [files.length, currentModeFiles.length, setMode]);
+
+  // High-performance Pagination for smooth rendering of up to 5,000+ files without lag
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(50); // 25, 50, 100, 200, 500
+
+  const totalPages = Math.max(1, Math.ceil(currentModeFiles.length / pageSize));
+
+  React.useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(1);
+    }
+  }, [totalPages, currentPage]);
+
+  const visibleFiles = React.useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return currentModeFiles.slice(startIndex, startIndex + pageSize);
+  }, [currentModeFiles, currentPage, pageSize]);
 
   const imageFilesCount = React.useMemo(() => files.filter(f => !isVectorFile(f) && !isVideoFile(f)).length, [files]);
   const vectorFilesCount = React.useMemo(() => files.filter(isVectorFile).length, [files]);
@@ -423,39 +448,59 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Mode</legend>
             <button 
               type="button"
-              onClick={() => setMode('image')}
+              onClick={() => setMode('all')}
+              title={`Show ALL assets in workspace (Images, EPS Vectors, Videos) - ${allFilesCount} files`}
               className={cn(
-                "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap",
+                "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1",
+                mode === 'all' 
+                  ? "bg-[#22c55e] text-white shadow-xs ring-1 ring-emerald-300" 
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+              )}
+            >
+              <span>ALL</span>
+              <span className="text-[9.5px] opacity-85 font-mono font-normal">({allFilesCount})</span>
+            </button>
+            <button 
+              type="button"
+              onClick={() => setMode('image')}
+              title={`Show Image assets (JPG, PNG, WebP) - ${imageFilesCount} files`}
+              className={cn(
+                "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1",
                 mode === 'image' 
                   ? "bg-[#22c55e] text-white shadow-xs" 
                   : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
               )}
             >
-              Image
+              <span>Image</span>
+              <span className="text-[9.5px] opacity-85 font-mono font-normal">({imageFilesCount})</span>
             </button>
             <button 
               type="button"
               onClick={() => setMode('vector')}
+              title={`Show Vector assets (EPS, AI, SVG) - ${vectorFilesCount} files`}
               className={cn(
-                "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap",
+                "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1",
                 mode === 'vector' 
                   ? "bg-[#22c55e] text-white shadow-xs" 
                   : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
               )}
             >
-              Vector
+              <span>Vector</span>
+              <span className="text-[9.5px] opacity-85 font-mono font-normal">({vectorFilesCount})</span>
             </button>
             <button 
               type="button"
               onClick={() => setMode('video')}
+              title={`Show Video assets (MP4, MOV, MKV) - ${videoFilesCount} files`}
               className={cn(
-                "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap",
+                "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1",
                 mode === 'video' 
                   ? "bg-[#22c55e] text-white shadow-xs" 
                   : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
               )}
             >
-              Video
+              <span>Video</span>
+              <span className="text-[9.5px] opacity-85 font-mono font-normal">({videoFilesCount})</span>
             </button>
             <button 
               type="button"
@@ -667,10 +712,24 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               type="button"
               onClick={startGeneration}
               disabled={isGenerating || currentModeFiles.length === 0}
+              title={`Generate metadata for ${currentModeFiles.length} files in current ${mode.toUpperCase()} view`}
               className="px-2.5 py-1 h-7 bg-[#22c55e] hover:bg-[#16a34a] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all disabled:opacity-50 shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
               <Play size={11} fill="currentColor" />
               <span>Start</span>
+            </button>
+            <button 
+              type="button"
+              onClick={() => {
+                setMode('all');
+                setTimeout(() => startGeneration(), 50);
+              }}
+              disabled={isGenerating || allFilesCount === 0}
+              title={`Generate metadata for ALL ${allFilesCount} files (EPS Vectors + Videos + Images) simultaneously!`}
+              className="px-2.5 py-1 h-7 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-[11px] rounded cursor-pointer active:scale-95 transition-all disabled:opacity-50 shadow-2xs whitespace-nowrap flex items-center gap-1 border border-emerald-400/40"
+            >
+              <Zap size={11} className="text-yellow-300 fill-yellow-300" />
+              <span>Start All</span>
             </button>
             <button 
               type="button"
@@ -699,7 +758,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 const targetIds = new Set(currentModeFiles.map(f => f.id));
                 setFiles(prev => prev.filter(f => !targetIds.has(f.id)));
                 setSelectedFileId(null);
-                showNotification(`Cleared ${mode.toUpperCase()} files from workspace`, "info");
+                showNotification(`Cleared ${mode.toUpperCase()} files from workspace (local files remain 100% safe)`, "info");
               }}
               className="px-2.5 py-1 h-7 bg-[#ef4444] hover:bg-[#dc2626] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
@@ -920,7 +979,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               Files and Metadata
             </h2>
             <span className={cn("text-[10px] font-normal leading-none", isBlue ? "text-blue-300/80" : (isDark ? "text-slate-400" : "text-slate-500"))}>
-              ({mode.toUpperCase()})
+              ({mode === 'all' ? 'ALL ASSETS: IMAGE + EPS + VIDEO' : mode.toUpperCase()})
             </span>
           </div>
         </div>
@@ -953,22 +1012,24 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               /* Clean empty table canvas matching image.png */
               <div className="w-full h-full min-h-[260px] flex flex-col items-center justify-center pointer-events-none select-none p-4 text-center">
                 <span className="text-2xl mb-1 opacity-40">
-                  {mode === 'vector' ? '📐' : mode === 'video' ? '🎬' : '🖼️'}
+                  {mode === 'vector' ? '📐' : mode === 'video' ? '🎬' : mode === 'all' ? '⚡' : '🖼️'}
                 </span>
                 <span className={cn("text-xs font-semibold uppercase tracking-wider", isBlue ? "text-cyan-300/80" : (isDark ? "text-slate-400" : "text-slate-500"))}>
-                  No {mode.toUpperCase()} files in workspace
+                  {mode === 'all' ? 'No files in workspace' : `No ${mode.toUpperCase()} files in workspace`}
                 </span>
                 <span className={cn("text-[11px] mt-0.5", isBlue ? "text-blue-300/60" : (isDark ? "text-slate-500" : "text-slate-400"))}>
-                  Click "SELECT FILES" or "SELECT FOLDER" to add {mode} assets
+                  Click "SELECT FILES" or "SELECT FOLDER" to add {mode === 'all' ? 'EPS, Video or Image' : mode} assets
                 </span>
               </div>
             ) : (
-              currentModeFiles.map((file, idx) => {
+              visibleFiles.map((file, idx) => {
                 const isSelected = selectedFileId === file.id;
                 const isGeneratingThis = file.status === 'generating' || file.status === 'retrying';
                 const isPendingThis = file.status === 'pending';
                 const isCompletedThis = file.status === 'completed' || file.status === 'saved';
                 const isErrorThis = file.status === 'error';
+                const fIsVec = isVectorFile(file);
+                const fIsVid = isVideoFile(file);
 
                 // Priority: Always show generated content first. Never show Failed or error placeholder!
                 const smartMeta = (!file.title || !file.keywords) ? buildLocalSmartMetadata(file.filename, settings) : null;
@@ -1046,11 +1107,11 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                       ) : (
                         <div className={cn(
                           "w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border shadow-2xs cursor-pointer",
-                          mode === 'vector' ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
-                          mode === 'video' ? "bg-purple-500/20 text-purple-300 border-purple-500/40" :
+                          fIsVec ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
+                          fIsVid ? "bg-purple-500/20 text-purple-300 border-purple-500/40" :
                           "bg-blue-500/20 text-blue-300 border-blue-500/40"
                         )}>
-                          {mode === 'vector' ? 'EPS' : mode === 'video' ? 'VID' : 'IMG'}
+                          {fIsVec ? 'EPS' : fIsVid ? 'VID' : 'IMG'}
                         </div>
                       )}
                     </div>
@@ -1139,17 +1200,26 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </div>
         </div>
 
-        {/* Compact Text Status line immediately under the table */}
-        <div className="mt-0.5 flex items-center justify-between text-[11px] select-none px-1 leading-tight gap-2">
+        {/* Compact Text Status & Pagination Bar immediately under the table */}
+        <div className="mt-1 flex items-center justify-between text-[11px] select-none px-2 py-1 rounded bg-black/10 border border-border/40 gap-2 flex-wrap min-h-[32px]">
           <div className="flex items-center gap-2">
             <span className={cn("font-medium", isBlue ? "text-cyan-200" : (isDark ? "text-slate-200" : "text-slate-700"))}>
               {isGenerating ? "● Processing..." : "✓ Ready"}
             </span>
+            <span className="opacity-30">|</span>
+            <span className={cn("font-mono font-bold text-[10.5px]", isBlue ? "text-cyan-300" : (isDark ? "text-slate-200" : "text-slate-800"))}>
+              {currentModeFiles.length.toLocaleString()} {mode.toUpperCase()} Files
+            </span>
+            {currentModeFiles.length > pageSize && (
+              <span className="text-[10px] text-muted-foreground font-mono">
+                (Showing {((currentPage - 1) * pageSize) + 1}–{Math.min(currentPage * pageSize, currentModeFiles.length)})
+              </span>
+            )}
             {selectedFile && (
               <div 
                 onClick={() => openPreviewModal(selectedFile)}
                 className={cn(
-                  "flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer transition-all shadow-2xs group/chip",
+                  "flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer transition-all shadow-2xs group/chip ml-1",
                   isBlue ? "bg-[#102a54] hover:bg-[#163a70] border border-cyan-500/40 text-cyan-200" :
                   isDark ? "bg-[#1f3044] hover:bg-[#283e58] border border-slate-600 text-slate-200" :
                   "bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-900"
@@ -1159,13 +1229,77 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 {selectedFile.previewUrl && (
                   <img src={selectedFile.previewUrl} alt="" className="w-4 h-4 rounded object-cover border border-cyan-400/40" />
                 )}
-                <span className="font-bold truncate max-w-[220px] text-[10px]">{selectedFile.filename}</span>
+                <span className="font-bold truncate max-w-[160px] text-[10px]">{selectedFile.filename}</span>
                 <span className="text-[9px] underline font-medium opacity-80 group-hover/chip:opacity-100">Preview 🔍</span>
               </div>
             )}
           </div>
-          <div className={cn("text-[10.5px] whitespace-nowrap", isBlue ? "text-blue-300" : (isDark ? "text-slate-400" : "text-slate-500"))}>
-            Total: {currentModeFiles.length} &nbsp;|&nbsp; Processed: {completedCount}/{currentModeFiles.length} ({progressPercent}%) &nbsp;|&nbsp; Remaining: {remainingCount}
+
+          {/* Pagination Navigation Controls for Fast Browsing across 5000+ files */}
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1 font-mono text-[10.5px]">
+              <button
+                type="button"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage(1)}
+                className="px-1.5 py-0.5 rounded bg-muted/60 hover:bg-muted disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed border border-border/50 text-[10px]"
+                title="First Page"
+              >
+                « First
+              </button>
+              <button
+                type="button"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                className="px-2 py-0.5 rounded bg-muted/60 hover:bg-muted disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed border border-border/50 text-[10px]"
+                title="Previous Page"
+              >
+                ‹ Prev
+              </button>
+              <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold text-[10px]">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                className="px-2 py-0.5 rounded bg-muted/60 hover:bg-muted disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed border border-border/50 text-[10px]"
+                title="Next Page"
+              >
+                Next ›
+              </button>
+              <button
+                type="button"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage(totalPages)}
+                className="px-1.5 py-0.5 rounded bg-muted/60 hover:bg-muted disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed border border-border/50 text-[10px]"
+                title="Last Page"
+              >
+                Last »
+              </button>
+
+              <div className="flex items-center gap-1 ml-2">
+                <span className="text-[10px] text-muted-foreground">Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="bg-background border border-border text-[10px] rounded px-1.5 py-0.5 cursor-pointer font-bold"
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                  <option value={500}>500</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          <div className={cn("text-[10.5px] whitespace-nowrap ml-auto", isBlue ? "text-blue-300" : (isDark ? "text-slate-400" : "text-slate-500"))}>
+            Processed: {completedCount}/{currentModeFiles.length} ({progressPercent}%) &nbsp;|&nbsp; Remaining: {remainingCount}
           </div>
         </div>
       </div>
@@ -1600,15 +1734,15 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   <button 
                     type="button"
                     disabled={isVerifyingKey}
-                    onClick={() => {
+                    onClick={async () => {
                       if (!newLicenseKey.trim()) {
                         showNotification("Please enter a valid license key", "error");
                         return;
                       }
                       setIsVerifyingKey(true);
-                      setTimeout(() => {
+                      try {
+                        const result = await validateAndActivateKeyAsync(newLicenseKey);
                         setIsVerifyingKey(false);
-                        const result = validateAndActivateKey(newLicenseKey);
                         if (result.success) {
                           setCurrentLicense(checkCurrentLicenseStatus());
                           setNewLicenseKey('');
@@ -1616,7 +1750,10 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                         } else {
                           showNotification(result.message, "error");
                         }
-                      }, 500);
+                      } catch (err: any) {
+                        setIsVerifyingKey(false);
+                        showNotification(err?.message || "Verification failed", "error");
+                      }
                     }}
                     className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded text-xs cursor-pointer transition-colors"
                   >

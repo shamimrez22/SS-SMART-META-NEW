@@ -80,7 +80,12 @@ import { SettingsModal } from './components/SettingsModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
 import { AdminLoginModal } from './components/AdminLoginModal';
 import { LicenseLockScreen } from './components/LicenseLockScreen';
-import { checkCurrentLicenseStatus, LicenseStatusResult } from './services/licenseService';
+import { 
+  checkCurrentLicenseStatus, 
+  LicenseStatusResult,
+  startLicenseHeartbeat,
+  syncLocalKeysToServer
+} from './services/licenseService';
 import { cn, sanitizeFilenameForFs, sanitizeStockFilename } from './lib/utils';
 
 const STORAGE_KEY = 'ai-metadata-pro-config';
@@ -602,7 +607,7 @@ export default function App() {
     }
   }, [isPaused]);
   const [isDragging, setIsDragging] = useState(false);
-  const [mode, setMode] = useState<'image' | 'vector' | 'video' | 'prompt'>('image');
+  const [mode, setMode] = useState<'all' | 'image' | 'vector' | 'video' | 'prompt'>('all');
   const [theme, setTheme] = useState<'dark' | 'light' | 'system' | 'classic' | 'blue'>(() => {
     return (localStorage.getItem('app-theme') as any) || 'dark';
   });
@@ -917,6 +922,21 @@ export default function App() {
     setLicenseStatus(checkCurrentLicenseStatus());
   }, []);
 
+  // Sync existing local keys to server on mount and continuously monitor license validity
+  useEffect(() => {
+    syncLocalKeysToServer();
+
+    // Start real-time server-synced heartbeat
+    const stopHeartbeat = startLicenseHeartbeat((terminationReason) => {
+      refreshLicenseStatus();
+      showNotification(terminationReason, 'error');
+    });
+
+    return () => {
+      stopHeartbeat();
+    };
+  }, [refreshLicenseStatus, showNotification]);
+
   const [extensionInitialTab, setExtensionInitialTab] = useState<'hub' | 'image-to-prompt' | 'prompt-expander' | 'palette-scout' | 'upscaler-advisor'>('hub');
   const [expandedSettingsSections, setExpandedSettingsSections] = useState<Record<string, boolean>>({
     marketplace: false,
@@ -973,6 +993,7 @@ export default function App() {
   const [selectedExportSite, setSelectedExportSite] = useState('adobe');
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [directoryHandle, setDirectoryHandle] = useState<any>(null);
+  const directoryHandleRef = useRef<any>(null);
   const [folderName, setFolderName] = useState<string>('');
   const [apiStatus, setApiStatus] = useState<ApiStatus>({});
   const [isEmbedModalOpen, setIsEmbedModalOpen] = useState(false);
@@ -1013,49 +1034,15 @@ export default function App() {
         const q = await handle.queryPermission({ mode: 'readwrite' });
         if (q === 'granted') return true;
       }
-      if (typeof handle.requestPermission === 'function') {
-        const r = await handle.requestPermission({ mode: 'readwrite' });
-        return r === 'granted';
-      }
       return true;
     } catch (err) {
-      console.warn("Handle permission verification error:", err);
-      return false;
+      console.warn("Handle permission check:", err);
+      return true;
     }
   };
 
   const ensureDirectoryHandle = async (): Promise<any> => {
-    if (directoryHandle) {
-      try {
-        const hasPerm = await verifyHandlePermission(directoryHandle);
-        if (hasPerm) {
-          return directoryHandle;
-        }
-      } catch (e) {
-        console.warn("Existing directoryHandle permission check:", e);
-      }
-    }
-    if ('showDirectoryPicker' in window) {
-      try {
-        // @ts-ignore
-        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        if (handle) {
-          await verifyHandlePermission(handle);
-          setDirectoryHandle(handle);
-          setFolderName(handle.name);
-          return handle;
-        }
-        return null;
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          console.warn("Directory picker error:", err);
-        }
-        return null;
-      }
-    } else {
-      showNotification("আপনার ব্রাউজারে File System Access API নেই। ফাইলে সরাসরি সেভ করতে Google Chrome বা Microsoft Edge ব্রাউজার ব্যবহার করুন।", 'error');
-      return null;
-    }
+    return directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
   };
   useEffect(() => {
     const loadData = async () => {
@@ -1174,10 +1161,16 @@ export default function App() {
 
         setIsLoadingFiles(true);
         setDirectoryHandle(handle);
+        directoryHandleRef.current = handle;
+        if (typeof window !== 'undefined') (window as any).__ss_active_dir = handle;
         setFolderName(handle.name);
         const newItems: StockMetadata[] = [];
         const newFileObjects: Record<string, File> = {};
         
+        let foundImages = 0;
+        let foundVectors = 0;
+        let foundVideos = 0;
+
         for await (const entry of handle.values()) {
           if (entry.kind === 'file') {
             const file = await entry.getFile();
@@ -1186,25 +1179,26 @@ export default function App() {
             const isVideo = ['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext);
             const isImage = ['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif'].includes(ext) || file.type.startsWith('image/');
 
-            let matchMode = true;
-            if (mode === 'vector') matchMode = isVector;
-            else if (mode === 'video') matchMode = isVideo;
-            else matchMode = isImage || (!isVector && !isVideo);
+            if (isVector) foundVectors++;
+            else if (isVideo) foundVideos++;
+            else if (isImage) foundImages++;
 
-            if (matchMode) {
+            // Include all supported media assets
+            if (isImage || isVector || isVideo) {
               const id = Math.random().toString(36).substr(2, 9);
               newFileObjects[id] = file;
               newItems.push({
                 id,
                 filename: file.name,
                 originalFilename: file.name,
+                currentDiskFilename: file.name,
                 title: '',
                 description: '',
                 keywords: '',
                 rating: 5,
                 status: 'pending',
                 fileType: ext,
-                previewUrl: isImage ? URL.createObjectURL(file) : undefined,
+                previewUrl: (isImage && newItems.length < 50) ? URL.createObjectURL(file) : undefined,
                 handle: entry
               });
             }
@@ -1212,39 +1206,30 @@ export default function App() {
         }
 
         if (newItems.length === 0) {
-          showNotification(`"${handle.name}" ফোল্ডারে কোনো ${mode.toUpperCase()} ফাইল পাওয়া যায়নি।`, 'info');
+          showNotification(`"${handle.name}" ফোল্ডারে কোনো ছবি, ভেক্টর বা ভিডিও ফাইল পাওয়া যায়নি।`, 'info');
           return;
+        }
+
+        // Auto-switch mode: if mixed files exist, choose 'all' so NO files are ever hidden!
+        const distinctTypes = (foundVectors > 0 ? 1 : 0) + (foundVideos > 0 ? 1 : 0) + (foundImages > 0 ? 1 : 0);
+        if (distinctTypes > 1) {
+          setMode('all');
+        } else if (foundVectors > 0) {
+          setMode('vector');
+        } else if (foundVideos > 0) {
+          setMode('video');
+        } else {
+          setMode('image');
         }
 
         fileObjectsRef.current = { ...fileObjectsRef.current, ...newFileObjects };
         setFileObjects(prev => ({ ...prev, ...newFileObjects }));
-        setFiles(prev => [...newItems, ...prev]);
+        setFiles(prev => [...prev, ...newItems]);
         if (newItems.length > 0) {
           setSelectedFileId(prev => prev || newItems[0].id);
         }
 
-        // Async extract EPS & Video thumbnails
-        for (let i = 0; i < newItems.length; i++) {
-          const item = newItems[i];
-          const file = newFileObjects[item.id];
-          if (!file) continue;
-          const ext = item.fileType.toLowerCase();
-          if (ext === 'eps' || ext === 'ai') {
-            extractEpsThumbnail(file).then(thumb => {
-              if (thumb) {
-                setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
-              }
-            });
-          } else if (['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext)) {
-            extractVideoThumbnail(file).then(thumb => {
-              if (thumb) {
-                setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
-              }
-            });
-          }
-        }
-
-        showNotification(`✓ ফোল্ডার "${handle.name}" থেকে ${newItems.length}টি ফাইল যুক্ত হয়েছে! ফাইলে সরাসরি এম্বেডের জন্য প্রস্তুত।`, 'success');
+        showNotification(`✓ ফোল্ডার "${handle.name}" যুক্ত হয়েছে (${newItems.length} ফাইল)। মেটাডাটা সরাসরি এই ফোল্ডারের ফাইলে সেভ ও রিনেম হবে (কোনো ডাউনলোড হবে না)!`, 'success');
         return;
       } catch (err: any) {
         if (err.name === 'AbortError') return;
@@ -1259,120 +1244,51 @@ export default function App() {
   const handleFileSelectDirect = async () => {
     if ('showOpenFilePicker' in window) {
       try {
-        let typesConfig: any[] = [];
-        if (mode === 'vector') {
-          typesConfig = [
+        // @ts-ignore
+        const handles = await window.showOpenFilePicker({
+          multiple: true,
+          types: [
             {
-              description: 'Vector Graphics (EPS, AI, SVG)',
+              description: 'All Media & Vector Assets',
               accept: {
+                'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff', '.bmp', '.gif', '.heic', '.avif'],
                 'application/postscript': ['.eps', '.ai'],
-                'image/svg+xml': ['.svg']
-              }
-            }
-          ];
-        } else if (mode === 'video') {
-          typesConfig = [
-            {
-              description: 'Video Footage (MP4, MOV, AVI, MKV, WEBM, M4V, WMV)',
-              accept: {
+                'image/svg+xml': ['.svg'],
                 'video/*': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.wmv']
               }
             }
-          ];
-        } else {
-          typesConfig = [
-            {
-              description: 'Images (JPG, PNG, WebP, TIFF, BMP, GIF, HEIC, AVIF)',
-              accept: {
-                'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff', '.bmp', '.gif', '.heic', '.avif']
-              }
-            }
-          ];
-        }
-        // @ts-ignore
-        const fileHandles = await window.showOpenFilePicker({
-          multiple: true,
-          types: typesConfig
+          ]
         });
-
-        if (!fileHandles || fileHandles.length === 0) return;
-
-        // Immediately ensure readwrite permission on handles within user gesture
-        for (const h of fileHandles) {
-          try {
-            if (typeof h.queryPermission === 'function') {
-              const q = await h.queryPermission({ mode: 'readwrite' });
-              if (q !== 'granted' && typeof h.requestPermission === 'function') {
-                await h.requestPermission({ mode: 'readwrite' });
-              }
+        if (handles && handles.length > 0) {
+          setIsLoadingFiles(true);
+          const pickedFiles: File[] = [];
+          const handlesMap: Record<string, any> = {};
+          for (const h of handles) {
+            try {
+              const f = await h.getFile();
+              pickedFiles.push(f);
+              handlesMap[f.name] = h;
+            } catch (err) {
+              console.warn("Failed to get file from handle:", err);
             }
-          } catch {}
-        }
-
-        setIsLoadingFiles(true);
-        const newItems: StockMetadata[] = [];
-        const newFileObjects: Record<string, File> = {};
-
-        for (const handle of fileHandles) {
-          const file = await handle.getFile();
-          const ext = file.name.split('.').pop()?.toLowerCase() || '';
-          const id = Math.random().toString(36).substr(2, 9);
-          
-          newFileObjects[id] = file;
-          const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif', 'tif', 'tiff', 'heic'];
-          const isImage = imageExtensions.includes(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
-          newItems.push({
-            id,
-            filename: file.name,
-            originalFilename: file.name,
-            title: '',
-            description: '',
-            keywords: '',
-            rating: 5,
-            status: 'pending',
-            fileType: ext,
-            previewUrl: isImage ? URL.createObjectURL(file) : undefined,
-            handle: handle
-          });
-        }
-        fileObjectsRef.current = { ...fileObjectsRef.current, ...newFileObjects };
-        setFileObjects(prev => ({ ...prev, ...newFileObjects }));
-        setFiles(prev => [...newItems, ...prev]);
-        if (newItems.length > 0) {
-          setSelectedFileId(prev => prev || newItems[0].id);
-        }
-
-        // Async extract EPS & Video thumbnails
-        for (let i = 0; i < newItems.length; i++) {
-          const item = newItems[i];
-          const file = newFileObjects[item.id];
-          if (!file) continue;
-          const ext = item.fileType.toLowerCase();
-          if (ext === 'eps' || ext === 'ai') {
-            extractEpsThumbnail(file).then(thumb => {
-              if (thumb) {
-                setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
-              }
-            });
-          } else if (['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext)) {
-            extractVideoThumbnail(file).then(thumb => {
-              if (thumb) {
-                setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
-              }
-            });
+          }
+          if (pickedFiles.length > 0) {
+            handleFilesAdded(pickedFiles, handlesMap);
+            return;
           }
         }
-
-        showNotification(`✓ ${newItems.length}টি ফাইল যুক্ত হয়েছে! ফাইলে সরাসরি এম্বেডের জন্য প্রস্তুত।`, 'success');
-        return;
       } catch (err: any) {
         if (err.name === 'AbortError') return;
-        console.warn("Direct file picker fallback to standard file input:", err);
+        console.warn("showOpenFilePicker error, falling back to input:", err);
       } finally {
         setIsLoadingFiles(false);
       }
     }
-    document.getElementById('file-upload')?.click();
+    const input = document.getElementById('file-upload') as HTMLInputElement | null;
+    if (input) {
+      input.value = ''; // reset so same files can be re-selected
+      input.click();
+    }
   };
 
   const handleBulkEmbed = async () => {
@@ -1542,17 +1458,10 @@ export default function App() {
       let writtenInPlace = false;
 
       // 3. Silent in-place disk write: Directory handle if local folder is active (TOP PRIORITY for full renaming & in-place replacement)
-      const targetDir = dirHandle || directoryHandle;
+      const targetDir = dirHandle || directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
       if (targetDir && typeof targetDir.getFileHandle === 'function') {
         try {
-          if (typeof targetDir.queryPermission === 'function') {
-            const q = await targetDir.queryPermission({ mode: 'readwrite' });
-            if (q !== 'granted' && typeof targetDir.requestPermission === 'function') {
-              await targetDir.requestPermission({ mode: 'readwrite' });
-            }
-          }
-
-          // Write new file with targetFilename directly into the folder
+          // Directly create or overwrite the new renamed file in the user's folder
           const newFileHandle = await targetDir.getFileHandle(targetFilename, { create: true });
           if (newFileHandle && typeof newFileHandle.createWritable === 'function') {
             const writable = await newFileHandle.createWritable();
@@ -1560,67 +1469,56 @@ export default function App() {
             await writable.close();
             writtenInPlace = true;
             fileMetadata.handle = newFileHandle;
-          }
 
-          // If the filename changed, remove the original unrenamed file from the folder so NO duplicate remains!
-          if (originalFilename && originalFilename !== targetFilename) {
-            try {
-              await targetDir.removeEntry(originalFilename);
-            } catch (rmErr) {
-              console.warn("Old file remove notice:", rmErr);
+            // Remove older file name entries so ONLY the new renamed file remains in the folder!
+            const oldNames = new Set<string>();
+            if (originalFilename && originalFilename !== targetFilename) oldNames.add(originalFilename);
+            if (fileMetadata.originalFilename && fileMetadata.originalFilename !== targetFilename) oldNames.add(fileMetadata.originalFilename);
+            if (fileMetadata.filename && fileMetadata.filename !== targetFilename) oldNames.add(fileMetadata.filename);
+            if ((fileMetadata as any).currentDiskFilename && (fileMetadata as any).currentDiskFilename !== targetFilename) {
+              oldNames.add((fileMetadata as any).currentDiskFilename);
             }
+
+            for (const oldName of oldNames) {
+              try {
+                await targetDir.removeEntry(oldName);
+              } catch (rmErr) {
+                // ignore if already removed or file didn't exist under that name
+              }
+            }
+
+            (fileMetadata as any).currentDiskFilename = targetFilename;
+            fileMetadata.originalFilename = targetFilename;
+            fileMetadata.filename = targetFilename;
           }
-          fileMetadata.originalFilename = targetFilename;
         } catch (dirErr) {
           console.warn("DirHandle embed write warning:", dirErr);
         }
       }
 
-      // 4. Secondary fallback: Direct file handle if file was opened individually without a directory handle
+      // 4. In-place write: Direct file handle if user selected files with showOpenFilePicker
       if (!writtenInPlace && fileMetadata.handle && typeof fileMetadata.handle.createWritable === 'function') {
         try {
           const writable = await fileMetadata.handle.createWritable();
           await writable.write(outputBlob);
           await writable.close();
           writtenInPlace = true;
-
-          // Attempt handle rename via move() if supported in browser
           if (typeof fileMetadata.handle.move === 'function' && targetFilename !== originalFilename) {
             try {
               await fileMetadata.handle.move(targetFilename);
+              (fileMetadata as any).currentDiskFilename = targetFilename;
               fileMetadata.originalFilename = targetFilename;
-            } catch (mErr) {
-              console.warn("Handle move error:", mErr);
-            }
+              fileMetadata.filename = targetFilename;
+            } catch {}
           }
-        } catch (firstErr) {
-          try {
-            if (typeof fileMetadata.handle.requestPermission === 'function') {
-              const perm = await fileMetadata.handle.requestPermission({ mode: 'readwrite' });
-              if (perm === 'granted') {
-                const writable = await fileMetadata.handle.createWritable();
-                await writable.write(outputBlob);
-                await writable.close();
-                writtenInPlace = true;
-
-                if (typeof fileMetadata.handle.move === 'function' && targetFilename !== originalFilename) {
-                  try {
-                    await fileMetadata.handle.move(targetFilename);
-                    fileMetadata.originalFilename = targetFilename;
-                  } catch {}
-                }
-              }
-            }
-          } catch (hErr) {
-            console.warn("Direct file handle in-place write failed:", hErr);
-          }
+        } catch (handleErr) {
+          console.warn("Direct file handle write warning:", handleErr);
         }
       }
 
-      // 5. If shouldDownload is explicitly requested and could not write in place:
-      if (!writtenInPlace && shouldDownload) {
-        triggerDirectFileDownload(outputBlob, targetFilename);
-      }
+      // 5. Zero-download rule: Hard-disable any auto-download
+      // The user strictly requested that no separate file downloads occur.
+      // Metadata and renaming must only write directly in-place.
 
       return {
         success: true,
@@ -1747,8 +1645,9 @@ export default function App() {
         const newName = sanitizeStockFilename(f.title, f.originalFilename || f.filename, f.fileType || 'jpg', settings.filenameFormat || 'exact_title');
         if (newName && newName !== f.filename) {
           count++;
-          if (directoryHandle) {
-            const res = await saveMetadataToLocalFile(f.id, { filename: newName }, directoryHandle, false);
+          const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
+          if (activeDir) {
+            const res = await saveMetadataToLocalFile(f.id, { filename: newName }, activeDir, false);
             if (res && res.writtenInPlace) {
               inPlaceRenamed++;
             }
@@ -1842,7 +1741,8 @@ export default function App() {
       }
 
       // 3. Auto-save in-place to local file handle or folder silently
-      await saveMetadataToLocalFile(id, updatedMetadata, directoryHandle, false);
+      const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
+      await saveMetadataToLocalFile(id, updatedMetadata, activeDir, false);
     } catch (error: any) {
       console.warn("Regenerate fallback used:", error);
       const fallbackResult = buildLocalSmartMetadata(fileMetadata.filename, settings);
@@ -1856,11 +1756,12 @@ export default function App() {
         errorMessage: undefined
       };
       setFiles(prev => prev.map(f => f.id === id ? fallbackMetadata : f));
-      await saveMetadataToLocalFile(id, fallbackMetadata, directoryHandle, false);
+      const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
+      await saveMetadataToLocalFile(id, fallbackMetadata, activeDir, false);
     }
   };
 
-  const startGeneration = async () => {
+  const startGeneration = async (overrideMode?: 'all' | 'image' | 'vector' | 'video') => {
     if (isGenerating) return;
 
     const isVector = (f: StockMetadata) => {
@@ -1872,10 +1773,13 @@ export default function App() {
       return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
     };
 
+    const effectiveMode = overrideMode || mode;
     let targetFiles = filesRef.current.filter(f => {
-      if (mode === 'vector') return isVector(f);
-      if (mode === 'video') return isVideo(f);
-      return !isVector(f) && !isVideo(f);
+      if (effectiveMode === 'all') return true;
+      if (effectiveMode === 'vector') return isVector(f);
+      if (effectiveMode === 'video') return isVideo(f);
+      if (effectiveMode === 'image') return !isVector(f) && !isVideo(f);
+      return true;
     });
 
     if (targetFiles.length === 0 && filesRef.current.length > 0) {
@@ -2011,10 +1915,11 @@ export default function App() {
               .catch(e => console.warn("Memory embed warning:", e));
 
             // Direct in-place auto-save to local file or folder silently
+            const currentDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
             saveMetadataToLocalFile(
               fileMetadata.id,
               updatedMetadata,
-              directoryHandle,
+              currentDir,
               false
             ).catch(saveErr => console.warn("Auto-save in place error:", saveErr));
 
@@ -2062,10 +1967,11 @@ export default function App() {
             }
 
             // Direct in-place auto-save to local file or folder silently
+            const currentDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
             saveMetadataToLocalFile(
               fileMetadata.id,
               fallbackMetadata,
-              directoryHandle,
+              currentDir,
               false
             ).catch(saveErr => console.warn("Auto-save in place error:", saveErr));
 
@@ -2459,47 +2365,9 @@ export default function App() {
 
     const typeTitle = targetSingleId ? 'Single File' : (type === 'image' ? 'Image' : type === 'eps' ? 'Vector' : type === 'video' ? 'Video' : 'All');
 
-    let activeDir = directoryHandle;
+    let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
 
-    // In direct user gesture: verify write permissions for handles
-    if (activeDir && typeof activeDir.queryPermission === 'function') {
-      try {
-        const q = await activeDir.queryPermission({ mode: 'readwrite' });
-        if (q !== 'granted' && typeof activeDir.requestPermission === 'function') {
-          await activeDir.requestPermission({ mode: 'readwrite' });
-        }
-      } catch {}
-    }
-
-    for (const f of candidateFiles) {
-      if (f.handle && typeof f.handle.queryPermission === 'function') {
-        try {
-          const q = await f.handle.queryPermission({ mode: 'readwrite' });
-          if (q !== 'granted' && typeof f.handle.requestPermission === 'function') {
-            await f.handle.requestPermission({ mode: 'readwrite' });
-          }
-        } catch {}
-      }
-    }
-
-    // Connect directory handle if not already connected (direct in user click gesture)
-    if (!activeDir && 'showDirectoryPicker' in window && !targetSingleId) {
-      try {
-        // @ts-ignore
-        const picked = await window.showDirectoryPicker({ mode: 'readwrite' });
-        if (picked) {
-          setDirectoryHandle(picked);
-          setFolderName(picked.name);
-          activeDir = picked;
-        }
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          console.warn("Folder picker request error:", err);
-        }
-      }
-    }
-
-    // 1. Instantly open slim low-height progress popup right on user click
+    // Zero-prompt: Never trigger surprise folder popups during embedding
     setEmbedPopup({
       isOpen: true,
       type: targetSingleId ? 'single' : type,
@@ -2531,58 +2399,10 @@ export default function App() {
         embeddedBlobs.push({ id: file.id, filename: res.filename || file.filename, blob: res.blob });
       }
 
-      // If single file embed and not written in place (no folder connected):
-      if (targetSingleId && (!res || !res.writtenInPlace) && !activeDir && res?.blob) {
-        let savedViaPicker = false;
-        if ('showSaveFilePicker' in window) {
-          try {
-            // @ts-ignore
-            const saveHandle = await window.showSaveFilePicker({
-              suggestedName: res.filename || file.filename,
-            });
-            if (saveHandle) {
-              const wr = await saveHandle.createWritable();
-              await wr.write(res.blob);
-              await wr.close();
-              savedViaPicker = true;
-              inPlaceCount++;
-            }
-          } catch (spErr: any) {
-            if (spErr.name !== 'AbortError') {
-              console.warn("Save picker warning:", spErr);
-            }
-          }
-        }
-        if (!savedViaPicker) {
-          triggerDirectFileDownload(res.blob, res.filename || file.filename);
-        }
-      }
-
       setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'saved', errorMessage: undefined } : f));
 
       // Small delay for fluid progress bar animation
-      await new Promise(r => setTimeout(r, 60));
-    }
-
-    // If batch embed (not single file) and could not write in-place to disk, automatically package and download ZIP!
-    if (!targetSingleId && inPlaceCount === 0 && embeddedBlobs.length > 0) {
-      try {
-        const zip = new JSZip();
-        for (const item of embeddedBlobs) {
-          zip.file(item.filename, item.blob);
-        }
-        const psScript = generatePhotoshopScript(candidateFiles);
-        zip.file("Run_in_Adobe_Photoshop.jsx", psScript);
-        const epsFiles = candidateFiles.filter(f => ['eps', 'ai', 'svg'].includes(f.fileType.toLowerCase()));
-        if (epsFiles.length > 0) {
-          const aiScript = generateIllustratorScript(epsFiles);
-          zip.file("Run_in_Adobe_Illustrator.jsx", aiScript);
-        }
-        const zipBlob = await zip.generateAsync({ type: 'blob' });
-        triggerDirectFileDownload(zipBlob, `SS_SMART_META_${typeTitle}_Renamed_5Stars_${Date.now()}.zip`);
-      } catch (zipErr) {
-        console.warn("Automatic ZIP packaging notice:", zipErr);
-      }
+      await new Promise(r => setTimeout(r, 40));
     }
 
     // In-place disk write update
@@ -2591,25 +2411,20 @@ export default function App() {
       current: candidateFiles.length,
       status: 'completed',
       inPlaceCount,
-      message: inPlaceCount > 0 
-        ? `Successfully embedded & renamed ${inPlaceCount} file(s) directly on disk in folder "${folderName || 'Selected'}"!`
-        : `Successfully embedded IPTC/EXIF/XMP & downloaded ${candidateFiles.length} renamed file(s) in ZIP!`,
+      message: inPlaceCount > 0
+        ? `Successfully embedded & saved ${inPlaceCount} file(s) directly into original folder "${folderName || activeDir?.name || 'Selected'}" without any downloads!`
+        : `Files processed. Connect your folder with "SELECT FOLDER" to write directly to disk.`,
     }));
 
     if (inPlaceCount > 0) {
       showNotification(
-        `🎉 সফলভাবে ${inPlaceCount}টি ফাইলে মেটাডাটা এম্বেড ও নাম পরিবর্তন সরাসরি ডিস্কে সম্পন্ন হয়েছে! (কোনো ডুপ্লিকেট ছাড়া)`, 
-        'success'
-      );
-    } else if (targetSingleId) {
-      showNotification(
-        `✓ ফাইলের নাম পরিবর্তন ও মেটাডাটা এম্বেড সম্পন্ন করে ডাউনলোড করা হয়েছে!`, 
+        `🎉 সফলভাবে ${inPlaceCount}টি ফাইলের মেটাডাটা সরাসরি মূল ফোল্ডারের ফাইলে সেট ও রিনেম হয়েছে! (কোনো আলাদা ফাইল ডাউনলোড হয়নি)`, 
         'success'
       );
     } else {
       showNotification(
-        `✓ সমস্ত ${candidateFiles.length}টি ${typeTitle} ফাইলের নাম পরিবর্তন ও মেটাডাটা এম্বেড সম্পন্ন করে ZIP ডাউনলোড করা হয়েছে! সরাসরি ফোল্ডারে সেভ করতে 'SELECT FOLDER' ব্যবহার করুন।`, 
-        'success'
+        `⚠️ ফাইলে সরাসরি সেভ ও রিনেম করতে অনুগ্রহ করে 'SELECT FOLDER' এ ক্লিক করে আপনার ফোল্ডারটি নির্বাচন করুন।`, 
+        'error'
       );
     }
   };
@@ -2673,7 +2488,9 @@ export default function App() {
       return newObjs;
     });
     setSelectedFileId(null);
-    showNotification(`Cleared ${mode.toUpperCase()} files from workspace. Click Undo (Ctrl+Z) to restore.`, "info");
+    setDirectoryHandle(null);
+    setFolderName('');
+    showNotification(`Cleared ${mode.toUpperCase()} files from workspace. Local files remain 100% safe & untouched.`, "info");
   };
 
   const exportCsv = () => {
@@ -2684,21 +2501,7 @@ export default function App() {
     const fileMetadata = files.find(f => f.id === id);
     if (!fileMetadata) return;
 
-    let activeDir = directoryHandle;
-    if (!activeDir && !fileMetadata.handle && 'showDirectoryPicker' in window) {
-      try {
-        // @ts-ignore
-        const picked = await window.showDirectoryPicker({ mode: 'readwrite' });
-        if (picked) {
-          await verifyHandlePermission(picked);
-          setDirectoryHandle(picked);
-          setFolderName(picked.name);
-          activeDir = picked;
-        }
-      } catch (err: any) {
-        if (err.name !== 'AbortError') console.warn(err);
-      }
-    }
+    let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
 
     let actualFile = fileObjects[id] || fileObjectsRef.current[id];
     if (!actualFile && fileMetadata.previewUrl) {
@@ -2718,9 +2521,11 @@ export default function App() {
     const res = await saveMetadataToLocalFile(id, fileMetadata, activeDir, false);
     setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'saved', errorMessage: undefined } : f));
     if (res && res.writtenInPlace) {
-      showNotification(`✓ ${res.filename} ফাইলে সরাসরি মেটাডাটা সেভ হয়েছে! (কোনো ডুপ্লিকেট ছাড়া)`, 'success');
+      showNotification(`✓ ${res.filename} ফাইলে সরাসরি মেটাডাটা সেভ ও নাম রিনেম হয়েছে! (কোনো ফাইল ডাউনলোড হয়নি)`, 'success');
+    } else if (activeDir) {
+      showNotification(`✓ ${fileMetadata.filename} ফাইলে মেটাডাটা আপডেট সম্পন্ন হয়েছে!`, 'success');
     } else {
-      showNotification(`✓ ${fileMetadata.filename} ফাইলে মেটাডাটা সেভ সম্পন্ন হয়েছে!`, 'success');
+      showNotification(`✓ মেটাডাটা সেভ হয়েছে! ফাইলে সরাসরি নাম রিনেম করতে 'SELECT FOLDER' দিয়ে ফোল্ডারটি কানেক্ট করুন। (কোনো ফাইল ডাউনলোড হয়নি)`, 'info');
     }
   };
 
@@ -2730,73 +2535,106 @@ export default function App() {
     const isVideo = (ext: string) => ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
     const isImage = (ext: string) => ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif'].includes(ext);
     
-    // Pre-filter files to match active mode
+    let vCount = 0;
+    let vidCount = 0;
+    let imgCount = 0;
+    for (const f of filesArray) {
+      const ext = f.name.split('.').pop()?.toLowerCase() || '';
+      if (isVector(ext)) vCount++;
+      else if (isVideo(ext)) vidCount++;
+      else imgCount++;
+    }
+
+    // Auto-detect mode: if multiple types exist, choose 'all' so NO files are hidden in the table!
+    const activeTypes = (vCount > 0 ? 1 : 0) + (vidCount > 0 ? 1 : 0) + (imgCount > 0 ? 1 : 0);
+    if (activeTypes > 1) {
+      setMode('all');
+    } else if (vCount > 0) {
+      setMode('vector');
+    } else if (vidCount > 0) {
+      setMode('video');
+    } else {
+      setMode('image');
+    }
+
     const validFiles = filesArray.filter(file => {
       const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      if (mode === 'vector') return isVector(ext);
-      if (mode === 'video') return isVideo(ext);
-      return isImage(ext) || (!isVector(ext) && !isVideo(ext));
+      return isImage(ext) || isVector(ext) || isVideo(ext) || Boolean(file.type);
     });
 
-    if (validFiles.length === 0 && filesArray.length > 0) {
-      showNotification(`No valid ${mode.toUpperCase()} files found in selection.`, 'info');
-      return;
-    }
+    const candidateFiles = validFiles.length > 0 ? validFiles : filesArray;
+    const totalCount = candidateFiles.length;
+    setIsLoadingFiles(true);
 
-    const newItems: StockMetadata[] = [];
-    const newFileObjects: Record<string, File> = {};
+    // Asynchronous non-blocking chunking: handles 5,000+ files smoothly without freezing the browser
+    const chunkSize = 250;
+    const processChunk = (startIndex: number) => {
+      const endIndex = Math.min(startIndex + chunkSize, totalCount);
+      const chunkItems: StockMetadata[] = [];
+      const chunkFileObjects: Record<string, File> = {};
 
-    for (let i = 0; i < validFiles.length; i++) {
-      const file = validFiles[i];
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      const id = Math.random().toString(36).substr(2, 9);
-      newFileObjects[id] = file;
-      
-      const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp', 'gif', 'avif', 'tif', 'tiff', 'heic'];
-      const isImage = imageExtensions.includes(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
-      
-      newItems.push({
-        id,
-        filename: file.name,
-        originalFilename: file.name,
-        title: '',
-        description: '',
-        keywords: '',
-        rating: 5,
-        status: 'pending',
-        fileType: ext,
-        previewUrl: isImage ? URL.createObjectURL(file) : undefined,
-        handle: handlesMap?.[file.name] || (file as any).handle || undefined
-      });
-    }
+      for (let i = startIndex; i < endIndex; i++) {
+        const file = candidateFiles[i];
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        const id = Math.random().toString(36).substr(2, 9);
+        chunkFileObjects[id] = file;
 
-    fileObjectsRef.current = { ...fileObjectsRef.current, ...newFileObjects };
-    setFileObjects(prev => ({ ...prev, ...newFileObjects }));
-    setFiles(prev => [...newItems, ...prev]);
-    if (newItems.length > 0) {
-      setSelectedFileId(prev => prev || newItems[0].id);
-    }
+        const isImg = isImage(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
+        const isVec = isVector(ext);
+        const isVid = isVideo(ext);
 
-    // Async extraction of EPS & Video thumbnails
-    for (let i = 0; i < newItems.length; i++) {
-      const item = newItems[i];
-      const file = newFileObjects[item.id];
-      if (!file) continue;
-      const ext = item.fileType.toLowerCase();
-      if (ext === 'eps' || ext === 'ai') {
-        extractEpsThumbnail(file).then(thumb => {
-          if (thumb) {
-            setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
-          }
+        chunkItems.push({
+          id,
+          filename: file.name,
+          originalFilename: file.name,
+          currentDiskFilename: file.name,
+          title: '',
+          description: '',
+          keywords: '',
+          rating: 5,
+          status: 'pending',
+          fileType: ext,
+          // Generate initial preview URL for first 50 image files
+          previewUrl: (isImg && i < 50) ? URL.createObjectURL(file) : undefined,
+          handle: handlesMap?.[file.name] || (file as any).handle || undefined
         });
-      } else if (['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext)) {
-        extractVideoThumbnail(file).then(thumb => {
-          if (thumb) {
-            setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
+
+        // Asynchronously load thumbnail for Video and EPS in the first 30 files for rich visual previews
+        if (i < 30) {
+          if (isVid) {
+            extractVideoThumbnail(file).then(thumb => {
+              if (thumb) {
+                setFiles(prev => prev.map(f => f.id === id ? { ...f, previewUrl: thumb } : f));
+              }
+            }).catch(() => {});
+          } else if (isVec) {
+            extractEpsThumbnail(file, false).then(thumb => {
+              if (thumb) {
+                setFiles(prev => prev.map(f => f.id === id ? { ...f, previewUrl: thumb } : f));
+              }
+            }).catch(() => {});
           }
-        });
+        }
       }
-    }
+
+      fileObjectsRef.current = { ...fileObjectsRef.current, ...chunkFileObjects };
+      setFileObjects(prev => ({ ...prev, ...chunkFileObjects }));
+      setFiles(prev => [...prev, ...chunkItems]);
+
+      if (startIndex === 0 && chunkItems.length > 0) {
+        setSelectedFileId(prev => prev || chunkItems[0].id);
+      }
+
+      if (endIndex < totalCount) {
+        // Yield to event loop to keep UI thread 100% responsive
+        setTimeout(() => processChunk(endIndex), 0);
+      } else {
+        setIsLoadingFiles(false);
+        showNotification(`✓ ${totalCount.toLocaleString()}টি ফাইল সফলভাবে যুক্ত হয়েছে!`, 'success');
+      }
+    };
+
+    processChunk(0);
   };
 
   const onDragOver = (e: React.DragEvent) => {
@@ -3086,7 +2924,7 @@ export default function App() {
               </span>
               <span className="text-emerald-400 font-semibold shrink-0">
                 {embedPopup.status === 'completed' 
-                  ? (embedPopup.inPlaceCount > 0 ? `✓ In-Place (${embedPopup.inPlaceCount})` : '✓ ZIP Downloaded') 
+                  ? (embedPopup.inPlaceCount > 0 ? `✓ In-Place (${embedPopup.inPlaceCount})` : 'Folder Needed') 
                   : 'IPTC/EXIF/XMP'}
               </span>
             </div>
@@ -3105,17 +2943,6 @@ export default function App() {
                 >
                   <FolderCheck size={11} />
                   <span>Connect Folder (In-Place)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleDownloadZip();
-                  }}
-                  className="py-1 px-2.5 rounded bg-sky-600 hover:bg-sky-500 text-white font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                  title="Download all renamed files with embedded metadata in a single ZIP"
-                >
-                  <Download size={11} />
-                  <span>ZIP</span>
                 </button>
                 <button
                   type="button"
@@ -3546,10 +3373,11 @@ export default function App() {
                   onClick={() => {
                     downloadWithMetadata(previewModalFile.id);
                   }}
-                  className="px-3 py-1.5 bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider rounded transition-all hover:bg-primary/90 flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider rounded transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  title="সরাসরি মূল ফাইলে মেটাডাটা সেভ ও নাম রিনেম করুন"
                 >
-                  <Download size={13} />
-                  Download File
+                  <FolderCheck size={13} strokeWidth={2.5} />
+                  Save In-Place
                 </button>
                 <button 
                   onClick={() => setPreviewModalFileId(null)} 
@@ -3644,13 +3472,7 @@ export default function App() {
             e.target.value = ''; // Reset to allow re-uploading same file
           }
         }}
-        accept={
-          mode === 'vector' 
-            ? ".eps,.ai,.svg" 
-            : mode === 'video' 
-            ? ".mp4,.mov,.avi,.mkv,.webm,.m4v,.wmv,video/*" 
-            : ".jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.gif,.heic,.avif,image/*"
-        }
+        accept="image/*,video/*,.jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.gif,.heic,.avif,.eps,.ai,.svg,.mp4,.mov,.avi,.mkv,.webm,.m4v,.wmv,*/*"
       />
       <input 
         type="file" 
