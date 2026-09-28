@@ -1634,6 +1634,7 @@ export default function App() {
       return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
     };
     const targetModeFiles = filesRef.current.filter(f => {
+      if (mode === 'all') return true;
       if (mode === 'vector') return isVector(f);
       if (mode === 'video') return isVideo(f);
       return !isVector(f) && !isVideo(f);
@@ -2003,18 +2004,19 @@ export default function App() {
   };
 
   const handleTestConnection = async (provider: keyof ApiConfig, index: number) => {
-    const key = apiConfig[provider][index];
-    if (!key && provider !== 'gemini') {
+    const rawKey = apiConfig[provider]?.[index] || '';
+    const cleanKey = rawKey.trim().replace(/^["']|["']$/g, '');
+    if (!cleanKey && provider !== 'gemini') {
       showNotification("Please enter an API key to test.", 'info');
       return;
     }
     
     setApiStatus(prev => ({ ...prev, [`${provider}-${index}`]: 'testing' }));
-    const result = await testApiConnection(provider, key);
+    const result = await testApiConnection(provider, cleanKey);
     
     if (result.success) {
       setApiStatus(prev => ({ ...prev, [`${provider}-${index}`]: 'connected' }));
-      showNotification(`${provider.toUpperCase()} Connection Successful!`, 'success');
+      showNotification(result.message || `${provider.toUpperCase()} Connection Successful!`, 'success');
     } else {
       setApiStatus(prev => ({ ...prev, [`${provider}-${index}`]: 'failed' }));
       showNotification(result.message || `${provider.toUpperCase()} Connection Failed`, 'error');
@@ -2031,6 +2033,7 @@ export default function App() {
       return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
     };
     const modeScopedFiles = files.filter(f => {
+      if (mode === 'all') return true;
       if (mode === 'vector') return isVector(f);
       if (mode === 'video') return isVideo(f);
       return !isVector(f) && !isVideo(f);
@@ -2071,6 +2074,15 @@ export default function App() {
       let data: any[] = [];
       filenamePrefix = `${format}_metadata`;
 
+      const getCleanKeywordsList = (raw: string, max: number = 49) => {
+        const cleaned = (raw || '')
+          .split(',')
+          .map(k => k.trim())
+          .filter(k => k && k.length > 1 && !['universal', 'marketplace', 'commercial', 'concept'].includes(k.toLowerCase()));
+        const unique = Array.from(new Set(cleaned));
+        return unique.slice(0, max).join(',');
+      };
+
       switch (format) {
         case 'all_files':
         case 'master_all':
@@ -2081,11 +2093,7 @@ export default function App() {
             'Original Filename': f.originalFilename || f.filename,
             'Title': f.title || '',
             'Description': f.description || '',
-            'Keywords': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(','),
+            'Keywords': getCleanKeywordsList(f.keywords || '', 50),
             'Category': f.category || 'Technology',
             'Rating': f.rating || 5,
             'File Type': (f.fileType || '').toUpperCase(),
@@ -2094,16 +2102,12 @@ export default function App() {
           break;
 
         case 'adobe':
-          // Adobe Stock official contributor template
+          // Adobe Stock official contributor template (Strict max 49 keywords)
           // Headers: Filename, Title, Keywords, Category
           data = targetFiles.map(f => ({
             'Filename': f.filename,
-            'Title': f.title || f.filename.replace(/\.[^/.]+$/, ""),
-            'Keywords': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(','),
+            'Title': (f.title || f.filename.replace(/\.[^/.]+$/, "")).slice(0, 200),
+            'Keywords': getCleanKeywordsList(f.keywords || '', 49),
             'Category': f.category || 'Technology'
           }));
           break;
@@ -2113,12 +2117,8 @@ export default function App() {
           // Headers: Filename, Description, Keywords, Categories
           data = targetFiles.map(f => ({
             'Filename': f.filename,
-            'Description': f.description || f.title || '',
-            'Keywords': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(','),
+            'Description': (f.description || f.title || f.filename).slice(0, 200),
+            'Keywords': getCleanKeywordsList(f.keywords || '', 50),
             'Categories': f.category || 'Technology',
             'Editorial': 'no',
             'Mature content': 'no'
@@ -2132,11 +2132,7 @@ export default function App() {
             'file_name': f.filename,
             'title': f.title || '',
             'description': f.description || f.title || '',
-            'keywords': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(',')
+            'keywords': getCleanKeywordsList(f.keywords || '', 50)
           }));
           break;
 
@@ -2145,12 +2141,8 @@ export default function App() {
           // Headers: File name, Title, Tags
           data = targetFiles.map(f => ({
             'File name': f.filename,
-            'Title': f.title || '',
-            'Tags': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(',')
+            'Title': (f.title || f.filename.replace(/\.[^/.]+$/, "")).slice(0, 100),
+            'Tags': getCleanKeywordsList(f.keywords || '', 50)
           }));
           break;
 
@@ -2161,11 +2153,7 @@ export default function App() {
             'Filename': f.filename,
             'Title': f.title || '',
             'Description': f.description || f.title || '',
-            'Keywords': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(',')
+            'Keywords': getCleanKeywordsList(f.keywords || '', 50)
           }));
           break;
 
@@ -2175,11 +2163,7 @@ export default function App() {
             'Filename': f.filename,
             'Title': f.title || '',
             'Caption': f.description || f.title || '',
-            'Tags': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(',')
+            'Tags': getCleanKeywordsList(f.keywords || '', 50)
           }));
           break;
 
@@ -2189,11 +2173,7 @@ export default function App() {
             'Filename': f.filename,
             'Title': f.title || '',
             'Description': f.description || '',
-            'Keywords': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(','),
+            'Keywords': getCleanKeywordsList(f.keywords || '', 50),
             'Category': f.category || 'Technology'
           }));
           break;
@@ -2204,11 +2184,7 @@ export default function App() {
             'Filename': f.filename,
             'Title': f.title || '',
             'Description': f.description || '',
-            'Tags': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(','),
+            'Tags': getCleanKeywordsList(f.keywords || '', 50),
             'Category': f.category || 'Graphics'
           }));
           break;
@@ -2219,11 +2195,7 @@ export default function App() {
             'Filename': f.filename,
             'Title': f.title || '',
             'Description': f.description || '',
-            'Keywords': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(','),
+            'Keywords': getCleanKeywordsList(f.keywords || '', 50),
             'Category': f.category || 'Technology'
           }));
           break;
@@ -2234,11 +2206,7 @@ export default function App() {
             'Filename': f.filename,
             'Title': f.title || '',
             'Description': f.description || '',
-            'Keywords': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(',')
+            'Keywords': getCleanKeywordsList(f.keywords || '', 50)
           }));
           break;
 
@@ -2247,11 +2215,7 @@ export default function App() {
           data = targetFiles.map(f => ({
             'Filename': f.filename,
             'Title': f.title || '',
-            'Tags': (f.keywords || '')
-              .split(',')
-              .map(k => k.trim())
-              .filter(Boolean)
-              .join(','),
+            'Tags': getCleanKeywordsList(f.keywords || '', 50),
             'Category': f.category || 'Graphics'
           }));
           break;
@@ -2476,6 +2440,7 @@ export default function App() {
       return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
     };
     const targetModeFiles = filesRef.current.filter(f => {
+      if (mode === 'all') return true;
       if (mode === 'vector') return isVector(f);
       if (mode === 'video') return isVideo(f);
       return !isVector(f) && !isVideo(f);

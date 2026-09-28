@@ -10,5 +10,16 @@
     "status": "active",
     "activatedAt": 1774320000000,
     "activeUsers": []
+  },
+  {
+    "id": "lic_1790238590633_awr4g",
+    "key": "SSM-1M-44KPR-PZZH-GKGZ",
+    "duration": "1m",
+    "durationDays": 30,
+    "clientName": "Valued User",
+    "createdAt": 1790238590633,
+    "expiresAt": 1792830590633,
+    "status": "active",
+    "activeUsers": []
   }
 ]

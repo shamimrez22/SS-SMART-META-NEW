@@ -333,15 +333,12 @@ export function revokeLicenseKey(keyId: string): void {
 }
 
 export function deleteLicenseKey(keyId: string): void {
-  if (keyId === ADMIN_MASTER_LICENSE_KEY || keyId === 'master-admin-shamim-key') {
-    return; // Master Admin Key cannot be deleted!
-  }
   const existing = getAllGeneratedKeys();
   const updated = existing.filter(k => k.id !== keyId && k.key !== keyId);
   saveGeneratedKeys(updated);
 
   const active = getActiveLicense();
-  if (active && active.key === keyId) {
+  if (active && (active.key === keyId || active.key.toUpperCase() === keyId.toUpperCase())) {
     clearActiveLicense();
   }
 }
@@ -658,9 +655,6 @@ export async function generateLicenseKeyServer(
  * Delete a license on the server (Immediately invalidates active users)
  */
 export async function deleteLicenseKeyServer(keyId: string): Promise<boolean> {
-  if (keyId === ADMIN_MASTER_LICENSE_KEY || keyId === 'master-admin-shamim-key') {
-    return false;
-  }
   try {
     await fetch('/api/licenses/delete', {
       method: 'POST',

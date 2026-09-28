@@ -1064,7 +1064,7 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
   }
 
   // Add prompt after image for better context
-  parts.push({ text: getPrompt(settings, file?.name || "unnamed_file", isVideo) });
+  parts.push({ text: getPrompt(settings, file?.name || "unnamed_file", isVideo, isEps) });
 
   if (isEps) {
     const epsInfo = await extractEpsMetadata(file);

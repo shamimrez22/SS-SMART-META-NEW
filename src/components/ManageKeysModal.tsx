@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { ApiConfig } from '../types';
 import { cn } from '../lib/utils';
+import { testApiConnection } from '../services/aiService';
 
 interface ManageKeysModalProps {
   isOpen: boolean;
@@ -48,11 +49,33 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
   const [selectedProvider, setSelectedProvider] = useState<'gemini' | 'groq' | 'mistral'>(activeKey?.provider || 'gemini');
   const [newKeyInput, setNewKeyInput] = useState('');
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
+  const [isTestingInputKey, setIsTestingInputKey] = useState(false);
 
   if (!isOpen) return null;
 
   const toggleShowKey = (id: string) => {
     setShowKeys(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleTestInputKey = async () => {
+    const trimmed = newKeyInput.trim();
+    if (!trimmed) {
+      showNotification('Please enter or paste an API key first to test', 'info');
+      return;
+    }
+    setIsTestingInputKey(true);
+    try {
+      const res = await testApiConnection(selectedProvider, trimmed);
+      if (res.success) {
+        showNotification(res.message || `✓ ${selectedProvider.toUpperCase()} Key is Valid & Working!`, 'success');
+      } else {
+        showNotification(res.message || `${selectedProvider.toUpperCase()} Connection Failed`, 'error');
+      }
+    } catch (err: any) {
+      showNotification(err?.message || 'Connection test error', 'error');
+    } finally {
+      setIsTestingInputKey(false);
+    }
   };
 
   const handleAddKeyToNextSlot = () => {
@@ -249,8 +272,23 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
               />
               <button
                 type="button"
+                onClick={handleTestInputKey}
+                disabled={isTestingInputKey || !newKeyInput.trim()}
+                title="Save করার আগেই এই কী দিয়ে টেস্ট করে দেখুন ঠিক আছে কিনা"
+                className={cn(
+                  "px-3.5 py-1.5 font-bold text-xs rounded-md cursor-pointer transition-colors shadow-sm flex items-center gap-1.5 shrink-0 active:scale-95",
+                  isTestingInputKey 
+                    ? "bg-slate-700 text-slate-300"
+                    : "bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                )}
+              >
+                <Zap size={13} className={isTestingInputKey ? "animate-spin" : ""} />
+                <span>{isTestingInputKey ? "Testing..." : "Test Key"}</span>
+              </button>
+              <button
+                type="button"
                 onClick={handleAddKeyToNextSlot}
-                className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-md cursor-pointer transition-colors shadow-sm flex items-center gap-1.5 shrink-0"
+                className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-md cursor-pointer transition-colors shadow-sm flex items-center gap-1.5 shrink-0 active:scale-95"
               >
                 <Plus size={13} />
                 <span>Save Key</span>

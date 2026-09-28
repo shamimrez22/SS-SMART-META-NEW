@@ -397,6 +397,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     <Copy size={15} />
                     <span>Copy Master Key</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`⚠️ আপনি কি নিশ্চিতভাবে মাস্টার অ্যাডমিন কী (${ADMIN_MASTER_LICENSE_KEY}) মুছে ফেলতে চান?\n\nমুছে ফেললে এটি সার্ভার ও ডাটাবেজ থেকে রিমুভ হয়ে যাবে।`)) {
+                        handleDeleteKey(ADMIN_MASTER_LICENSE_KEY);
+                      }
+                    }}
+                    className="w-full sm:w-auto px-4 py-3 rounded-xl bg-red-600/90 hover:bg-red-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95 whitespace-nowrap border border-red-400/40"
+                    title="মাস্টার অ্যাডমিন কী মুছে ফেলুন"
+                  >
+                    <Trash2 size={15} />
+                    <span>Delete Key (মুছে ফেলুন)</span>
+                  </button>
                 </div>
 
                 <div className="p-3 rounded-lg bg-[#07111d] border border-amber-500/20 text-xs text-slate-300 space-y-1">
@@ -972,21 +985,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               </button>
                             )}
 
-                            {!isMasterAdmin && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (window.confirm(`⚠️ আপনি কি নিশ্চিতভাবে লাইসেন্স কী "${record.key}" মুছে ফেলতে চান?\n\nএটি মুছে ফেললে এই কী ব্যবহারকারী সমস্ত ইউজার সঙ্গে সঙ্গে ডিসকানেক্ট ও লক হয়ে যাবে এবং তাদের নতুন লাইসেন্স কী দিতে হবে!`)) {
-                                    handleDeleteKey(record.id);
-                                  }
-                                }}
-                                className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white border border-red-400 text-xs font-black flex items-center gap-1.5 shadow-md shadow-red-950/60 cursor-pointer transition-all active:scale-95"
-                                title="মুছে ফেলার সঙ্গে সঙ্গে এই কী ব্যবহারকারী সমস্ত ইউজার অবিলম্বে ডিসকানেক্ট ও লক হয়ে যাবে!"
-                              >
-                                <Trash2 size={13} />
-                                <span>Delete (মুছে ফেলুন)</span>
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`⚠️ আপনি কি নিশ্চিতভাবে লাইসেন্স কী "${record.key}" মুছে ফেলতে চান?\n\nএটি মুছে ফেললে এই কী ব্যবহারকারী সমস্ত ইউজার সঙ্গে সঙ্গে ডিসকানেক্ট ও লক হয়ে যাবে!`)) {
+                                  handleDeleteKey(record.id);
+                                }
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white border border-red-400 text-xs font-black flex items-center gap-1.5 shadow-md shadow-red-950/60 cursor-pointer transition-all active:scale-95"
+                              title="মুছে ফেলার সঙ্গে সঙ্গে এই কী ব্যবহারকারী সমস্ত ইউজার অবিলম্বে ডিসকানেক্ট ও লক হয়ে যাবে!"
+                            >
+                              <Trash2 size={13} />
+                              <span>Delete (মুছে ফেলুন)</span>
+                            </button>
                           </div>
                         </div>
 

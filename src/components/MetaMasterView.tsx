@@ -30,7 +30,6 @@ import {
   Play,
   Pause,
   Trash2,
-  Tag,
   Image as ImageIcon,
   Film
 } from 'lucide-react';
@@ -720,19 +719,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             </button>
             <button 
               type="button"
-              onClick={() => {
-                setMode('all');
-                setTimeout(() => startGeneration(), 50);
-              }}
-              disabled={isGenerating || allFilesCount === 0}
-              title={`Generate metadata for ALL ${allFilesCount} files (EPS Vectors + Videos + Images) simultaneously!`}
-              className="px-2.5 py-1 h-7 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-[11px] rounded cursor-pointer active:scale-95 transition-all disabled:opacity-50 shadow-2xs whitespace-nowrap flex items-center gap-1 border border-emerald-400/40"
-            >
-              <Zap size={11} className="text-yellow-300 fill-yellow-300" />
-              <span>Start All</span>
-            </button>
-            <button 
-              type="button"
               onClick={() => setIsPaused(!isPaused)}
               className="px-2.5 py-1 h-7 bg-[#f59e0b] hover:bg-[#d97706] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
@@ -943,25 +929,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   {allFilesCount}
                 </span>
               )}
-            </button>
-          </fieldset>
-
-          {/* Utilities Group */}
-          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Utilities</legend>
-            <button 
-              type="button"
-              onClick={renameAllByTitle}
-              className={cn(
-                "px-2 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1",
-                isBlue 
-                  ? "bg-[#091b38] hover:bg-[#102b54] border border-[#1d4ed8] text-white" 
-                  : (isDark ? "bg-[#172535] hover:bg-[#203247] border border-[#0ea5e9] text-white" : "bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 shadow-2xs")
-              )}
-              title="Title অনুযায়ী ফাইলের নাম পরিবর্তন করুন"
-            >
-              <Tag size={11} />
-              <span>Rename</span>
             </button>
           </fieldset>
         </div>
