@@ -631,6 +631,7 @@ function generateSmartFallbackMetadata(filename: string) {
   // SERVER-AUTHORITATIVE LICENSE & USER TRACKING SYSTEM
   // ==========================================
   const LICENSES_FILE = path.join(process.cwd(), 'data', 'licenses.json');
+  const ADMIN_STATE_FILE = path.join(process.cwd(), 'data', 'admin_state.json');
   const ADMIN_MASTER_LICENSE_KEY = 'ADMIN-SHAMIM-321';
   const MASTER_ADMIN_RECORD = {
     id: 'master-admin-shamim-key',
@@ -644,6 +645,26 @@ function generateSmartFallbackMetadata(filename: string) {
     activatedAt: 1774320000000,
     activeUsers: []
   };
+
+  function isServerMasterAdminDeleted(): boolean {
+    try {
+      if (fs.existsSync(ADMIN_STATE_FILE)) {
+        const data = fs.readFileSync(ADMIN_STATE_FILE, 'utf8');
+        const parsed = JSON.parse(data);
+        return Boolean(parsed.deleted);
+      }
+    } catch {}
+    return false;
+  }
+
+  function setServerMasterAdminDeleted(deleted: boolean): void {
+    try {
+      fs.mkdirSync(path.dirname(ADMIN_STATE_FILE), { recursive: true });
+      fs.writeFileSync(ADMIN_STATE_FILE, JSON.stringify({ deleted }), 'utf8');
+    } catch (err) {
+      console.error('Error saving admin state:', err);
+    }
+  }
 
   function parseDeviceLabel(ua?: string): string {
     if (!ua) return 'Web Client';
@@ -667,21 +688,29 @@ function generateSmartFallbackMetadata(filename: string) {
 
   function loadLicenses(): any[] {
     try {
+      const isDeleted = isServerMasterAdminDeleted();
       if (fs.existsSync(LICENSES_FILE)) {
         const data = fs.readFileSync(LICENSES_FILE, 'utf8');
         const parsed = JSON.parse(data);
         if (Array.isArray(parsed)) {
+          if (isDeleted) {
+            return parsed.filter(l => l.key?.toUpperCase() !== ADMIN_MASTER_LICENSE_KEY && l.id !== 'master-admin-shamim-key');
+          }
           if (!parsed.some(l => l.key?.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
             parsed.unshift(MASTER_ADMIN_RECORD);
             saveLicenses(parsed);
           }
           return parsed;
         }
+      } else {
+        const initial = isDeleted ? [] : [MASTER_ADMIN_RECORD];
+        saveLicenses(initial);
+        return initial;
       }
     } catch (err) {
       console.error('Error loading licenses:', err);
     }
-    return [MASTER_ADMIN_RECORD];
+    return [];
   }
 
   function saveLicenses(list: any[]): void {
@@ -732,6 +761,13 @@ function generateSmartFallbackMetadata(filename: string) {
 
       // Master Admin Key
       if (cleanKey === ADMIN_MASTER_LICENSE_KEY) {
+        // Explicitly entering the master admin key reactivates it!
+        setServerMasterAdminDeleted(false);
+        let licenses = loadLicenses();
+        if (!licenses.some(l => l.key?.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
+          licenses.unshift(MASTER_ADMIN_RECORD);
+          saveLicenses(licenses);
+        }
         return res.json({
           valid: true,
           isAdmin: true,
@@ -848,19 +884,27 @@ function generateSmartFallbackMetadata(filename: string) {
         return res.json({ valid: false, message: 'No license key provided.' });
       }
 
-      if (cleanKey === ADMIN_MASTER_LICENSE_KEY) {
-        return res.json({ valid: true, isAdmin: true });
-      }
-
       const licenses = loadLicenses();
       const record = licenses.find(l => l.key?.toUpperCase() === cleanKey);
+
+      const isMasterKey = cleanKey === ADMIN_MASTER_LICENSE_KEY;
+      if (isMasterKey) {
+        if (isServerMasterAdminDeleted()) {
+          return res.json({
+            valid: false,
+            terminated: true,
+            message: '⚠️ মাস্টার অ্যাডমিন কী মুছে ফেলা হয়েছে। অ্যাপে ঢুকতে অনুগ্রহ করে পুনরায় লাইসেন্স কী দিন।'
+          });
+        }
+        return res.json({ valid: true, isAdmin: true });
+      }
 
       // IF KEY WAS DELETED OR DOES NOT EXIST ON SERVER -> INSTANT TERMINATION!
       if (!record) {
         return res.json({
           valid: false,
           terminated: true,
-          message: '⚠️ আপনার লাইসেন্সটি অ্যাডমিন দ্বারা মুছে ফেলা হয়েছে। অনুগ্রহ করে নতুন লাইসেন্স কী দিন।'
+          message: '⚠️ আপনার লাইসেন্সটি মুছে ফেলা হয়েছে। অনুগ্রহ করে নতুন লাইসেন্স কী দিন।'
         });
       }
 
@@ -977,11 +1021,19 @@ function generateSmartFallbackMetadata(filename: string) {
         return res.status(400).json({ error: { message: 'License ID or key is required.' } });
       }
 
+      const isMaster = id === ADMIN_MASTER_LICENSE_KEY || id === 'master-admin-shamim-key';
+      if (isMaster) {
+        setServerMasterAdminDeleted(true);
+      }
+
       let licenses = loadLicenses();
       const target = licenses.find(l => l.id === id || l.key === id);
       
       // Remove from server database
       licenses = licenses.filter(l => l.id !== id && l.key !== id);
+      if (isMaster) {
+        licenses = licenses.filter(l => l.key !== ADMIN_MASTER_LICENSE_KEY && l.id !== 'master-admin-shamim-key');
+      }
       saveLicenses(licenses);
 
       const deletedKeyName = target ? target.key : id;
@@ -1004,10 +1056,18 @@ function generateSmartFallbackMetadata(filename: string) {
         return res.status(400).json({ error: { message: 'License ID or key is required.' } });
       }
 
+      const isMaster = id === ADMIN_MASTER_LICENSE_KEY || id === 'master-admin-shamim-key';
+      if (isMaster) {
+        setServerMasterAdminDeleted(true);
+      }
+
       let licenses = loadLicenses();
       const target = licenses.find(l => l.id === id || l.key === id);
 
       licenses = licenses.filter(l => l.id !== id && l.key !== id);
+      if (isMaster) {
+        licenses = licenses.filter(l => l.key !== ADMIN_MASTER_LICENSE_KEY && l.id !== 'master-admin-shamim-key');
+      }
       saveLicenses(licenses);
 
       const deletedKeyName = target ? target.key : id;

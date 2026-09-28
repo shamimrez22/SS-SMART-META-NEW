@@ -123,6 +123,25 @@ export interface LicenseStatusResult {
 const STORAGE_ADMIN_CONFIG = 'ss_meta_admin_config_v1';
 const STORAGE_GENERATED_KEYS = 'ss_meta_generated_keys_v1';
 const STORAGE_ACTIVE_LICENSE = 'ss_meta_active_license_v1';
+const STORAGE_ADMIN_DELETED = 'ssm_admin_master_deleted';
+
+export function isMasterAdminDeleted(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_ADMIN_DELETED) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setMasterAdminDeleted(deleted: boolean): void {
+  try {
+    if (deleted) {
+      localStorage.setItem(STORAGE_ADMIN_DELETED, 'true');
+    } else {
+      localStorage.removeItem(STORAGE_ADMIN_DELETED);
+    }
+  } catch {}
+}
 
 /**
  * Permanent Master Lifetime License Key strictly for Admin Shamim
@@ -206,13 +225,20 @@ export function getAllGeneratedKeys(): LicenseKeyRecord[] {
   try {
     const raw = localStorage.getItem(STORAGE_GENERATED_KEYS);
     let list: LicenseKeyRecord[] = raw ? JSON.parse(raw) : [];
-    if (!list.some(k => k.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
+    const isDeleted = isMasterAdminDeleted();
+    
+    // Only auto-add MASTER_ADMIN_RECORD on first run IF it has not been explicitly deleted by admin
+    if (!isDeleted && !list.some(k => k.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
       list = [MASTER_ADMIN_RECORD, ...list];
       saveGeneratedKeys(list);
     }
+    // If it has been deleted, ensure it is filtered out of the list
+    if (isDeleted) {
+      list = list.filter(k => k.key.toUpperCase() !== ADMIN_MASTER_LICENSE_KEY && k.id !== 'master-admin-shamim-key');
+    }
     return list;
   } catch {
-    return [MASTER_ADMIN_RECORD];
+    return isMasterAdminDeleted() ? [] : [MASTER_ADMIN_RECORD];
   }
 }
 
@@ -333,12 +359,19 @@ export function revokeLicenseKey(keyId: string): void {
 }
 
 export function deleteLicenseKey(keyId: string): void {
+  const isMaster = keyId === ADMIN_MASTER_LICENSE_KEY || keyId === 'master-admin-shamim-key';
+  if (isMaster) {
+    setMasterAdminDeleted(true);
+    saveAdminConfig({ isAdmin: false });
+    clearActiveLicense();
+  }
+
   const existing = getAllGeneratedKeys();
-  const updated = existing.filter(k => k.id !== keyId && k.key !== keyId);
+  const updated = existing.filter(k => k.id !== keyId && k.key !== keyId && (!isMaster || (k.key !== ADMIN_MASTER_LICENSE_KEY && k.id !== 'master-admin-shamim-key')));
   saveGeneratedKeys(updated);
 
   const active = getActiveLicense();
-  if (active && (active.key === keyId || active.key.toUpperCase() === keyId.toUpperCase())) {
+  if (active && (active.key === keyId || active.key.toUpperCase() === keyId.toUpperCase() || (isMaster && active.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY))) {
     clearActiveLicense();
   }
 }
@@ -390,8 +423,16 @@ export function validateAndActivateKey(rawKey: string): { success: boolean; mess
   // 1. MASTER ADMIN KEY CHECK (Strictly for Admin Shamim)
   // Key: ADMIN-SHAMIM-321
   if (cleaned === ADMIN_MASTER_LICENSE_KEY) {
+    // Reset deleted status upon entering the key again
+    setMasterAdminDeleted(false);
     // Automatically turn on the Admin Mode tick box
     saveAdminConfig({ isAdmin: true });
+
+    const existing = getAllGeneratedKeys();
+    if (!existing.some(k => k.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
+      existing.unshift(MASTER_ADMIN_RECORD);
+      saveGeneratedKeys(existing);
+    }
 
     const now = Date.now();
     const farFuture = now + (100 * 365 * 24 * 60 * 60 * 1000); // 100 years
@@ -508,64 +549,68 @@ export function validateAndActivateKey(rawKey: string): { success: boolean; mess
  * Check overall lock / unlock status of the app
  */
 export function checkCurrentLicenseStatus(): LicenseStatusResult {
-  const adminConfig = getAdminConfig();
   const activeLicense = getActiveLicense();
+  const isAdminDeleted = isMasterAdminDeleted();
 
-  // If Admin Mode checkbox is enabled OR Master Admin Key (ADMIN-SHAMIM-321) is active:
-  if (adminConfig.isAdmin || (activeLicense && activeLicense.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
-    return {
-      isUnlocked: true,
-      isAdmin: true,
-      isExpired: false,
-      daysRemaining: 9999,
-      activeLicense: activeLicense || {
-        key: ADMIN_MASTER_LICENSE_KEY,
-        duration: 'lifetime',
-        durationDays: 36500,
-        activatedAt: Date.now(),
-        expiresAt: Date.now() + (100 * 365 * 24 * 60 * 60 * 1000),
-        clientName: '👑 Master Admin (Shamim)'
-      },
-      message: 'Master Admin Active (ADMIN-SHAMIM-321 Permanent Lifetime Access)'
-    };
-  }
+  // 1. If Admin deleted their key, admin access is strictly revoked and a valid license key is required!
+  if (isAdminDeleted) {
+    if (activeLicense && activeLicense.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY) {
+      clearActiveLicense();
+    }
+    // If user has an active, valid regular key (non-admin):
+    if (activeLicense && activeLicense.key.toUpperCase() !== ADMIN_MASTER_LICENSE_KEY) {
+      const now = Date.now();
+      if (now > activeLicense.expiresAt) {
+        return {
+          isUnlocked: false,
+          isAdmin: false,
+          isExpired: true,
+          daysRemaining: 0,
+          activeLicense,
+          message: 'License expired. Please renew.'
+        };
+      }
+      const msRemaining = activeLicense.expiresAt - now;
+      const daysRemaining = activeLicense.duration === 'lifetime' 
+        ? 9999 
+        : Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
+      return {
+        isUnlocked: true,
+        isAdmin: false,
+        isExpired: false,
+        daysRemaining,
+        activeLicense,
+        message: `License Active (${daysRemaining}d remaining)`
+      };
+    }
 
-  if (!activeLicense) {
+    // Otherwise, completely locked! App asks for key again!
     return {
       isUnlocked: false,
       isAdmin: false,
       isExpired: false,
       daysRemaining: null,
       activeLicense: null,
-      message: 'License activation required'
+      message: 'License activation required. Please enter a valid license key.'
     };
   }
 
-  const now = Date.now();
-  if (now > activeLicense.expiresAt) {
-    return {
-      isUnlocked: false,
-      isAdmin: false,
-      isExpired: true,
-      daysRemaining: 0,
-      activeLicense,
-      message: 'License expired'
-    };
-  }
-
-  // Calculate days remaining dynamically
-  const msRemaining = activeLicense.expiresAt - now;
-  const daysRemaining = activeLicense.duration === 'lifetime' 
-    ? 9999 
-    : Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
-
+  // 2. "er dellete na korley thik thakbe":
+  // If NOT deleted, Admin Shamim is automatically active and fine! App is unlocked!
   return {
     isUnlocked: true,
-    isAdmin: false,
+    isAdmin: true,
     isExpired: false,
-    daysRemaining,
-    activeLicense,
-    message: activeLicense.duration === 'lifetime' ? 'Lifetime License Active' : `License Active (${daysRemaining}d remaining)`
+    daysRemaining: 9999,
+    activeLicense: activeLicense || {
+      key: ADMIN_MASTER_LICENSE_KEY,
+      duration: 'lifetime',
+      durationDays: 36500,
+      activatedAt: 1774320000000,
+      expiresAt: 4927536000000,
+      clientName: '👑 Master Admin (Shamim)'
+    },
+    message: 'Master Admin Active (Permanent Lifetime Access)'
   };
 }
 
@@ -615,8 +660,12 @@ export async function fetchServerLicenses(): Promise<LicenseKeyRecord[]> {
     const res = await fetch('/api/licenses');
     const data = await res.json();
     if (data.success && Array.isArray(data.licenses)) {
-      saveGeneratedKeys(data.licenses);
-      return data.licenses;
+      const isDeleted = isMasterAdminDeleted();
+      const filtered = isDeleted 
+        ? data.licenses.filter((l: LicenseKeyRecord) => l.key?.toUpperCase() !== ADMIN_MASTER_LICENSE_KEY && l.id !== 'master-admin-shamim-key')
+        : data.licenses;
+      saveGeneratedKeys(filtered);
+      return filtered;
     }
   } catch (err) {
     console.warn('Failed to fetch licenses from server:', err);
@@ -715,7 +764,14 @@ export async function validateAndActivateKeyAsync(rawKey: string): Promise<{ suc
 
   // Master Admin Key
   if (cleaned === ADMIN_MASTER_LICENSE_KEY) {
+    setMasterAdminDeleted(false);
     saveAdminConfig({ isAdmin: true });
+    const existing = getAllGeneratedKeys();
+    if (!existing.some(k => k.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
+      existing.unshift(MASTER_ADMIN_RECORD);
+      saveGeneratedKeys(existing);
+    }
+
     const now = Date.now();
     const farFuture = now + (100 * 365 * 24 * 60 * 60 * 1000);
     const activeState: ActiveLicenseState = {
@@ -727,6 +783,15 @@ export async function validateAndActivateKeyAsync(rawKey: string): Promise<{ suc
       clientName: '👑 Master Admin (Shamim)'
     };
     setActiveLicense(activeState);
+
+    try {
+      await fetch('/api/licenses/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: ADMIN_MASTER_LICENSE_KEY })
+      });
+    } catch {}
+
     return {
       success: true,
       message: '✓ Welcome Admin Shamim! Master Lifetime Admin Key (ADMIN-SHAMIM-321) permanently activated with full Admin privileges.',
@@ -785,8 +850,15 @@ export function startLicenseHeartbeat(onTerminated: (reason: string) => void): (
     const active = getActiveLicense();
     const adminConfig = getAdminConfig();
 
-    // Master Admin is immune to termination
-    if (adminConfig.isAdmin || (active && active.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
+    const isDeleted = isMasterAdminDeleted();
+    // Master Admin is immune to termination ONLY if not deleted
+    if (!isDeleted && (adminConfig.isAdmin || (active && active.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY))) {
+      return;
+    }
+
+    if (isDeleted && (!active || active.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY)) {
+      clearActiveLicense();
+      onTerminated('⚠️ লাইসেন্স কী মুছে ফেলা হয়েছে। অ্যাপে ঢুকতে অনুগ্রহ করে নতুন লাইসেন্স কী দিন।');
       return;
     }
 

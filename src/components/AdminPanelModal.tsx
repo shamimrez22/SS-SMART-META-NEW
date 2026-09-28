@@ -43,7 +43,10 @@ import {
   deleteLicenseKeyServer,
   syncLocalKeysToServer,
   getDurationDays,
-  ADMIN_MASTER_LICENSE_KEY
+  ADMIN_MASTER_LICENSE_KEY,
+  isMasterAdminDeleted,
+  deleteLicenseKey,
+  validateAndActivateKey
 } from '../services/licenseService';
 import { cn } from '../lib/utils';
 
@@ -189,10 +192,21 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   // Delete Key on Server (Immediately terminates all active sessions running this key)
   const handleDeleteKey = async (keyId: string) => {
     setIsLoadingKeys(true);
+    const isMaster = keyId === ADMIN_MASTER_LICENSE_KEY || keyId === 'master-admin-shamim-key';
+
     await deleteLicenseKeyServer(keyId);
     if (justGeneratedKey && justGeneratedKey.id === keyId) {
       setJustGeneratedKey(null);
     }
+
+    if (isMaster) {
+      deleteLicenseKey(ADMIN_MASTER_LICENSE_KEY);
+      if (onStatusChanged) onStatusChanged();
+      showNotification("✓ মাস্টার অ্যাডমিন কী মুছে ফেলা হয়েছে! অ্যাপ তাৎক্ষণিকভাবে লক করা হলো। অ্যাপে ঢুকতে এখন কী দিতে হবে।", "info");
+      onClose();
+      return;
+    }
+
     await refreshKeys();
     if (onStatusChanged) onStatusChanged();
     showNotification("✓ লাইসেন্স কী চিরতরে মুছে ফেলা হয়েছে! সমস্ত অ্যাক্টিভ ইউজার সঙ্গে সঙ্গে ডিসকানেক্ট ও লক হয়ে গেছে।", "info");
@@ -379,38 +393,64 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   </span>
                 </div>
 
-                <div className="flex flex-col sm:flex-row items-center gap-2.5">
-                  <div className="w-full flex-1 p-3 rounded-xl bg-[#050b14] border border-amber-500/50 flex items-center justify-between font-mono text-sm sm:text-base font-black text-amber-300 select-all tracking-wider shadow-inner">
-                    <span className="text-amber-200">{ADMIN_MASTER_LICENSE_KEY}</span>
-                    <span className="text-[10px] uppercase font-sans text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 font-bold">
-                      Permanent Lifetime
-                    </span>
+                {isMasterAdminDeleted() ? (
+                  <div className="p-4 rounded-xl bg-red-950/40 border border-red-500/50 flex flex-col sm:flex-row items-center justify-between gap-3 text-red-200">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-red-500/20 text-red-400 flex items-center justify-center shrink-0">
+                        <AlertTriangle size={18} />
+                      </div>
+                      <div>
+                        <span className="font-bold text-sm text-white block">মাস্টার অ্যাডমিন কী মুছে ফেলা হয়েছে (App Locked)</span>
+                        <span className="text-xs text-red-300">অ্যাপে ঢুকতে হলে এখন লাইসেন্স কী দিতে হবে।</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        validateAndActivateKey(ADMIN_MASTER_LICENSE_KEY);
+                        if (onStatusChanged) onStatusChanged();
+                        refreshKeys();
+                        showNotification("✓ Master Admin Key পুনরায় সক্রিয় করা হয়েছে!", "success");
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase cursor-pointer transition-all active:scale-95 whitespace-nowrap shadow-md"
+                    >
+                      Reactivate Key (পুনরায় চালু করুন)
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(ADMIN_MASTER_LICENSE_KEY);
-                      showNotification(`✓ Master Admin Key '${ADMIN_MASTER_LICENSE_KEY}' copied to clipboard!`, "success");
-                    }}
-                    className="w-full sm:w-auto px-4 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95 whitespace-nowrap"
-                  >
-                    <Copy size={15} />
-                    <span>Copy Master Key</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm(`⚠️ আপনি কি নিশ্চিতভাবে মাস্টার অ্যাডমিন কী (${ADMIN_MASTER_LICENSE_KEY}) মুছে ফেলতে চান?\n\nমুছে ফেললে এটি সার্ভার ও ডাটাবেজ থেকে রিমুভ হয়ে যাবে।`)) {
-                        handleDeleteKey(ADMIN_MASTER_LICENSE_KEY);
-                      }
-                    }}
-                    className="w-full sm:w-auto px-4 py-3 rounded-xl bg-red-600/90 hover:bg-red-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95 whitespace-nowrap border border-red-400/40"
-                    title="মাস্টার অ্যাডমিন কী মুছে ফেলুন"
-                  >
-                    <Trash2 size={15} />
-                    <span>Delete Key (মুছে ফেলুন)</span>
-                  </button>
-                </div>
+                ) : (
+                  <div className="flex flex-col sm:flex-row items-center gap-2.5">
+                    <div className="w-full flex-1 p-3 rounded-xl bg-[#050b14] border border-amber-500/50 flex items-center justify-between font-mono text-sm sm:text-base font-black text-amber-300 select-all tracking-wider shadow-inner">
+                      <span className="text-amber-200">{ADMIN_MASTER_LICENSE_KEY}</span>
+                      <span className="text-[10px] uppercase font-sans text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 font-bold">
+                        Permanent Lifetime
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(ADMIN_MASTER_LICENSE_KEY);
+                        showNotification(`✓ Master Admin Key '${ADMIN_MASTER_LICENSE_KEY}' copied to clipboard!`, "success");
+                      }}
+                      className="w-full sm:w-auto px-4 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95 whitespace-nowrap"
+                    >
+                      <Copy size={15} />
+                      <span>Copy Master Key</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`⚠️ আপনি কি নিশ্চিতভাবে মাস্টার অ্যাডমিন কী (${ADMIN_MASTER_LICENSE_KEY}) মুছে ফেলতে চান?\n\nমুছে ফেললে এটি সার্ভার ও ডাটাবেজ থেকে রিমুভ হয়ে যাবে এবং অ্যাপে ঢুকতে পুনরায় লাইসেন্স কী দিতে হবে।`)) {
+                          handleDeleteKey(ADMIN_MASTER_LICENSE_KEY);
+                        }
+                      }}
+                      className="w-full sm:w-auto px-4 py-3 rounded-xl bg-red-600/90 hover:bg-red-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95 whitespace-nowrap border border-red-400/40"
+                      title="মাস্টার অ্যাডমিন কী মুছে ফেলুন"
+                    >
+                      <Trash2 size={15} />
+                      <span>Delete Key (মুছে ফেলুন)</span>
+                    </button>
+                  </div>
+                )}
 
                 <div className="p-3 rounded-lg bg-[#07111d] border border-amber-500/20 text-xs text-slate-300 space-y-1">
                   <p>

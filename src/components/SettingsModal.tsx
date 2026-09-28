@@ -1050,16 +1050,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </button>
                       ))}
                     </div>
-
-                    <div className="flex justify-end pt-1">
-                      <button
-                        type="button"
-                        onClick={renameAllByTitle}
-                        className="px-3 py-1.5 bg-secondary hover:bg-accent border border-border text-xs font-bold uppercase rounded cursor-pointer transition-all"
-                      >
-                        Rename All Files by Title Now
-                      </button>
-                    </div>
                   </div>
                 )}
               </div>

@@ -2075,22 +2075,6 @@ batchIllustratorEmbed();`}
                   <span className="text-[11px] text-slate-400">Download formatted CSV ready for batch upload.</span>
                 </div>
               </button>
-
-              <button 
-                onClick={() => {
-                  setIsQuickSaveModalOpen(false);
-                  renameAllByTitle();
-                }}
-                className="p-3 bg-[#192738] hover:bg-[#203247] border border-amber-500/40 rounded flex items-center gap-3 text-left transition-colors cursor-pointer"
-              >
-                <div className="w-8 h-8 rounded bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
-                  <Sparkles size={18} />
-                </div>
-                <div>
-                  <span className="font-bold text-white block">Rename All Files by Generated Title</span>
-                  <span className="text-[11px] text-slate-400">Auto-rename files into SEO-optimized stock filenames.</span>
-                </div>
-              </button>
             </div>
 
             <div className="px-4 py-3 bg-[#131d28] border-t border-[#24354a] flex items-center justify-end">
