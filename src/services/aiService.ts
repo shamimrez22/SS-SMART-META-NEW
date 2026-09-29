@@ -58,6 +58,202 @@ export async function urlToBase64(url?: string): Promise<string> {
   }
 }
 
+export function enforceStockTitleWordLimits(
+  rawTitle: string,
+  minWords: number = 7,
+  maxWords: number = 15,
+  context: {
+    filename?: string;
+    isVector?: boolean;
+    isVideo?: boolean;
+    category?: string;
+    keywords?: string;
+  } = {}
+): string {
+  minWords = Math.max(3, minWords || 7);
+  maxWords = Math.max(minWords, maxWords || 15);
+
+  let title = (rawTitle || '').replace(/^["'`\s]+|["'`\s]+$/g, '').trim();
+  if (!title) {
+    title = (context.filename || 'Commercial Stock Asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
+  }
+
+  // Remove trailing punctuation
+  title = title.replace(/[.,;:!?\s]+$/, '').trim();
+
+  let words = title.split(/\s+/).filter(Boolean);
+
+  if (words.length >= minWords && words.length <= maxWords) {
+    return words.join(' ');
+  }
+
+  if (words.length > maxWords) {
+    let sliced = words.slice(0, maxWords);
+    while (sliced.length > minWords && ['and', 'with', 'for', 'in', 'of', 'on', 'at', 'the', 'a', 'an', 'to', 'from', 'by'].includes(sliced[sliced.length - 1].toLowerCase())) {
+      sliced.pop();
+    }
+    return sliced.join(' ');
+  }
+
+  // When words.length < minWords: expand constructively
+  const ext = (context.filename || '').split('.').pop()?.toLowerCase() || '';
+  const isVec = context.isVector ?? ['eps', 'ai', 'svg'].includes(ext);
+  const isVid = context.isVideo ?? ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
+
+  const stockAdditions = isVec
+    ? [
+        'Modern Scalable Vector Graphic Design Template',
+        'for Creative Commercial Branding and Digital Print Media',
+        'in Contemporary Clean Minimalist Graphic Style',
+        'High Quality Editable Illustration Artwork Element'
+      ]
+    : isVid
+    ? [
+        'Cinematic 4K Motion Footage Clip for Video Production',
+        'with Authentic Camera Movement and Lighting Atmosphere',
+        'for Commercial Broadcast and Creative Digital Storytelling',
+        'High Definition Scene Capturing Dynamic Real Time Action'
+      ]
+    : [
+        'in High Resolution Composition with Natural Lighting',
+        'for Commercial Creative Design and Editorial Publication',
+        'Highlighting Fine Visual Details and Balanced Perspective',
+        'Professional Stock Photography for Marketing and Advertising Media',
+        'in Scenic Perspective with Authentic Texture and Depth'
+      ];
+
+  for (const phrase of stockAdditions) {
+    if (words.length >= minWords) break;
+    const phraseWords = phrase.split(/\s+/).filter(Boolean);
+    for (const pw of phraseWords) {
+      if (words.length >= minWords) break;
+      if (words[words.length - 1]?.toLowerCase() !== pw.toLowerCase()) {
+        words.push(pw);
+      }
+    }
+  }
+
+  if (words.length > maxWords) {
+    words = words.slice(0, maxWords);
+  }
+
+  let finalTitle = words.join(' ').replace(/[.,;:!?\s]+$/, '').trim();
+  if (finalTitle.length > 0) {
+    finalTitle = finalTitle.charAt(0).toUpperCase() + finalTitle.slice(1);
+  }
+  return finalTitle;
+}
+
+export function generateUniqueImageDescription(
+  cleanName: string,
+  words: string[],
+  context: {
+    isVector?: boolean;
+    isVideo?: boolean;
+    category?: string;
+    keywords?: string;
+    filename?: string;
+    minWords?: number;
+    maxWords?: number;
+  } = {}
+): string {
+  const minWords = context.minWords || 20;
+  const maxWords = context.maxWords || 45;
+  const isVector = context.isVector || false;
+  const isVideo = context.isVideo || false;
+  const filename = context.filename || cleanName || 'stock_asset';
+
+  // Seeded hash to guarantee deterministic diversity across different images
+  let seed = 0;
+  for (let i = 0; i < filename.length; i++) {
+    seed = (seed * 31 + filename.charCodeAt(i)) >>> 0;
+  }
+
+  const cleanSubject = cleanName.trim() || 'Visual Subject';
+  const kwList = (context.keywords || '')
+    .split(',')
+    .map(k => k.trim())
+    .filter(k => k && k.length > 2 && !['and', 'the', 'for', 'with', 'image', 'photo', 'vector'].includes(k.toLowerCase()));
+
+  const primaryDetail = kwList[0] || words[0] || 'focal subject characteristics';
+  const secondaryDetail = kwList[1] || words[1] || 'contextual visual elements';
+  const textureOrStyle = kwList[2] || words[2] || 'authentic surface textures';
+  const environmentDetail = kwList[3] || kwList[4] || 'ambient surrounding background';
+
+  // Dynamic openings, perspectives, and compositions
+  const photoOpenings = [
+    `A vivid, detailed photographic capture of ${cleanSubject.toLowerCase()}`,
+    `An authentic, eye-level perspective focusing on ${cleanSubject.toLowerCase()}`,
+    `A high-clarity visual study featuring ${cleanSubject.toLowerCase()}`,
+    `A thoughtfully composed scene showcasing ${cleanSubject.toLowerCase()}`,
+    `An engaging close-up framing highlighting ${cleanSubject.toLowerCase()}`,
+    `A balanced horizontal capture presenting ${cleanSubject.toLowerCase()}`
+  ];
+
+  const vectorOpenings = [
+    `A contemporary scalable vector graphic illustrating ${cleanSubject.toLowerCase()}`,
+    `A clean, modern vector artwork showcasing ${cleanSubject.toLowerCase()}`,
+    `A stylized geometric illustration depicting ${cleanSubject.toLowerCase()}`,
+    `A versatile graphic design layout highlighting ${cleanSubject.toLowerCase()}`
+  ];
+
+  const videoOpenings = [
+    `A cinematic motion capture of ${cleanSubject.toLowerCase()} in dynamic action`,
+    `A high-definition video sequence showcasing ${cleanSubject.toLowerCase()}`,
+    `An authentic b-roll footage clip capturing ${cleanSubject.toLowerCase()}`,
+    `A real-time motion recording featuring ${cleanSubject.toLowerCase()}`
+  ];
+
+  const compositionClauses = [
+    `framed with sharp foreground focus and subtle natural depth`,
+    `arranged in a clean, balanced compositional layout`,
+    `captured from a natural perspective that emphasizes ${primaryDetail}`,
+    `depicting distinct angles that accentuate ${secondaryDetail}`,
+    `composed to highlight intricate structural contours and ${textureOrStyle}`
+  ];
+
+  const environmentClauses = [
+    `set within a realistic ambient environment with ${environmentDetail}`,
+    `illuminated by soft directional daylight that reveals fine details`,
+    `framed against a neutral background providing ample copy space`,
+    `bathed in balanced natural lighting with gentle shadow contrast`,
+    `complemented by authentic atmospheric lighting and rich color harmony`
+  ];
+
+  const utilityClauses = [
+    `delivering strong visual storytelling for advertising, editorial articles, and marketing media`,
+    `offering versatile commercial utility for brand design, digital publishing, and creative layouts`,
+    `ideal for website hero banners, social media marketing, and modern publication design`,
+    `suitable for corporate communications, editorial spreads, and promotional creative projects`
+  ];
+
+  const opening = isVector 
+    ? vectorOpenings[seed % vectorOpenings.length] 
+    : isVideo 
+    ? videoOpenings[seed % videoOpenings.length] 
+    : photoOpenings[seed % photoOpenings.length];
+
+  const comp = compositionClauses[(seed >> 3) % compositionClauses.length];
+  const env = environmentClauses[(seed >> 6) % environmentClauses.length];
+  const util = utilityClauses[(seed >> 9) % utilityClauses.length];
+
+  let sentence1 = `${opening}, ${comp}.`;
+  let sentence2 = `The scene is ${env}, ${util}.`;
+  let description = `${sentence1} ${sentence2}`;
+
+  let descWords = description.split(/\s+/).filter(Boolean);
+  if (descWords.length < minWords) {
+    description += ` Authentic visual details and refined technical clarity make this asset suitable for professional commercial applications.`;
+  }
+
+  const finalWords = description.split(/\s+/).filter(Boolean);
+  if (finalWords.length > maxWords) {
+    description = finalWords.slice(0, maxWords).join(' ').replace(/[.,;:!?\s]+$/, '') + '.';
+  }
+
+  return description;
+}
+
 export function buildLocalSmartMetadata(filename: string, settings: any) {
   const ext = (filename || '').split('.').pop()?.toLowerCase() || '';
   const isVector = ['eps', 'ai', 'svg'].includes(ext);
@@ -81,31 +277,33 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
     .join(' ');
 
   let rawTitle: string;
-  let description: string;
   let category = 'Objects';
 
   if (isVector) {
     rawTitle = words.length >= 5 
       ? `${capitalized} Vector Illustration Design` 
       : `${capitalized} Modern Scalable Vector Illustration Graphic`;
-    description = `High quality commercial scalable vector illustration of ${cleanName.toLowerCase()}, featuring modern vector graphic paths, clean shapes, and versatile design utility.`;
     category = 'Graphics';
   } else if (isVideo) {
     rawTitle = words.length >= 5 
       ? `${capitalized} Stock Video Footage Clip` 
       : `Cinematic 4K Stock Video Footage of ${capitalized} in Motion`;
-    description = `High definition cinematic stock video footage capturing ${cleanName.toLowerCase()} with authentic camera motion, real-time lighting, and vibrant dynamic visual composition.`;
     category = 'Movement';
   } else {
     rawTitle = words.length >= 5 
       ? capitalized 
       : `${capitalized} Detailed Composition`;
-    description = `Detailed perspective of ${cleanName.toLowerCase()}, highlighting key visual features, fine textures, and balanced composition suitable for creative publication.`;
     category = 'Objects';
   }
 
   const sanitizedTitleObj = sanitizeStockTitle(rawTitle, settings?.marketplace || 'universal');
-  const title = sanitizedTitleObj?.title || rawTitle;
+  const baseTitle = sanitizedTitleObj?.title || rawTitle;
+  const title = enforceStockTitleWordLimits(
+    baseTitle, 
+    settings?.minTitleWords || 7, 
+    settings?.maxTitleWords || 15, 
+    { filename, isVector, isVideo, category }
+  );
 
   const uniqueKwSet = new Set<string>();
   
@@ -152,6 +350,20 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
   const rawKw = Array.from(uniqueKwSet).slice(0, settings?.maxKeywords || 48).join(', ');
   const sanitizedKwObj = sanitizeStockKeywords(rawKw, title, settings?.maxKeywords || 50, settings?.singleWordKeywords);
   const keywords = sanitizedKwObj?.keywords || rawKw;
+
+  const description = generateUniqueImageDescription(
+    cleanName,
+    words,
+    {
+      filename,
+      isVector,
+      isVideo,
+      category,
+      keywords,
+      minWords: settings?.minDescriptionWords || 20,
+      maxWords: settings?.maxDescriptionWords || 45
+    }
+  );
 
   return {
     title,
@@ -233,7 +445,12 @@ export async function callServerGemini(
       filename: file.name,
       prompt,
       apiKey: apiKey || '',
-      model: settings.aiModel || 'gemini-3.8-flash'
+      model: settings.aiModel || 'gemini-3.8-flash',
+      minTitleWords: settings?.minTitleWords || 7,
+      maxTitleWords: settings?.maxTitleWords || 15,
+      minDescriptionWords: settings?.minDescriptionWords || 20,
+      maxDescriptionWords: settings?.maxDescriptionWords || 45,
+      maxKeywords: settings?.maxKeywords || 50
     })
   });
   clearTimeout(timeoutId);
@@ -249,11 +466,43 @@ export async function callServerGemini(
       const sanitizedKwObj = sanitizeStockKeywords(rawKeywords, cleanTitle, settings?.maxKeywords || 50, settings?.singleWordKeywords);
       const cleanKeywords = sanitizedKwObj?.keywords || rawKeywords;
 
+      const finalTitle = enforceStockTitleWordLimits(
+        cleanTitle,
+        settings?.minTitleWords || 7,
+        settings?.maxTitleWords || 15,
+        {
+          filename: file.name,
+          isVector,
+          isVideo,
+          category: data.metadata.category,
+          keywords: cleanKeywords
+        }
+      );
+
+      let cleanDesc = String(data.metadata.description || '').trim();
+      if (!cleanDesc || cleanDesc.length < 15) {
+        const cleanFileTitle = file?.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[-_]+/g, ' ') : (finalTitle || "Stock Asset");
+        const nameWords = cleanFileTitle.split(/\s+/).filter(Boolean);
+        cleanDesc = generateUniqueImageDescription(
+          finalTitle || cleanFileTitle,
+          nameWords,
+          {
+            filename: file.name,
+            isVector,
+            isVideo,
+            category: data.metadata.category || 'Objects',
+            keywords: cleanKeywords,
+            minWords: settings?.minDescriptionWords || 20,
+            maxWords: settings?.maxDescriptionWords || 45
+          }
+        );
+      }
+
       return {
         ...data.metadata,
-        title: cleanTitle,
+        title: finalTitle,
         keywords: cleanKeywords,
-        description: String(data.metadata.description || '').trim(),
+        description: cleanDesc,
         category: String(data.metadata.category || 'People').trim(),
         rating: data.metadata.rating || 5
       };
@@ -1158,9 +1407,24 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
       const descMatch = raw.match(/"description"\s*:\s*"([^"]+)"/i);
       const kwMatch = raw.match(/"keywords"\s*:\s*"([^"]+)"/i);
       const catMatch = raw.match(/"category"\s*:\s*"([^"]+)"/i);
+      const cleanFileTitle = file?.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[-_]+/g, ' ') : "Stock Asset";
+      const nameWords = cleanFileTitle.split(/\s+/).filter(Boolean);
+      const fallbackDesc = generateUniqueImageDescription(
+        titleMatch ? titleMatch[1] : cleanFileTitle,
+        nameWords,
+        {
+          filename: file?.name || 'stock_asset',
+          isVector: isEps,
+          isVideo,
+          category: catMatch ? catMatch[1] : 'Objects',
+          keywords: kwMatch ? kwMatch[1] : '',
+          minWords: settings?.minDescriptionWords || 20,
+          maxWords: settings?.maxDescriptionWords || 45
+        }
+      );
       result = {
-        title: titleMatch ? titleMatch[1] : (file?.name ? file.name.replace(/\.[^/.]+$/, "") : "Stock Asset"),
-        description: descMatch ? descMatch[1] : "High quality commercial stock asset suitable for digital and print media.",
+        title: titleMatch ? titleMatch[1] : cleanFileTitle,
+        description: descMatch ? descMatch[1] : fallbackDesc,
         keywords: kwMatch ? kwMatch[1] : "stock, photography, design, digital, commercial, high quality",
         category: catMatch ? catMatch[1] : "Photography",
         rating: 5
@@ -1169,7 +1433,23 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
 
     // Ensure all required fields exist
     if (!result.title) result.title = file?.name ? file.name.replace(/\.[^/.]+$/, "") : "Stock Asset";
-    if (!result.description) result.description = `${result.title}. High quality stock photo.`;
+    if (!result.description || String(result.description).trim().length < 15) {
+      const cleanFileTitle = file?.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[-_]+/g, ' ') : result.title;
+      const nameWords = cleanFileTitle.split(/\s+/).filter(Boolean);
+      result.description = generateUniqueImageDescription(
+        result.title,
+        nameWords,
+        {
+          filename: file?.name || 'stock_asset',
+          isVector: isEps,
+          isVideo,
+          category: result.category || 'Objects',
+          keywords: result.keywords || '',
+          minWords: settings?.minDescriptionWords || 20,
+          maxWords: settings?.maxDescriptionWords || 45
+        }
+      );
+    }
     if (!result.keywords) result.keywords = "stock, commercial, media, creative, photo";
     if (!result.category) result.category = "Commercial";
     if (!result.rating) result.rating = 5;
@@ -1204,7 +1484,18 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
       settings.singleWordKeywords
     );
 
-    result.title = sanitizedTitleObj.title;
+    result.title = enforceStockTitleWordLimits(
+      sanitizedTitleObj.title,
+      settings?.minTitleWords || 7,
+      settings?.maxTitleWords || 15,
+      {
+        filename: file.name,
+        isVector: isEps,
+        isVideo,
+        category: result.category,
+        keywords: sanitizedKwObj.keywords
+      }
+    );
     result.keywords = sanitizedKwObj.keywords;
 
     result.keywordScore = calculateKeywordScore(result.keywords, settings.minKeywords || 20, targetKWCount);
@@ -1354,6 +1645,24 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
 
     const result = JSON.parse(repairJson(data.choices[0].message.content));
     result.rating = result.rating || 5;
+
+    if (!result.description || String(result.description).trim().length < 15) {
+      const cleanFileTitle = file?.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[-_]+/g, ' ') : (result.title || "Stock Asset");
+      const nameWords = cleanFileTitle.split(/\s+/).filter(Boolean);
+      result.description = generateUniqueImageDescription(
+        result.title || cleanFileTitle,
+        nameWords,
+        {
+          filename: file.name,
+          isVector: isEps,
+          isVideo,
+          category: result.category || 'Objects',
+          keywords: result.keywords || '',
+          minWords: settings?.minDescriptionWords || 20,
+          maxWords: settings?.maxDescriptionWords || 45
+        }
+      );
+    }
     
     const targetKWCount = settings.maxKeywords || 50;
     result.keywords = ensure100PercentKeywords(
@@ -1376,7 +1685,18 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
       settings.singleWordKeywords
     );
 
-    result.title = sanitizedTitleObj.title;
+    result.title = enforceStockTitleWordLimits(
+      sanitizedTitleObj.title,
+      settings?.minTitleWords || 7,
+      settings?.maxTitleWords || 15,
+      {
+        filename: file.name,
+        isVector: isEps,
+        isVideo,
+        category: result.category,
+        keywords: sanitizedKwObj.keywords
+      }
+    );
     result.keywords = sanitizedKwObj.keywords;
 
     result.keywordScore = calculateKeywordScore(result.keywords, settings.minKeywords || 20, targetKWCount);
@@ -1680,15 +2000,27 @@ ${marketplaceRules}
    - The first 4 to 8 words of the title MUST contain the exact high-demand search phrase so marketplace algorithms rank this asset on Page 1!
    - Visible Numbers & Text: If there is any visible number, year, or text (e.g. "2027", highway numbers, street names, signboards), you MUST prominently feature it in the title, description, and primary keywords!
 
-2. CONSTRUCTIVE & STRUCTURED TITLE ("GOTHON-MULOK" TITLE FORMULA):
-   - Word count: strictly ${minTitleWords} to ${maxTitleWords} words.
-   - Formula: [Exact Core Subject & Distinguishing Features] + [Action / Characteristic Details] + [Setting / Environment / Style] + [Commercial Application / Format].
+2. CONSTRUCTIVE & STRUCTURED TITLE (MANDATORY STRICTLY ${minTitleWords} TO ${maxTitleWords} WORDS):
+   - STRICT WORD COUNT REQUIREMENT: You MUST generate a descriptive stock title with STRICTLY ${minTitleWords} to ${maxTitleWords} words.
+   - A short title (fewer than ${minTitleWords} words) is STRICTLY PROHIBITED and will fail stock agency review!
+   - Constructive Formula: [Exact Core Subject & Distinguishing Features] + [Action / Characteristic Details] + [Setting / Environment / Style] + [Commercial Application / Format].
    - Example 1 (Vector/Template): "Modern Geometric Business Card Design Template in Blue and White for Corporate Branding"
    - Example 2 (Photo/Video): "Aerial View of 2027 Numbers on Asphalt Road Winding Through Lush Green Pine Forest"
    - Never use generic placeholder titles or vague one-liners.
 
-3. STRUCTURED EDITORIAL DESCRIPTION (${minDescriptionWords} to ${maxDescriptionWords} words):
-   - Professional, structured summary covering exact foreground subject, composition, background environment, lighting condition, color palette, and commercial marketing utility.
+3. INDEPENDENT, IMAGE-SPECIFIC EDITORIAL DESCRIPTION (STRICTLY ${minDescriptionWords} TO ${maxDescriptionWords} WORDS):
+   - ABSOLUTE ANTI-REPETITION MANDATE: You MUST analyze THIS SPECIFIC IMAGE independently. Generate a unique description based specifically on what is VISIBLY DEPICTED in this exact image.
+   - The description must NOT be copied from another image and must NOT use a fixed sentence or repetitive template.
+   - For similar images in a series or batch, you MUST describe the specific visible differences:
+     * Specific visible subjects, objects, elements, or figures
+     * Exact action, posture, motion, or physical state
+     * Precise composition, framing, and layout (e.g. close-up, wide landscape, centered, flat-lay, diagonal)
+     * Camera angle and perspective (e.g. eye-level, high-angle, low-angle, top-down viewpoint)
+     * Environment, background setting, textures, and backdrop
+     * Lighting conditions, shadows, and natural color palette
+     * Unique visible details (materials, patterns, reflections, focal point)
+   - Do NOT invent anything that is not visible in the image.
+   - Formulate a fluent, highly descriptive editorial English paragraph of strictly ${minDescriptionWords}-${maxDescriptionWords} words.
 
 4. KEYWORDS SPECIFICATIONS (MANDATORY EXACTLY ${targetCount} KEYWORDS):
    - You MUST provide a comma-separated list of EXACTLY ${targetCount} keywords. Do NOT provide fewer than ${targetCount} keywords under any circumstances!

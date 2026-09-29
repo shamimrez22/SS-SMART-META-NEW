@@ -17,7 +17,6 @@ import {
   Copy, 
   Check, 
   MessageSquare, 
-  ExternalLink, 
   Zap,
   HardDrive,
   FileSpreadsheet,
@@ -220,11 +219,33 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
   };
 
-  const currentModeFiles = React.useMemo(() => {
-    if (mode === 'all') return files;
-    if (mode === 'vector') return files.filter(isVectorFile);
-    if (mode === 'video') return files.filter(isVideoFile);
-    return files.filter(f => !isVectorFile(f) && !isVideoFile(f));
+  const { currentModeFiles, imageFilesCount, vectorFilesCount, videoFilesCount } = React.useMemo(() => {
+    let img = 0, vec = 0, vid = 0;
+    const modeFiles: StockMetadata[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const isVec = isVectorFile(f);
+      const isVid = isVideoFile(f);
+      if (isVec) vec++;
+      else if (isVid) vid++;
+      else img++;
+
+      if (mode === 'all') {
+        modeFiles.push(f);
+      } else if (mode === 'vector' && isVec) {
+        modeFiles.push(f);
+      } else if (mode === 'video' && isVid) {
+        modeFiles.push(f);
+      } else if (mode === 'image' && !isVec && !isVid) {
+        modeFiles.push(f);
+      }
+    }
+    return {
+      currentModeFiles: modeFiles,
+      imageFilesCount: img,
+      vectorFilesCount: vec,
+      videoFilesCount: vid
+    };
   }, [files, mode]);
 
   // Ensure files are never hidden: if current mode has 0 files but other modes have files, switch to all
@@ -251,18 +272,26 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     return currentModeFiles.slice(startIndex, startIndex + pageSize);
   }, [currentModeFiles, currentPage, pageSize]);
 
-  const imageFilesCount = React.useMemo(() => files.filter(f => !isVectorFile(f) && !isVideoFile(f)).length, [files]);
-  const vectorFilesCount = React.useMemo(() => files.filter(isVectorFile).length, [files]);
-  const videoFilesCount = React.useMemo(() => files.filter(isVideoFile).length, [files]);
   const allFilesCount = files.length;
 
   const selectedFile = React.useMemo(() => {
+    if (!selectedFileId) return null;
     return currentModeFiles.find(f => f.id === selectedFileId) || null;
   }, [currentModeFiles, selectedFileId]);
 
-  const completedCount = currentModeFiles.filter(f => f.status === 'completed' || f.status === 'saved').length;
-  const progressPercent = currentModeFiles.length > 0 ? Math.round((completedCount / currentModeFiles.length) * 100) : 0;
-  const remainingCount = currentModeFiles.length - completedCount;
+  const { completedCount, remainingCount, progressPercent } = React.useMemo(() => {
+    let completed = 0;
+    for (let i = 0; i < currentModeFiles.length; i++) {
+      const s = currentModeFiles[i].status;
+      if (s === 'completed' || s === 'saved') completed++;
+    }
+    const percent = currentModeFiles.length > 0 ? Math.round((completed / currentModeFiles.length) * 100) : 0;
+    return {
+      completedCount: completed,
+      remainingCount: currentModeFiles.length - completed,
+      progressPercent: percent
+    };
+  }, [currentModeFiles]);
 
   return (
     <div className={cn(
@@ -400,22 +429,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           >
             <span className="text-[#22c55e] text-xs">💬</span>
             <span>WhatsApp</span>
-          </button>
-
-          {/* Full Window Direct Disk Button */}
-          <button 
-            type="button"
-            onClick={() => window.open(window.location.href, '_blank')}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-all cursor-pointer shadow-xs",
-              isBlue 
-                ? "bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white border border-cyan-400" 
-                : (isDark ? "bg-[#0284c7] hover:bg-[#0369a1] text-white border border-cyan-400" : "bg-cyan-600 hover:bg-cyan-700 text-white shadow-xs")
-            )}
-            title="Open in full browser tab for direct 100% in-place disk write without iframe restrictions"
-          >
-            <ExternalLink size={12} />
-            <span>Full Window</span>
           </button>
 
           {/* YouTube Channel */}
@@ -679,7 +692,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               )}
             >
               <Upload size={12} strokeWidth={2.5} />
-              <span>SELECT FILES</span>
+              <span>SELECT FILE</span>
             </button>
             <button 
               type="button"
@@ -985,7 +998,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   {mode === 'all' ? 'No files in workspace' : `No ${mode.toUpperCase()} files in workspace`}
                 </span>
                 <span className={cn("text-[11px] mt-0.5", isBlue ? "text-blue-300/60" : (isDark ? "text-slate-500" : "text-slate-400"))}>
-                  Click "SELECT FILES" or "SELECT FOLDER" to add {mode === 'all' ? 'EPS, Video or Image' : mode} assets
+                  Click "SELECT FILE" or "SELECT FOLDER" to add {mode === 'all' ? 'EPS, Video or Image' : mode} assets
                 </span>
               </div>
             ) : (
@@ -998,34 +1011,26 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 const fIsVec = isVectorFile(file);
                 const fIsVid = isVideoFile(file);
 
-                // Priority: Always show generated content first. Never show Failed or error placeholder!
-                const smartMeta = (!file.title || !file.keywords) ? buildLocalSmartMetadata(file.filename, settings) : null;
+                // High-performance direct row display: No heavy NLP calculations inside the render loop!
                 const displayTitle = file.title 
                   ? file.title 
-                  : (isGeneratingThis ? 'Processing...' : (smartMeta?.title || file.filename.replace(/\.[^/.]+$/, '')));
+                  : (isGeneratingThis ? 'Processing...' : file.filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' '));
 
-                const rawKwStr = file.keywords 
-                  ? file.keywords 
-                  : (isGeneratingThis ? 'Processing...' : (smartMeta?.keywords || 'commercial, stock, high quality, creative'));
+                const displayKeywords = file.keywords 
+                  ? file.keywords
+                  : (isGeneratingThis ? 'Processing...' : '—');
 
-                const displayKeywords = rawKwStr
-                  .split(',')
-                  .map(s => s.trim())
-                  .filter(s => s && !['universal', 'marketplace', 'marketplaces'].includes(s.toLowerCase()))
-                  .join(', ');
-
-                // Always calculate actual keyword count based on clean keywords
-                const kwCount = displayKeywords 
-                  ? displayKeywords.split(',').map(s => s.trim()).filter(Boolean).length 
+                const kwCount = file.keywords 
+                  ? file.keywords.split(',').filter(Boolean).length 
                   : 0;
 
                 const displayDescription = file.description 
                   ? file.description 
-                  : (isGeneratingThis ? 'Processing...' : (smartMeta?.description || displayTitle));
+                  : (isGeneratingThis ? 'Processing...' : '—');
 
                 const displayCategory = file.category 
                   ? file.category 
-                  : (isGeneratingThis ? 'Processing...' : (smartMeta?.category || 'Technology'));
+                  : (isGeneratingThis ? 'Processing...' : '—');
 
                 const textClass = isGeneratingThis && !file.title
                   ? (isBlue ? 'text-cyan-300 font-medium animate-pulse' : (isDark ? 'text-sky-300 animate-pulse' : 'text-sky-600 font-semibold animate-pulse')) 

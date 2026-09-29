@@ -192,8 +192,7 @@ export function createIptcApp13Block(
   // 2:80 By-line (Author/Creator)
   if (author) addTag(2, 80, enc.encode(author.substring(0, 32)));
 
-  // 2:116 Copyright Notice
-  addTag(2, 116, enc.encode(`Copyright ${new Date().getFullYear()}`));
+  // 2:116 Copyright Notice: Left blank per user request ("COPY RIGTHER GHOR FAKA THAKBE")
 
   // Total IPTC byte length
   const iptcLen = records.reduce((sum, r) => sum + r.length, 0);
@@ -398,7 +397,8 @@ export async function embedMetadataInImageBlob(
     exifObj['0th'][piexif.ImageIFD.Rating] = rating;               // Tag 18246 (1-5 stars)
     exifObj['0th'][piexif.ImageIFD.RatingPercent] = 99;           // Tag 18249 (99% = 5 stars in Windows Explorer)
     exifObj['0th'][piexif.ImageIFD.Artist] = 'Stock Contributor';
-    exifObj['0th'][piexif.ImageIFD.Copyright] = `Copyright ${new Date().getFullYear()}`;
+    // Copyright field left blank per user requirement ("COPY RIGTHER GHOR FAKA THAKBE")
+    delete exifObj['0th'][piexif.ImageIFD.Copyright];
 
     let exifDump = '';
     try {
@@ -414,8 +414,7 @@ export async function embedMetadataInImageBlob(
         [piexif.ImageIFD.XPAuthor]: toUtf16Le('Stock Contributor'),
         [piexif.ImageIFD.Rating]: rating,
         [piexif.ImageIFD.RatingPercent]: 99,
-        [piexif.ImageIFD.Artist]: 'Stock Contributor',
-        [piexif.ImageIFD.Copyright]: `Copyright ${new Date().getFullYear()}`
+        [piexif.ImageIFD.Artist]: 'Stock Contributor'
       };
       exifDump = piexif.dump({ '0th': cleanZeroth, Exif: {}, GPS: {} });
     }
@@ -1189,10 +1188,10 @@ function createMp4Udta(metadata: Partial<StockMetadata>): Uint8Array {
   // Year: ©day
   ilstItems.push(writeMp4Box('\xa9day', writeDataBox(String(new Date().getFullYear()))));
 
-  // Author / Artist: ©art, ©wrt, cprt
+  // Author / Artist: ©art, ©wrt
   ilstItems.push(writeMp4Box('\xa9art', writeDataBox('Stock Contributor')));
   ilstItems.push(writeMp4Box('\xa9wrt', writeDataBox('Stock Contributor')));
-  ilstItems.push(writeMp4Box('cprt', writeDataBox('Copyright Stock Contributor')));
+  // Copyright field left blank per user requirement ("COPY RIGTHER GHOR FAKA THAKBE")
   ilstItems.push(writeCustomAtom('com.apple.iTunes', 'Author', 'Stock Contributor'));
 
   // Assemble 'ilst' box
