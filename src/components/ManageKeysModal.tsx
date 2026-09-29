@@ -50,6 +50,7 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
   const [newKeyInput, setNewKeyInput] = useState('');
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [isTestingInputKey, setIsTestingInputKey] = useState(false);
+  const [inputKeyStatus, setInputKeyStatus] = useState<'idle' | 'connected' | 'failed'>('idle');
 
   if (!isOpen) return null;
 
@@ -64,14 +65,18 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
       return;
     }
     setIsTestingInputKey(true);
+    setInputKeyStatus('idle');
     try {
       const res = await testApiConnection(selectedProvider, trimmed);
       if (res.success) {
-        showNotification(res.message || `✓ ${selectedProvider.toUpperCase()} Key is Valid & Working!`, 'success');
+        setInputKeyStatus('connected');
+        showNotification(res.message || `✓ ${selectedProvider.toUpperCase()} Key is Valid & Connected!`, 'success');
       } else {
+        setInputKeyStatus('failed');
         showNotification(res.message || `${selectedProvider.toUpperCase()} Connection Failed`, 'error');
       }
     } catch (err: any) {
+      setInputKeyStatus('failed');
       showNotification(err?.message || 'Connection test error', 'error');
     } finally {
       setIsTestingInputKey(false);
@@ -263,7 +268,10 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
               <input 
                 type="text"
                 value={newKeyInput}
-                onChange={(e) => setNewKeyInput(e.target.value)}
+                onChange={(e) => {
+                  setNewKeyInput(e.target.value);
+                  setInputKeyStatus('idle');
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleAddKeyToNextSlot();
                 }}
@@ -279,11 +287,19 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
                   "px-3.5 py-1.5 font-bold text-xs rounded-md cursor-pointer transition-colors shadow-sm flex items-center gap-1.5 shrink-0 active:scale-95",
                   isTestingInputKey 
                     ? "bg-slate-700 text-slate-300"
-                    : "bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                    : inputKeyStatus === 'connected'
+                      ? "bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)]"
+                      : "bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                 )}
               >
-                <Zap size={13} className={isTestingInputKey ? "animate-spin" : ""} />
-                <span>{isTestingInputKey ? "Testing..." : "Test Key"}</span>
+                {isTestingInputKey ? (
+                  <Zap size={13} className="animate-spin" />
+                ) : inputKeyStatus === 'connected' ? (
+                  <CheckCircle2 size={13} className="text-white" />
+                ) : (
+                  <Zap size={13} />
+                )}
+                <span>{isTestingInputKey ? "Testing..." : inputKeyStatus === 'connected' ? "CONNECTED" : "Test Key"}</span>
               </button>
               <button
                 type="button"
@@ -397,7 +413,7 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
                       ) : status === 'connected' ? (
                         <>
                           <CheckCircle2 size={12} />
-                          <span>READY</span>
+                          <span>CONNECTED</span>
                         </>
                       ) : status === 'failed' ? (
                         <>

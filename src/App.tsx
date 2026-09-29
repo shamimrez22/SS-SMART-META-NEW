@@ -506,10 +506,21 @@ const FileRow = React.memo(({ index, style, data }: any) => {
 // Helper to get initial storage
 const getSavedConfig = () => {
   try {
+    let parsed: any = null;
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw);
+      parsed = JSON.parse(raw);
     }
+    const userSettingsRaw = localStorage.getItem('ai-metadata-pro-user-settings');
+    if (userSettingsRaw) {
+      const userSettings = JSON.parse(userSettingsRaw);
+      if (parsed) {
+        parsed.settings = { ...parsed.settings, ...userSettings };
+      } else {
+        parsed = { settings: userSettings };
+      }
+    }
+    return parsed;
   } catch (e) {
     console.error("Error parsing saved config:", e);
   }
@@ -1075,6 +1086,15 @@ export default function App() {
           }
         }
 
+        const userSettingsRaw = localStorage.getItem('ai-metadata-pro-user-settings');
+        if (userSettingsRaw) {
+          const userSettings = JSON.parse(userSettingsRaw);
+          setSettings(prev => ({
+            ...prev,
+            ...userSettings
+          }));
+        }
+
         const savedHistory = localStorage.getItem(HISTORY_KEY);
         if (savedHistory) {
           setHistory(JSON.parse(savedHistory));
@@ -1094,6 +1114,7 @@ export default function App() {
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiConfig, settings, activeKey }));
+      localStorage.setItem('ai-metadata-pro-user-settings', JSON.stringify(settings));
     } catch (err) {
       console.error("Failed to save config to local storage:", err);
     }
@@ -1412,14 +1433,25 @@ export default function App() {
         .filter(k => k && !['universal', 'marketplace', 'marketplaces'].includes(k.toLowerCase()))
         .join(', ');
 
-      // Check if user explicitly renamed or if filename should auto-sync with Title
-      const isExplicitlyRenamed = Boolean(
-        (metadata.filename && metadata.filename.trim() !== originalFilename) ||
-        (fileMetadata.filename && fileMetadata.filename.trim() !== originalFilename)
+      // Determine target filename:
+      // If title is present and auto-sync is enabled, use titleVal to create the title-based filename
+      // unless user provided an explicit custom filename different from originalFilename
+      let baseForTarget = '';
+      const customFilename = (metadata.filename?.trim() || fileMetadata?.filename?.trim());
+      const isCustomRenamed = Boolean(
+        customFilename && 
+        customFilename !== originalFilename && 
+        customFilename !== (fileMetadata?.originalFilename || '')
       );
 
-      const shouldSyncWithTitle = (settings.autoSyncFilenameWithTitle !== false && Boolean(titleVal)) || isExplicitlyRenamed;
-      const baseForTarget = metadata.filename || (shouldSyncWithTitle ? titleVal : (fileMetadata.filename || originalFilename));
+      if (isCustomRenamed && customFilename) {
+        baseForTarget = customFilename;
+      } else if (titleVal && titleVal.trim() && settings.autoSyncFilenameWithTitle !== false) {
+        baseForTarget = titleVal.trim();
+      } else {
+        baseForTarget = customFilename || originalFilename;
+      }
+
       const targetFilename = sanitizeStockFilename(
         baseForTarget,
         originalFilename,
@@ -1440,6 +1472,23 @@ export default function App() {
         originalFilename: f.originalFilename || originalFilename,
         errorMessage: undefined 
       } : f));
+
+      // Synchronize filesRef.current immediately so filename updates everywhere
+      const fRefIndex = filesRef.current.findIndex(f => f.id === id);
+      if (fRefIndex !== -1) {
+        filesRef.current[fRefIndex] = {
+          ...filesRef.current[fRefIndex],
+          title: titleVal,
+          description: descVal,
+          keywords: kwVal,
+          category: catVal,
+          rating: ratingVal,
+          status: 'saved',
+          filename: targetFilename,
+          originalFilename: filesRef.current[fRefIndex].originalFilename || originalFilename,
+          errorMessage: undefined
+        };
+      }
 
       // 2. Embed IPTC, EXIF, and XMP directly into the file blob
       let outputBlob: Blob;
@@ -1527,11 +1576,13 @@ export default function App() {
           if (typeof fileMetadata.handle.move === 'function' && targetFilename !== originalFilename) {
             try {
               await fileMetadata.handle.move(targetFilename);
-              (fileMetadata as any).currentDiskFilename = targetFilename;
-              fileMetadata.originalFilename = targetFilename;
-              fileMetadata.filename = targetFilename;
-            } catch {}
+            } catch (mErr) {
+              console.warn("Direct file handle move error:", mErr);
+            }
           }
+          (fileMetadata as any).currentDiskFilename = targetFilename;
+          fileMetadata.originalFilename = targetFilename;
+          fileMetadata.filename = targetFilename;
         } catch (handleErr) {
           console.warn("Direct file handle write warning:", handleErr);
         }
@@ -1855,12 +1906,20 @@ export default function App() {
     setProgress({ current: 0, total: pendingFiles.length });
 
     // High performance multi-worker parallel pipeline
-    const concurrency = Math.max(2, Math.min(settings.concurrency || 3, 4));
+    // If user has 5 or more files, run 5 workers in parallel for super fast batch processing!
+    // If 1 file, starts instantly with 0ms delay!
+    const userConcurrency = settings.concurrency || 3;
+    const targetConcurrency = pendingFiles.length >= 5 
+      ? Math.max(5, userConcurrency) 
+      : Math.max(1, userConcurrency);
+    const concurrency = Math.min(targetConcurrency, pendingFiles.length);
     const pending = [...pendingFiles];
     
     const processNext = async (index: number) => {
-      // Stagger workers slightly to prevent burst rate limits
-      await new Promise(resolve => setTimeout(resolve, index * 300));
+      // Instant start for first file (0ms delay), ultra-fast 25ms stagger for subsequent parallel workers
+      if (index > 0) {
+        await new Promise(resolve => setTimeout(resolve, index * 25));
+      }
       
       while (!stopRef.current && pending.length > 0) {
         // If system is paused due to rate limit, wait

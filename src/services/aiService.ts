@@ -392,7 +392,7 @@ export async function callServerGemini(
 
   if (isSupportedImage) {
     try {
-      base64 = await resizeImage(file, 640, 640, 0.75);
+      base64 = await resizeImage(file, 480, 480, 0.7);
     } catch {
       base64 = await fileToBase64(file);
     }

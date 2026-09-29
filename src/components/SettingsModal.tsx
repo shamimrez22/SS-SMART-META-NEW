@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { GeneratorSettings } from '../types';
 import { cn, sanitizeStockFilename } from '../lib/utils';
+import { testApiConnection } from '../services/aiService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -61,6 +62,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     customPrompt: false,
   });
 
+  const [quickTestKey, setQuickTestKey] = useState('');
+  const [quickTestProvider, setQuickTestProvider] = useState<'gemini' | 'groq' | 'mistral'>('gemini');
+  const [isTestingQuickKey, setIsTestingQuickKey] = useState(false);
+  const [quickKeyStatus, setQuickKeyStatus] = useState<'idle' | 'connected' | 'failed'>('idle');
+
+  const handleTestQuickKey = async () => {
+    const trimmed = quickTestKey.trim();
+    if (!trimmed) {
+      showNotification('Please enter or paste an API key first to test', 'info');
+      return;
+    }
+    setIsTestingQuickKey(true);
+    setQuickKeyStatus('idle');
+    try {
+      const res = await testApiConnection(quickTestProvider, trimmed);
+      if (res.success) {
+        setQuickKeyStatus('connected');
+        showNotification(res.message || `✓ ${quickTestProvider.toUpperCase()} Key is Valid & Connected!`, 'success');
+      } else {
+        setQuickKeyStatus('failed');
+        showNotification(res.message || `${quickTestProvider.toUpperCase()} Connection Failed`, 'error');
+      }
+    } catch (err: any) {
+      setQuickKeyStatus('failed');
+      showNotification(err?.message || 'Connection test error', 'error');
+    } finally {
+      setIsTestingQuickKey(false);
+    }
+  };
+
   const toggleDropdown = useCallback((key: string) => {
     setOpenDropdowns(prev => ({ ...prev, [key]: !prev[key] }));
   }, []);
@@ -88,6 +119,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       customPrompt: false,
     });
   }, []);
+
+  // Guarantee settings persistence for Title, Keywords, and limits whenever changed
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('ai-metadata-pro-user-settings', JSON.stringify(settings));
+      const current = localStorage.getItem('ai-metadata-pro-config');
+      if (current) {
+        const parsed = JSON.parse(current);
+        localStorage.setItem('ai-metadata-pro-config', JSON.stringify({ ...parsed, settings }));
+      }
+    } catch (e) {
+      console.error("Auto-save settings error:", e);
+    }
+  }, [settings]);
 
   if (!isOpen) return null;
 
@@ -133,32 +178,96 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="flex-1 p-5 md:p-8 space-y-6 overflow-y-auto custom-scrollbar bg-background">
           <div className="max-w-5xl mx-auto space-y-6">
 
-            {/* Quick Vault Access Strip (No bulky API keys inside Settings) */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-[#091527] border border-blue-500/30">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-400/40 flex items-center justify-center text-blue-300">
-                  <Database size={16} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-black text-white uppercase tracking-wider">Multi-Provider API Key Vault</span>
-                    <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.2 rounded border border-emerald-500/20 font-mono font-bold">
-                      Active
-                    </span>
+            {/* Quick Vault Access Strip & Live API Key Tester */}
+            <div className="p-3.5 rounded-xl bg-[#091527] border border-blue-500/30 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-400/40 flex items-center justify-center text-blue-300">
+                    <Database size={16} />
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    Google Gemini, Groq Cloud, and Mistral AI keys are managed in the dedicated vault.
-                  </p>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black text-white uppercase tracking-wider">Multi-Provider API Key Vault</span>
+                      <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.2 rounded border border-emerald-500/20 font-mono font-bold">
+                        Active
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Google Gemini, Groq Cloud, and Mistral AI keys • Test anytime to verify connection
+                    </p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setIsManageKeysOpen(true)}
+                  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-black text-xs uppercase tracking-wider shadow-md hover:shadow-cyan-500/20 cursor-pointer active:scale-95 transition-all self-start sm:self-auto shrink-0"
+                >
+                  <Key size={13} />
+                  <span>Open Full Key Vault</span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsManageKeysOpen(true)}
-                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-black text-xs uppercase tracking-wider shadow-md hover:shadow-cyan-500/20 cursor-pointer active:scale-95 transition-all self-start sm:self-auto shrink-0"
-              >
-                <Key size={13} />
-                <span>Open Manage Keys Vault</span>
-              </button>
+
+              {/* Direct API Key Test Input Strip */}
+              <div className="pt-2 border-t border-blue-500/20 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <select
+                  value={quickTestProvider}
+                  onChange={(e) => {
+                    setQuickTestProvider(e.target.value as any);
+                    setQuickKeyStatus('idle');
+                  }}
+                  className="bg-[#0b1b33] border border-[#23426e] rounded-md px-2.5 py-1.5 text-xs font-bold text-cyan-300 focus:outline-none shrink-0"
+                >
+                  <option value="gemini">Google Gemini</option>
+                  <option value="groq">Groq Cloud</option>
+                  <option value="mistral">Mistral AI</option>
+                </select>
+                <div className="relative flex-1">
+                  <input
+                    type="password"
+                    value={quickTestKey}
+                    onChange={(e) => {
+                      setQuickTestKey(e.target.value);
+                      setQuickKeyStatus('idle');
+                    }}
+                    placeholder={`Paste ${quickTestProvider.toUpperCase()} API key to test connection...`}
+                    className="w-full bg-[#08121f] border border-[#1e3b63] rounded-md px-3 py-1.5 text-xs font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleTestQuickKey}
+                  disabled={isTestingQuickKey || !quickTestKey.trim()}
+                  className={cn(
+                    "px-4 py-1.5 font-bold text-xs rounded-md cursor-pointer transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0 active:scale-95",
+                    isTestingQuickKey
+                      ? "bg-slate-700 text-slate-300"
+                      : quickKeyStatus === 'connected'
+                        ? "bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)]"
+                        : quickKeyStatus === 'failed'
+                          ? "bg-rose-600 text-white"
+                          : "bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  )}
+                >
+                  {isTestingQuickKey ? (
+                    <>
+                      <Zap size={13} className="animate-spin" />
+                      <span>Testing...</span>
+                    </>
+                  ) : quickKeyStatus === 'connected' ? (
+                    <>
+                      <CheckCircle2 size={13} className="text-white" />
+                      <span>CONNECTED</span>
+                    </>
+                  ) : quickKeyStatus === 'failed' ? (
+                    <span>FAILED (RETRY)</span>
+                  ) : (
+                    <>
+                      <Zap size={13} />
+                      <span>TEST API KEY</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* PRIMARY CONTROLS (ALWAYS VISIBLE & CLEAN): TITLE, KEYWORDS, DESCRIPTION, CONCURRENCY */}
@@ -1208,13 +1317,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </span>
           <div className="flex items-center gap-3 ml-auto">
             <button 
-              onClick={onClose}
+              onClick={() => {
+                try {
+                  localStorage.setItem('ai-metadata-pro-user-settings', JSON.stringify(settings));
+                  const current = localStorage.getItem('ai-metadata-pro-config');
+                  const parsed = current ? JSON.parse(current) : {};
+                  localStorage.setItem('ai-metadata-pro-config', JSON.stringify({ ...parsed, settings }));
+                } catch (e) {
+                  console.error(e);
+                }
+                onClose();
+              }}
               className="px-5 py-2 rounded-md text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-secondary transition-all border border-border cursor-pointer"
             >
               Close
             </button>
             <button 
               onClick={() => {
+                try {
+                  localStorage.setItem('ai-metadata-pro-user-settings', JSON.stringify(settings));
+                  const current = localStorage.getItem('ai-metadata-pro-config');
+                  const parsed = current ? JSON.parse(current) : {};
+                  localStorage.setItem('ai-metadata-pro-config', JSON.stringify({ ...parsed, settings }));
+                } catch (e) {
+                  console.error(e);
+                }
                 showNotification("Settings saved successfully!", "success");
                 onClose();
               }}
