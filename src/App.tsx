@@ -1607,11 +1607,10 @@ export default function App() {
         }
       }
 
-      // 5. Ensure "BAHIRER FILE NAME CHANGE HOI":
-      // When files are selected via "SELECT FILE", the browser cannot rename the existing file on the user's OS without a directory handle.
-      // If the file was not renamed on disk (renamedOnDisk is false), we immediately export/download the renamed file (targetFilename)
-      // containing 100% of the embedded metadata. This ensures that on the user's computer ("bahire"), the file with the new name is saved!
-      if (!renamedOnDisk) {
+      // 5. Zero-download rule:
+      // In-place embedding writes directly to the local file handle or directory handle right where the file is.
+      // Auto-download is strictly disabled per user requirement ("jekhane file acey oikhanei embed hour kotha, download hobe na").
+      if (shouldDownload && !writtenInPlace) {
         triggerDirectFileDownload(outputBlob, targetFilename);
       }
 
