@@ -235,18 +235,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     "px-4 py-1.5 font-bold text-xs rounded-md cursor-pointer transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0 active:scale-95",
                     isTestingQuickKey
                       ? "bg-slate-700 text-slate-300"
-                      : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
+                      : quickKeyStatus === 'connected'
+                        ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)]"
+                        : "bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   )}
                 >
                   {isTestingQuickKey ? (
                     <>
                       <Zap size={13} className="animate-spin" />
-                      <span>Connecting...</span>
+                      <span>Testing...</span>
                     </>
-                  ) : (
+                  ) : quickKeyStatus === 'connected' ? (
                     <>
                       <CheckCircle2 size={13} className="text-white" />
                       <span>CONNECTED</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={13} />
+                      <span>TEST API KEY</span>
                     </>
                   )}
                 </button>

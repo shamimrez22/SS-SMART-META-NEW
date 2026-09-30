@@ -52,6 +52,51 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
   const [isTestingInputKey, setIsTestingInputKey] = useState(false);
   const [inputKeyStatus, setInputKeyStatus] = useState<'idle' | 'connected' | 'failed'>('idle');
 
+  // Track which slots have TICK MARKS (all 5 slots can be given tick marks simultaneously!)
+  const [tickedSlots, setTickedSlots] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('ai-metadata-pro-ticked-slots');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      'gemini-0': true, 'gemini-1': true, 'gemini-2': true, 'gemini-3': true, 'gemini-4': true,
+      'groq-0': true, 'groq-1': true, 'groq-2': true, 'groq-3': true, 'groq-4': true,
+      'mistral-0': true, 'mistral-1': true, 'mistral-2': true, 'mistral-3': true, 'mistral-4': true,
+    };
+  });
+
+  const toggleSlotTick = (idx: number) => {
+    const slotKey = `${selectedProvider}-${idx}`;
+    setTickedSlots(prev => {
+      const next = { ...prev, [slotKey]: !prev[slotKey] };
+      try {
+        localStorage.setItem('ai-metadata-pro-ticked-slots', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    const willBeTicked = !tickedSlots[slotKey];
+    showNotification(
+      willBeTicked 
+        ? `✓ ${selectedProvider.toUpperCase()} Slot #${idx + 1} TICK MARK added to failover pool!` 
+        : `Removed TICK MARK from ${selectedProvider.toUpperCase()} Slot #${idx + 1}`,
+      willBeTicked ? 'success' : 'info'
+    );
+  };
+
+  const handleTickAll5Slots = () => {
+    setTickedSlots(prev => {
+      const next = { ...prev };
+      for (let i = 0; i < 5; i++) {
+        next[`${selectedProvider}-${i}`] = true;
+      }
+      try {
+        localStorage.setItem('ai-metadata-pro-ticked-slots', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    showNotification(`✓ All 5 ${selectedProvider.toUpperCase()} keys given TICK MARKS & active in pool!`, 'success');
+  };
+
   if (!isOpen) return null;
 
   const toggleShowKey = (id: string) => {
@@ -276,20 +321,32 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
                 type="button"
                 onClick={handleTestInputKey}
                 disabled={isTestingInputKey || !newKeyInput.trim()}
-                title="Connect this key to verify and activate in pool"
+                title="Test API key to verify connection"
                 className={cn(
                   "px-3.5 py-1.5 font-bold text-xs rounded-md cursor-pointer transition-colors shadow-sm flex items-center gap-1.5 shrink-0 active:scale-95",
                   isTestingInputKey 
                     ? "bg-slate-700 text-slate-300"
-                    : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
+                    : inputKeyStatus === 'connected'
+                      ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)]"
+                      : "bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                 )}
               >
                 {isTestingInputKey ? (
-                  <Zap size={13} className="animate-spin" />
+                  <>
+                    <Zap size={13} className="animate-spin" />
+                    <span>Testing...</span>
+                  </>
+                ) : inputKeyStatus === 'connected' ? (
+                  <>
+                    <CheckCircle2 size={13} className="text-white" />
+                    <span>CONNECTED</span>
+                  </>
                 ) : (
-                  <CheckCircle2 size={13} className="text-white" />
+                  <>
+                    <Zap size={13} />
+                    <span>Test Key</span>
+                  </>
                 )}
-                <span>{isTestingInputKey ? "Connecting..." : "CONNECTED"}</span>
               </button>
               <button
                 type="button"
@@ -316,32 +373,18 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
               </div>
               <button
                 type="button"
-                onClick={async () => {
-                  const keys = apiConfig[selectedProvider] || [];
-                  let count = 0;
-                  for (let i = 0; i < keys.length; i++) {
-                    if (keys[i] && keys[i].trim()) {
-                      count++;
-                      handleTestConnection(selectedProvider, i);
-                    }
-                  }
-                  if (count === 0) {
-                    showNotification("Please enter at least one API key first to connect", "info");
-                  } else {
-                    showNotification(`✓ Connecting all ${count} API keys in multi-key pool!`, "success");
-                  }
-                }}
-                className="px-3 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-[11px] uppercase tracking-wider rounded cursor-pointer transition-all shadow-sm active:scale-95 flex items-center gap-1.5 self-start sm:self-auto"
-                title="Connect all 5 API keys simultaneously into the failover pool"
+                onClick={handleTickAll5Slots}
+                className="px-3 py-1 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-[11px] uppercase tracking-wider rounded cursor-pointer transition-all shadow-[0_0_10px_rgba(16,185,129,0.3)] active:scale-95 flex items-center gap-1.5 self-start sm:self-auto"
+                title="Give TICK MARKS to all 5 slots and connect into pool"
               >
-                <Zap size={12} className="text-yellow-300 fill-yellow-300" />
-                <span>Connect All 5 Keys</span>
+                <Check size={12} className="stroke-[3.5] text-white" />
+                <span>✓ TICK MARK ALL 5 KEYS (CONNECT ALL)</span>
               </button>
             </div>
 
             {(apiConfig[selectedProvider] || ['', '', '', '', '']).map((key, idx) => {
               const hasKey = Boolean(key && key.trim());
-              const isActive = activeKey?.provider === selectedProvider && activeKey?.index === idx;
+              const isTicked = tickedSlots[`${selectedProvider}-${idx}`] ?? hasKey;
               const status = apiStatus[`${selectedProvider}-${idx}`];
               const isShown = showKeys[`${selectedProvider}-${idx}`];
 
@@ -350,33 +393,33 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
                   key={idx}
                   className={cn(
                     "p-3 rounded-lg border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2.5",
-                    isActive 
-                      ? "bg-[#0d2139] border-cyan-500 shadow-[0_0_12px_rgba(8,145,178,0.2)]" 
+                    isTicked 
+                      ? "bg-[#0d2139] border-emerald-500/70 shadow-[0_0_12px_rgba(16,185,129,0.15)]" 
                       : "bg-[#0b1829] border-[#1b2f4a] hover:border-[#254267]"
                   )}
                 >
-                  {/* Left: Slot # and Active Selector */}
+                  {/* Left: Slot # and Multi-Key Tick Mark Checkbox */}
                   <div className="flex items-center gap-2.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => handleSetActive(idx)}
+                      onClick={() => toggleSlotTick(idx)}
                       disabled={!hasKey}
-                      title={hasKey ? (isActive ? "Currently Active" : "Click to Set as Active Key") : "Add a key first"}
+                      title={hasKey ? (isTicked ? "Slot active in pool (Click to untick)" : "Click to give TICK MARK (Activate in pool)") : "Enter a key first"}
                       className={cn(
-                        "w-5 h-5 rounded-full border flex items-center justify-center transition-all cursor-pointer",
-                        isActive 
-                          ? "bg-cyan-500 border-cyan-300 text-slate-950 font-bold" 
-                          : (hasKey ? "border-slate-500 hover:border-cyan-400" : "border-slate-700 opacity-40 cursor-not-allowed")
+                        "w-6 h-6 rounded border flex items-center justify-center transition-all cursor-pointer shadow-xs active:scale-95",
+                        isTicked 
+                          ? "bg-emerald-500 border-emerald-300 text-slate-950 font-bold shadow-[0_0_8px_rgba(16,185,129,0.5)]" 
+                          : (hasKey ? "border-slate-500 hover:border-emerald-400 bg-slate-900/60" : "border-slate-700 opacity-40 cursor-not-allowed")
                       )}
                     >
-                      {isActive && <Check size={11} className="stroke-[3]" />}
+                      {isTicked && <Check size={14} className="stroke-[3.5] text-slate-950" />}
                     </button>
 
                     <div className="flex items-center gap-1.5">
                       <span className="font-mono text-xs font-bold text-slate-300">Slot #{idx + 1}</span>
-                      {isActive && (
-                        <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40">
-                          ACTIVE
+                      {isTicked && (
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
+                          ✓ ACTIVE
                         </span>
                       )}
                     </div>
@@ -418,23 +461,31 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
                       disabled={!hasKey || status === 'testing'}
                       title="Test & Connect this key slot into the pool"
                       className={cn(
-                        "px-3 py-1 rounded text-[11px] font-bold uppercase transition-all cursor-pointer flex items-center gap-1",
+                        "px-3 py-1 rounded text-[11px] font-bold uppercase transition-all cursor-pointer flex items-center gap-1 shadow-xs active:scale-95",
                         status === 'testing'
                           ? "bg-slate-700 text-slate-300"
-                          : hasKey
+                          : status === 'connected'
                             ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_8px_rgba(16,185,129,0.3)] border border-emerald-400/40"
-                            : "bg-[#132742] text-slate-400 border border-[#233d60]"
+                            : hasKey
+                              ? "bg-cyan-600 hover:bg-cyan-500 text-white border border-cyan-400/40"
+                              : "bg-[#132742] text-slate-400 border border-[#233d60]"
                       )}
                     >
                       {status === 'testing' ? (
-                        <span>Checking...</span>
-                      ) : hasKey ? (
+                        <>
+                          <Zap size={11} className="animate-spin" />
+                          <span>Checking...</span>
+                        </>
+                      ) : status === 'connected' ? (
                         <>
                           <CheckCircle2 size={12} className="text-white" />
                           <span>CONNECTED</span>
                         </>
                       ) : (
-                        <span>CONNECT</span>
+                        <>
+                          <Zap size={11} />
+                          <span>TEST</span>
+                        </>
                       )}
                     </button>
 
