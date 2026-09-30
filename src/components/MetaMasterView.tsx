@@ -144,10 +144,10 @@ const TableRow = React.memo<TableRowProps>(({
     : (isGeneratingThis ? 'Processing...' : '—');
 
   const textClass = isGeneratingThis && !file.title
-    ? (isBlue ? 'text-cyan-300 font-medium animate-pulse' : (isDark ? 'text-sky-300 animate-pulse' : 'text-sky-600 font-semibold animate-pulse')) 
+    ? (isBlue ? 'text-cyan-300 font-semibold animate-pulse' : (isDark ? 'text-sky-300 font-semibold animate-pulse' : 'text-sky-600 font-semibold animate-pulse')) 
     : (isPendingThis && !file.title
-      ? (isBlue ? 'text-blue-300/60' : (isDark ? 'text-[#5e7084]' : 'text-slate-400')) 
-      : (isBlue ? 'text-blue-100' : (isDark ? 'text-[#cbd5e1]' : 'text-slate-800')));
+      ? (isBlue ? 'text-slate-300 font-medium' : (isDark ? 'text-slate-300 font-medium' : 'text-slate-400 font-medium')) 
+      : (isBlue ? 'text-slate-100 font-semibold' : (isDark ? 'text-slate-100 font-semibold' : 'text-slate-800 font-semibold')));
 
   return (
     <div 
@@ -158,11 +158,11 @@ const TableRow = React.memo<TableRowProps>(({
         isBlue
           ? (isSelected 
             ? "bg-[#163a70] text-white border-y border-cyan-400 shadow-[inset_0_0_0_1px_#22d3ee]" 
-            : "border-[#0c203e] hover:bg-[#0e274c] text-blue-100")
+            : "border-[#0c203e] hover:bg-[#0e274c] text-slate-100")
           : (isDark 
             ? (isSelected 
               ? "bg-[#1c2e43] text-white border-y border-[#2d4666]/60 shadow-[inset_0_0_0_1px_#0284c7]" 
-              : "border-[#213347] hover:bg-[#1b2b3e] text-slate-200")
+              : "border-[#213347] hover:bg-[#1b2b3e] text-slate-100")
             : (isSelected 
               ? "bg-sky-100 text-slate-900 border-y border-sky-300 font-medium shadow-[inset_0_0_0_1px_#38bdf8]" 
               : "border-slate-200 hover:bg-slate-50 text-slate-800"))
@@ -202,11 +202,11 @@ const TableRow = React.memo<TableRowProps>(({
       {/* Filename */}
       <div 
         className={cn(
-          "w-[17%] truncate px-1 font-normal",
+          "w-[17%] truncate px-1 font-semibold",
           isBlue 
-            ? (isSelected ? "text-white font-bold hover:text-cyan-200" : "text-blue-100 hover:text-cyan-300")
+            ? (isSelected ? "text-white font-bold hover:text-cyan-200" : "text-slate-100 hover:text-cyan-200")
             : (isDark 
-              ? (isSelected ? "text-white font-medium hover:text-cyan-300" : "text-slate-100 hover:text-cyan-300")
+              ? (isSelected ? "text-white font-bold hover:text-cyan-300" : "text-slate-100 hover:text-cyan-300")
               : (isSelected ? "text-sky-950 font-bold hover:text-sky-700" : "text-slate-900 hover:text-sky-600"))
         )}
         title={`${file.filename} (Click to copy)`}
@@ -217,7 +217,7 @@ const TableRow = React.memo<TableRowProps>(({
 
       {/* Title */}
       <div 
-        className={cn("w-[22%] truncate pr-2 hover:text-cyan-400", textClass, isErrorThis && "cursor-pointer hover:underline")} 
+        className={cn("w-[22%] truncate pr-2 hover:text-cyan-300 font-semibold", textClass, isErrorThis && "cursor-pointer hover:underline text-rose-300")} 
         title={isErrorThis ? "Click to retry generating this file" : `${displayTitle} (Click to copy)`}
         onClick={(e) => {
           if (isErrorThis) {
@@ -233,7 +233,10 @@ const TableRow = React.memo<TableRowProps>(({
 
       {/* Keywords */}
       <div 
-        className={cn("w-[25%] truncate pr-2 hover:text-cyan-400", isCompletedThis ? (isBlue ? "text-cyan-200/90" : (isDark ? "text-[#94a3b8]" : "text-slate-600")) : textClass)} 
+        className={cn(
+          "w-[25%] truncate pr-2 hover:text-cyan-300 font-semibold", 
+          isCompletedThis ? (isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-800")) : textClass
+        )} 
         title={`${displayKeywords} (Click to copy)`}
         onClick={(e) => onCopy(e, file.keywords || displayKeywords, `kw-${file.id}`)}
       >
@@ -242,7 +245,10 @@ const TableRow = React.memo<TableRowProps>(({
 
       {/* Description */}
       <div 
-        className={cn("w-[20%] truncate pr-2 hover:text-cyan-400", isCompletedThis ? (isBlue ? "text-cyan-200/90" : (isDark ? "text-[#94a3b8]" : "text-slate-600")) : textClass)} 
+        className={cn(
+          "w-[20%] truncate pr-2 hover:text-cyan-300 font-semibold", 
+          isCompletedThis ? (isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-800")) : textClass
+        )} 
         title={`${displayDescription} (Click to copy)`}
         onClick={(e) => onCopy(e, file.description || displayDescription, `desc-${file.id}`)}
       >
@@ -250,12 +256,18 @@ const TableRow = React.memo<TableRowProps>(({
       </div>
 
       {/* Category */}
-      <div className={cn("w-[6%] truncate pr-2", isCompletedThis ? (isBlue ? "text-blue-100" : (isDark ? "text-[#cbd5e1]" : "text-slate-800")) : textClass)} title={displayCategory}>
+      <div 
+        className={cn(
+          "w-[6%] truncate pr-2 font-semibold", 
+          isCompletedThis ? (isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-800")) : textClass
+        )} 
+        title={displayCategory}
+      >
         {displayCategory}
       </div>
 
       {/* KW Count */}
-      <div className={cn("w-[5%] text-center font-mono whitespace-nowrap", isBlue ? "text-cyan-300 font-semibold" : (isDark ? "text-slate-300" : "text-slate-700 font-semibold"))}>
+      <div className={cn("w-[5%] text-center font-mono whitespace-nowrap font-bold", isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-800"))}>
         {kwCount}
       </div>
 
