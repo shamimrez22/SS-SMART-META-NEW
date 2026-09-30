@@ -669,16 +669,33 @@ function generateSmartFallbackMetadata(
         }
       }
 
-      if (cleanB64 && cleanB64.length > 50) {
-        parts.push({
-          inlineData: {
-            data: cleanB64,
-            mimeType: detectedMime
-          }
+      if (!cleanB64 || cleanB64.length < 50) {
+        return res.status(422).json({
+          success: false,
+          error: { message: "No visual image data received for AI vision analysis. Please ensure the image is loaded." }
         });
       }
 
-      const promptText = prompt || `You are a World-Class Senior Stock Agency Inspector & Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET independently. Generate top-ranking commercial stock metadata for filename: ${filename || 'image'}. For every image, generate a unique title, unique keywords, and an image-specific unique description (${minDescriptionWords}-${maxDescriptionWords} words). The description must NOT be copied from another image and must NOT use one fixed sentence or template. Reflect actual visible differences (subject, objects, action, composition, camera angle, environment, visible details). Return JSON with title (strictly ${minTitleWords}-${maxTitleWords} words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (strictly ${Math.min(45, maxKeywords)}-${maxKeywords} commercial comma-separated keywords), category, and rating: 5.`;
+      parts.push({
+        inlineData: {
+          data: cleanB64,
+          mimeType: detectedMime
+        }
+      });
+
+      const promptText = `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist.
+Carefully examine the VISUAL CONTENT of this image.
+Identify what is actually depicted visually (e.g. character, stickman, cartoon, action, objects, colors, background, setting, emotions, concept).
+CRITICAL DIRECTIVES:
+- Base your metadata 100% on what is VISUALLY SHOWN in the image!
+- Do NOT base metadata on random numbers, dates, or timestamps from the filename!
+- Never invent typography, dates, or timestamps unless written text is clearly visible in the image itself.
+Return ONLY valid JSON with keys:
+- title: Commercial stock title (strictly ${minTitleWords}-${maxTitleWords} words) describing what is visually shown in the image.
+- description: Natural commercial description (${minDescriptionWords}-${maxDescriptionWords} words) describing the visual scene, subject, elements, and commercial utility.
+- keywords: (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords) describing the visual elements, character, actions, colors, and concept.
+- category: A relevant stock category (e.g. Illustrations, Cartoons, Business, Concepts, Technology, Nature, People).
+- rating: 5.`;
       parts.push({ text: promptText });
 
       let response: any = null;
@@ -694,11 +711,11 @@ function generateSmartFallbackMetadata(
 
         let keyFailed = false;
 
-        // 1. Try vision models with the visual image/thumbnail first
+        // Try vision models with the visual image
         for (const model of modelsToTry) {
           const callConfig: any = {
             responseMimeType: "application/json",
-            systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET independently. Every asset must produce its own unique title, keywords, category, and its own unique, non-templated description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its visible subject, distinct objects, specific action, composition, camera angle, environment, and visible details. Never use repetitive templates or boilerplate across different assets. For similar images, accurately capture and highlight their visible differences. Do not invent details not visible in the asset. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords), category, rating (5).`
+            systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET VISUALLY. Every asset must produce its own unique title, keywords, category, and its own unique description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its visible subject, distinct objects, specific action, composition, colors, environment, and visible details. Never invent details from numbers in the filename. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords), category, rating (5).`
           };
           if (model.includes('3.8') || model.includes('3.1') || model.includes('3.7')) {
             callConfig.thinkingConfig = { thinkingBudget: 0 };
@@ -755,43 +772,6 @@ function generateSmartFallbackMetadata(
 
         if (response?.text) break;
         if (keyFailed) continue;
-
-        // 2. If vision failed or image wasn't parseable, try text prompt
-        if (!response?.text) {
-          for (const model of modelsToTry) {
-            try {
-              const textOnlyPrompt = `${promptText}\n\n[FILE CONTEXT]\nFilename: ${filename || 'stock_asset'}\nAnalyze this subject and create top-ranking commercial stock metadata. Return JSON with title (strictly ${minTitleWords}-${maxTitleWords} words), description, keywords, category, rating.`;
-              const textCallConfig: any = { 
-                responseMimeType: "application/json",
-                systemInstruction: `You are an elite Stock Photography & Footage Metadata SEO Specialist. Analyze this specific asset independently. Never copy or repeat descriptions across different files. For similar images, accurately reflect visible differences (subject, action, composition, angle, environment). Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} words), description, keywords, category, rating.`
-              };
-              if (model.includes('3.8') || model.includes('3.1') || model.includes('3.7')) {
-                textCallConfig.thinkingConfig = { thinkingBudget: 0 };
-              }
-              response = await ai.models.generateContent({
-                model,
-                contents: textOnlyPrompt,
-                config: textCallConfig
-              });
-              if (response?.text) break;
-            } catch (textErr: any) {
-              lastErr = textErr;
-              const errMsg = String(textErr?.message || textErr || '');
-              const isQuotaError = textErr?.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('exceeded your current quota');
-              const isAuthError = textErr?.status === 400 || textErr?.status === 401 || textErr?.status === 403 || errMsg.includes('API_KEY_INVALID');
-              if (isAuthError) {
-                keyFailed = true;
-                break;
-              }
-              if (isQuotaError) {
-                modelCooloffUntil.set(model, Date.now() + 60000);
-                continue;
-              }
-            }
-          }
-        }
-
-        if (response?.text) break;
       }
 
       let parsed: any = null;

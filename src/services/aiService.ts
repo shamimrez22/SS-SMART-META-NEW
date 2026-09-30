@@ -404,8 +404,22 @@ export async function callServerGemini(
   }
 
   // Fallback: If file-based extraction was empty, use previewUrl if available
-  if (!base64 && previewUrl && typeof previewUrl === 'string' && previewUrl.startsWith('data:')) {
-    base64 = previewUrl;
+  if (!base64 && previewUrl && typeof previewUrl === 'string') {
+    if (previewUrl.startsWith('data:')) {
+      base64 = previewUrl;
+    } else {
+      try {
+        const pRes = await fetch(previewUrl);
+        const pBlob = await pRes.blob();
+        if (pBlob && pBlob.size > 100) {
+          base64 = await fileToBase64(pBlob as any);
+        }
+      } catch {}
+    }
+  }
+
+  if (!base64 || base64.length < 50) {
+    throw new Error("Could not extract image visual data for AI analysis. Please re-select the file.");
   }
 
   let epsInfo = '';

@@ -1816,18 +1816,39 @@ export default function App() {
     }
 
     let actualFile = fileObjectsRef.current[id] || fileObjects[id];
+    if (!actualFile && (fileMetadata.handle || fileHandlesRef.current[id])) {
+      try {
+        const h = fileMetadata.handle || fileHandlesRef.current[id];
+        if (typeof h?.getFile === 'function') {
+          actualFile = await h.getFile();
+          fileObjectsRef.current[id] = actualFile;
+        }
+      } catch (hErr) {
+        console.warn("Could not get file from handle:", hErr);
+      }
+    }
     if (!actualFile && fileMetadata.previewUrl) {
       try {
         const res = await fetch(fileMetadata.previewUrl);
         const blob = await res.blob();
-        actualFile = new File([blob], fileMetadata.filename, { type: blob.type || 'image/jpeg' });
-        fileObjectsRef.current[id] = actualFile;
+        if (blob && blob.size > 100) {
+          actualFile = new File([blob], fileMetadata.filename, { type: blob.type || 'image/jpeg' });
+          fileObjectsRef.current[id] = actualFile;
+        }
       } catch (e) {
         console.warn("Could not reconstruct file from previewUrl:", e);
       }
     }
-    if (!actualFile) {
-      actualFile = new File([new Blob(['asset'])], fileMetadata.filename, { type: 'image/jpeg' });
+    if (!actualFile || actualFile.size < 100) {
+      setFiles(prev => prev.map(f => f.id === id ? {
+        ...f,
+        status: 'error',
+        title: '',
+        keywords: '',
+        description: '',
+        errorMessage: 'Image visual data is not loaded. Please re-select the file or folder.'
+      } : f));
+      return;
     }
 
     setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'generating', errorMessage: undefined } : f));
@@ -1974,19 +1995,42 @@ export default function App() {
 
         let actualFile = fileObjectsRef.current[fileMetadata.id] || fileObjects[fileMetadata.id];
         
+        if (!actualFile && (fileMetadata.handle || fileHandlesRef.current[fileMetadata.id])) {
+          try {
+            const h = fileMetadata.handle || fileHandlesRef.current[fileMetadata.id];
+            if (typeof h?.getFile === 'function') {
+              actualFile = await h.getFile();
+              fileObjectsRef.current[fileMetadata.id] = actualFile;
+            }
+          } catch (hErr) {
+            console.warn("Could not get file from handle:", hErr);
+          }
+        }
+
         if (!actualFile && fileMetadata.previewUrl) {
           try {
             const res = await fetch(fileMetadata.previewUrl);
             const blob = await res.blob();
-            actualFile = new File([blob], fileMetadata.filename, { type: blob.type || 'image/jpeg' });
-            fileObjectsRef.current[fileMetadata.id] = actualFile;
+            if (blob && blob.size > 100) {
+              actualFile = new File([blob], fileMetadata.filename, { type: blob.type || 'image/jpeg' });
+              fileObjectsRef.current[fileMetadata.id] = actualFile;
+            }
           } catch (e) {
             console.warn("Could not reconstruct file from previewUrl:", e);
           }
         }
 
-        if (!actualFile) {
-          actualFile = new File([new Blob(['asset'])], fileMetadata.filename, { type: 'image/jpeg' });
+        if (!actualFile || actualFile.size < 100) {
+          setFiles(prev => prev.map(f => f.id === fileMetadata.id ? {
+            ...f,
+            status: 'error',
+            title: '',
+            keywords: '',
+            description: '',
+            errorMessage: 'Image visual data is not available. Please re-select the file.'
+          } : f));
+          setProgress(prev => ({ ...prev, current: prev.current + 1 }));
+          continue;
         }
 
         let retryCount = 0;
