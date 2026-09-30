@@ -580,9 +580,7 @@ export default function App() {
       filenameFormat: 'exact_title'
     };
     const loaded = initialSaved?.settings ? { ...defaultSettings, ...initialSaved.settings } : defaultSettings;
-    if (!loaded.aiModel || loaded.aiModel === 'gemini-3.8-flash' || loaded.aiModel === 'gemini-2.5-flash-lite') {
-      loaded.aiModel = 'gemini-2.5-flash';
-    }
+    loaded.aiModel = 'gemini-2.5-flash';
     return loaded;
   });
 
@@ -1308,6 +1306,25 @@ export default function App() {
           }
           if (pickedFiles.length > 0) {
             handleFilesAdded(pickedFiles, handlesMap);
+
+            // Connect parent folder so Chrome allows in-place file renaming right where the file is!
+            if (!directoryHandleRef.current && !directoryHandle && 'showDirectoryPicker' in window) {
+              try {
+                // @ts-ignore
+                const dirHandle = await window.showDirectoryPicker({
+                  mode: 'readwrite',
+                  startIn: handles[0]
+                });
+                if (dirHandle) {
+                  setDirectoryHandle(dirHandle);
+                  directoryHandleRef.current = dirHandle;
+                  setFolderName(dirHandle.name);
+                  (window as any).__ss_active_dir = dirHandle;
+                }
+              } catch {
+                // User dismissed folder picker
+              }
+            }
             return;
           }
         }
@@ -1586,17 +1603,23 @@ export default function App() {
               }
             } catch {}
           }
+          if (typeof fileMetadata.handle.move === 'function' && targetFilename !== originalFilename) {
+            try {
+              await fileMetadata.handle.move(targetFilename);
+              renamedOnDisk = true;
+            } catch {}
+          }
           const writable = await fileMetadata.handle.createWritable();
           await writable.write(outputBlob);
           await writable.close();
           writtenInPlace = true;
-          if (typeof fileMetadata.handle.move === 'function' && targetFilename !== originalFilename) {
+          if (!renamedOnDisk && typeof fileMetadata.handle.move === 'function' && targetFilename !== originalFilename) {
             try {
+              await new Promise(r => setTimeout(r, 60));
               await fileMetadata.handle.move(targetFilename);
-              renamedOnDisk = (fileMetadata.handle.name === targetFilename);
+              renamedOnDisk = true;
             } catch (mErr) {
               console.warn("Direct file handle move error:", mErr);
-              renamedOnDisk = false;
             }
           }
           (fileMetadata as any).currentDiskFilename = targetFilename;

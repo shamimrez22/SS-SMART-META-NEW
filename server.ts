@@ -718,7 +718,7 @@ function generateSmartFallbackMetadata(
             lastErr = err;
             const errMsg = String(err?.message || err || '');
             const isQuotaError = err?.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('exceeded your current quota');
-            const isAuthError = err?.status === 400 || err?.status === 401 || err?.status === 403 || errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid');
+            const isAuthError = err?.status === 400 || err?.status === 401 || err?.status === 403 || errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid') || errMsg.includes('UNAUTHENTICATED') || errMsg.includes('PERMISSION_DENIED');
             
             if (isQuotaError || isAuthError) {
               console.warn(`[API] Gemini key hit quota limit or auth error, immediately rotating to next key in pool:`, errMsg.slice(0, 120));
