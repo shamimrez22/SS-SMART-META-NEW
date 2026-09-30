@@ -643,6 +643,8 @@ export default function App() {
   useEffect(() => {
     fileObjectsRef.current = fileObjects;
   }, [fileObjects]);
+
+  const fileHandlesRef = useRef<Record<string, any>>({});
   const [genOptions, setGenOptions] = useState({
     description: true,
     filenameHint: true,
@@ -1226,6 +1228,7 @@ export default function App() {
                 previewUrl: (isImage && newItems.length < 50) ? URL.createObjectURL(file) : undefined,
                 handle: entry
               });
+              fileHandlesRef.current[id] = entry;
             }
           }
         }
@@ -1575,58 +1578,58 @@ export default function App() {
       }
 
       // 4. In-place write: Direct file handle if user selected files with showOpenFilePicker
-      if (!writtenInPlace && fileMetadata.handle && typeof fileMetadata.handle.createWritable === 'function') {
+      const handleToUse = metadata.handle || fileMetadata.handle || fileHandlesRef.current[id] || (actualFile as any)?.handle;
+      if (!writtenInPlace && handleToUse && typeof handleToUse.createWritable === 'function') {
         try {
-          if (typeof fileMetadata.handle.queryPermission === 'function') {
+          if (typeof handleToUse.queryPermission === 'function') {
             try {
-              let p = await fileMetadata.handle.queryPermission({ mode: 'readwrite' });
-              if (p !== 'granted' && typeof fileMetadata.handle.requestPermission === 'function') {
-                await fileMetadata.handle.requestPermission({ mode: 'readwrite' });
+              let p = await handleToUse.queryPermission({ mode: 'readwrite' });
+              if (p !== 'granted' && typeof handleToUse.requestPermission === 'function') {
+                await handleToUse.requestPermission({ mode: 'readwrite' });
               }
             } catch {}
           }
-          if (typeof fileMetadata.handle.move === 'function' && targetFilename !== originalFilename) {
+          if (typeof handleToUse.move === 'function' && targetFilename) {
             try {
-              await fileMetadata.handle.move(targetFilename);
+              await handleToUse.move(targetFilename);
               renamedOnDisk = true;
-            } catch {}
+            } catch (mErr1) {
+              try {
+                await (handleToUse as any).move({ name: targetFilename });
+                renamedOnDisk = true;
+              } catch {}
+            }
           }
-          const writable = await fileMetadata.handle.createWritable();
+          const writable = await handleToUse.createWritable();
           await writable.write(outputBlob);
           await writable.close();
           writtenInPlace = true;
-          if (!renamedOnDisk && typeof fileMetadata.handle.move === 'function' && targetFilename !== originalFilename) {
+          if (!renamedOnDisk && typeof handleToUse.move === 'function' && targetFilename) {
             try {
               await new Promise(r => setTimeout(r, 60));
-              await fileMetadata.handle.move(targetFilename);
+              await handleToUse.move(targetFilename);
               renamedOnDisk = true;
-            } catch (mErr) {
-              console.warn("Direct file handle move error:", mErr);
+            } catch (mErr2) {
+              try {
+                await (handleToUse as any).move({ name: targetFilename });
+                renamedOnDisk = true;
+              } catch {}
             }
           }
           (fileMetadata as any).currentDiskFilename = targetFilename;
-          if (renamedOnDisk) {
-            fileMetadata.originalFilename = targetFilename;
-          }
+          fileMetadata.originalFilename = targetFilename;
           fileMetadata.filename = targetFilename;
         } catch (handleErr) {
           console.warn("Direct file handle write warning:", handleErr);
         }
       }
 
-      // 5. Renaming delivery rule:
-      // If the file was renamed in-place in the directory handle (SELECT FOLDER), renamedOnDisk is true -> 0 downloads.
-      // If the file was selected with SELECT FILE and could not be renamed on disk (handle.move unsupported in browser),
-      // AND the target filename differs from the original disk filename (targetFilename !== initialDiskName):
-      // Deliver the renamed file with its new filename directly to the user's computer so the external filename is changed!
+      // 5. Zero Auto-Download Rule:
+      // Auto-downloads are permanently disabled per user requirement ("auto download cirotore bondo kore daw").
+      // Files are embedded directly in-place into their original handles or directory handles.
+      // Downloads only occur if explicitly requested by the user.
       let downloaded = false;
-      const initialDiskName = (fileMetadata as any).initialDiskFilename || fileMetadata.originalFilename || originalFilename;
-      if (!renamedOnDisk && targetFilename !== initialDiskName) {
-        triggerDirectFileDownload(outputBlob, targetFilename);
-        downloaded = true;
-        (fileMetadata as any).initialDiskFilename = targetFilename;
-        fileMetadata.originalFilename = targetFilename;
-      } else if (shouldDownload && !writtenInPlace) {
+      if (shouldDownload && !writtenInPlace) {
         triggerDirectFileDownload(outputBlob, targetFilename);
         downloaded = true;
       }
@@ -2684,10 +2687,15 @@ export default function App() {
           previewUrl: (isImg && i < 60) ? URL.createObjectURL(file) : undefined,
           handle: handlesMap?.[file.name] || (file as any).handle || undefined
         });
+
+        if (handlesMap?.[file.name] || (file as any).handle) {
+          fileHandlesRef.current[id] = handlesMap?.[file.name] || (file as any).handle;
+        }
       }
 
       // Mutate ref directly to avoid O(N^2) memory cloning
       Object.assign(fileObjectsRef.current, chunkFileObjects);
+      filesRef.current = [...filesRef.current, ...chunkItems];
       setFiles(prev => [...prev, ...chunkItems]);
 
       if (startIndex === 0 && chunkItems.length > 0) {
