@@ -173,9 +173,9 @@ const modelCooloffUntil = new Map<string, number>();
 function getAvailableGeminiModels(preferredModel?: string): string[] {
   // Ultra-fast, highly reliable production models (sub-second to 1.5s latency)
   const allowed = [
-    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-3.8-flash",
+    "gemini-2.5-flash",
     "gemini-flash-latest"
   ];
   let candidates: string[] = [];
@@ -393,19 +393,17 @@ function generateSmartFallbackMetadata(
   maxDescriptionWords: number = 45,
   maxKeywords: number = 50
 ) {
-  let cleanName = (filename || 'stock_asset')
-    .replace(/\.[^/.]+$/, '')
-    .replace(/[-_]+/g, ' ')
+  const rawBase = (filename || 'stock_asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
+  let cleanName = rawBase
     .replace(/\(\d+\)/g, '')
-    .replace(/\d+/g, '')
     .replace(/Commercial Stock Asset/gi, '')
     .replace(/Commercial Stock Photogr/gi, '')
     .replace(/Stock Photo/gi, '')
     .replace(/Concept/gi, '')
     .trim();
 
-  if (!cleanName || cleanName.length < 3) {
-    cleanName = 'Visual Creative Subject';
+  if (!cleanName || cleanName.length < 2) {
+    cleanName = rawBase ? `Asset ${rawBase}` : 'Stock Asset';
   }
 
   const words = cleanName.split(/\s+/).filter(Boolean);
@@ -720,10 +718,16 @@ function generateSmartFallbackMetadata(
             const isQuotaError = err?.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('exceeded your current quota');
             const isAuthError = err?.status === 400 || err?.status === 401 || err?.status === 403 || errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid') || errMsg.includes('UNAUTHENTICATED') || errMsg.includes('PERMISSION_DENIED');
             
-            if (isQuotaError || isAuthError) {
-              console.warn(`[API] Gemini key hit quota limit or auth error, immediately rotating to next key in pool:`, errMsg.slice(0, 120));
+            if (isAuthError) {
+              console.warn(`[API] Gemini key auth error, immediately rotating to next key in pool:`, errMsg.slice(0, 120));
               keyFailed = true;
-              break; // Immediately failover to next key in pool!
+              break; // Rotate to next API key in pool
+            }
+
+            if (isQuotaError) {
+              console.warn(`[API] Model ${model} hit rate limit / quota, cooling off and trying next available model on key:`, errMsg.slice(0, 120));
+              modelCooloffUntil.set(model, Date.now() + 60000);
+              continue; // Try next model on this key!
             }
 
             const is503 = err?.status === 503 || errMsg.includes('503') || errMsg.includes('UNAVAILABLE');
@@ -764,7 +768,14 @@ function generateSmartFallbackMetadata(
               const errMsg = String(textErr?.message || textErr || '');
               const isQuotaError = textErr?.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('exceeded your current quota');
               const isAuthError = textErr?.status === 400 || textErr?.status === 401 || textErr?.status === 403 || errMsg.includes('API_KEY_INVALID');
-              if (isQuotaError || isAuthError) break;
+              if (isAuthError) {
+                keyFailed = true;
+                break;
+              }
+              if (isQuotaError) {
+                modelCooloffUntil.set(model, Date.now() + 60000);
+                continue;
+              }
             }
           }
         }

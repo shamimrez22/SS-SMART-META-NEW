@@ -248,17 +248,19 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
   const isVector = ['eps', 'ai', 'svg'].includes(ext);
   const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
 
-  const cleanName = (filename || 'stock_asset')
-    .replace(/\.[^/.]+$/, '')
-    .replace(/[-_]+/g, ' ')
+  const rawBase = (filename || 'stock_asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
+  let cleanName = rawBase
     .replace(/\(\d+\)/g, '')
-    .replace(/\d+/g, '')
     .replace(/Commercial Stock Asset/gi, '')
     .replace(/Stock Photo/gi, '')
     .replace(/Stock Footage/gi, '')
     .replace(/Vector Illustration/gi, '')
     .replace(/Concept/gi, '')
-    .trim() || 'Creative Subject';
+    .trim();
+
+  if (!cleanName || cleanName.length < 2) {
+    cleanName = rawBase ? `Asset ${rawBase}` : 'Stock Asset';
+  }
 
   const words = cleanName.split(/\s+/).filter(Boolean);
   const capitalized = words
@@ -437,7 +439,7 @@ export async function callServerGemini(
       prompt,
       apiKeys: keyList,
       apiKey: keyList[0] || '',
-      model: settings.aiModel || 'gemini-2.5-flash',
+      model: settings.aiModel || 'gemini-2.5-flash-lite',
       minTitleWords: settings?.minTitleWords || 7,
       maxTitleWords: settings?.maxTitleWords || 15,
       minDescriptionWords: settings?.minDescriptionWords || 20,
@@ -1341,12 +1343,10 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
   
   // Base list of fast valid models
   const baseModels = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite"
+    "gemini-flash-latest"
   ];
 
   // If user selected a specific AI model in settings, try it first

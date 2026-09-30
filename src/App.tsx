@@ -1551,20 +1551,31 @@ export default function App() {
             renamedOnDisk = true;
             fileMetadata.handle = newFileHandle;
 
-            // Remove older file name entries so ONLY the new renamed file remains in the folder!
-            const oldNames = new Set<string>();
-            if (originalFilename && originalFilename !== targetFilename) oldNames.add(originalFilename);
-            if (fileMetadata.originalFilename && fileMetadata.originalFilename !== targetFilename) oldNames.add(fileMetadata.originalFilename);
-            if (fileMetadata.filename && fileMetadata.filename !== targetFilename) oldNames.add(fileMetadata.filename);
-            if ((fileMetadata as any).currentDiskFilename && (fileMetadata as any).currentDiskFilename !== targetFilename) {
-              oldNames.add((fileMetadata as any).currentDiskFilename);
-            }
+            // CRITICAL USER MANDATE:
+            // "er kono vabe i folde ba akta fileo kokho noi delete hobe na meta jodi kono karoney genareate naw hoi"
+            // (Under NO circumstances should a folder or even a single file EVER be deleted if metadata was not generated!)
+            const hasValidGeneratedMetadata = Boolean(
+              (metadata.title || fileMetadata.title) &&
+              (metadata.title || fileMetadata.title)!.trim().length >= 4 &&
+              metadata.status !== 'error' &&
+              fileMetadata.status !== 'error'
+            );
 
-            for (const oldName of oldNames) {
-              try {
-                await targetDir.removeEntry(oldName);
-              } catch (rmErr) {
-                // ignore if already removed or file didn't exist under that name
+            if (hasValidGeneratedMetadata && writtenInPlace && renamedOnDisk && targetFilename) {
+              const oldNames = new Set<string>();
+              if (originalFilename && originalFilename !== targetFilename) oldNames.add(originalFilename);
+              if (fileMetadata.originalFilename && fileMetadata.originalFilename !== targetFilename) oldNames.add(fileMetadata.originalFilename);
+              if ((fileMetadata as any).currentDiskFilename && (fileMetadata as any).currentDiskFilename !== targetFilename) {
+                oldNames.add((fileMetadata as any).currentDiskFilename);
+              }
+
+              for (const oldName of oldNames) {
+                if (!oldName || oldName === targetFilename) continue;
+                try {
+                  await targetDir.removeEntry(oldName);
+                } catch (rmErr) {
+                  // ignore if already removed or file didn't exist under that name
+                }
               }
             }
 
@@ -1864,20 +1875,14 @@ export default function App() {
       const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
       await saveMetadataToLocalFile(id, updatedMetadata, activeDir, false);
     } catch (error: any) {
-      console.warn("Regenerate fallback used:", error);
-      const fallbackResult = buildLocalSmartMetadata(fileMetadata.filename, settings);
-      const newFilename = sanitizeStockFilename(fallbackResult.title, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg', settings.filenameFormat || 'exact_title');
-      const fallbackMetadata: StockMetadata = { 
-        ...fileMetadata, 
-        ...fallbackResult, 
-        originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
-        filename: newFilename,
-        status: 'saved',
-        errorMessage: undefined
-      };
-      setFiles(prev => prev.map(f => f.id === id ? fallbackMetadata : f));
-      const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-      await saveMetadataToLocalFile(id, fallbackMetadata, activeDir, false);
+      console.warn("Regenerate error:", error);
+      // STRICT ZERO-DELETION GUARANTEE:
+      // If metadata is not generated, do not touch, overwrite, or delete the file!
+      setFiles(prev => prev.map(f => f.id === id ? {
+        ...f,
+        status: 'error',
+        errorMessage: 'Regeneration could not complete. Original file is kept 100% safe and untouched.'
+      } : f));
     }
   };
 
@@ -2064,49 +2069,17 @@ export default function App() {
               await new Promise(r => setTimeout(r, 1500));
               continue; // Retry AI analysis
             }
-            console.warn(`Vision AI issue for ${fileMetadata.filename}, applying smart commercial fallback:`, error?.message || error);
+            console.warn(`Vision AI issue for ${fileMetadata.filename}:`, error?.message || error);
             
-            const fallbackResult = buildLocalSmartMetadata(fileMetadata.originalFilename || fileMetadata.filename, settings);
-            const cleanFallbackKw = (fallbackResult.keywords || '')
-              .split(',')
-              .map((k: string) => k.trim())
-              .filter((k: string) => {
-                const lk = k.toLowerCase();
-                return lk && !['universal', 'marketplace', 'marketplaces', 'concept', 'commercial', 'stock photo', 'stock image', 'asset', 'vulval'].includes(lk);
-              })
-              .join(', ');
-
-            const newFilename = sanitizeStockFilename(fallbackResult.title, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg', settings.filenameFormat || 'exact_title');
-            
-            const fallbackMetadata: StockMetadata = { 
-              ...fileMetadata, 
-              ...fallbackResult, 
-              keywords: cleanFallbackKw,
-              originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
-              filename: newFilename,
-              status: 'saved',
-              errorMessage: undefined
-            };
-
-            setFiles(prev => prev.map(f => f.id === fileMetadata.id ? fallbackMetadata : f));
-
-            if (actualFile) {
-              prepareEmbeddedBlob(actualFile, fallbackMetadata)
-                .then(embeddedBlob => {
-                  const updatedFile = new File([embeddedBlob], newFilename, { type: actualFile.type });
-                  setFileObjects(prev => ({ ...prev, [fileMetadata.id]: updatedFile }));
-                })
-                .catch(e => console.warn("Memory embed warning:", e));
-            }
-
-            // Direct in-place auto-save to local file or folder silently
-            const currentDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-            saveMetadataToLocalFile(
-              fileMetadata.id,
-              fallbackMetadata,
-              currentDir,
-              false
-            ).catch(saveErr => console.warn("Auto-save in place error:", saveErr));
+            // STRICT ZERO-DELETION GUARANTEE:
+            // "er kono vabe i folde ba akta fileo kokho noi delete hobe na meta jodi kono karoney genareate naw hoi"
+            // Under NO circumstances should any file be deleted, renamed on disk, or overwritten if metadata is not generated!
+            // Original files are kept 100% safe, intact, and untouched.
+            setFiles(prev => prev.map(f => f.id === fileMetadata.id ? {
+              ...f,
+              status: 'error',
+              errorMessage: 'AI metadata could not be generated. Your original file has been kept 100% safe and untouched.'
+            } : f));
 
             setProgress(prev => ({ ...prev, current: prev.current + 1 }));
             break;
