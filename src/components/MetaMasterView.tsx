@@ -85,7 +85,6 @@ interface MetaMasterViewProps {
   showNotification: (msg: string, type: 'info' | 'error' | 'success') => void;
   folderName?: string;
   directoryHandle?: any;
-  requestFolderPermission?: () => void;
 }
 
 interface TableRowProps {
@@ -339,7 +338,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   showNotification,
   folderName,
   directoryHandle,
-  requestFolderPermission,
 }) => {
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
 
@@ -905,7 +903,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               <Folder size={12} strokeWidth={2.5} />
               <span>SELECT FOLDER</span>
             </button>
-            {folderName ? (
+            {folderName && (
               <span 
                 title={`Connected folder: ${folderName} (Direct in-place disk write active)`}
                 className="px-2 py-0.5 h-7 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 font-mono text-[10.5px] font-bold flex items-center gap-1 shrink-0 animate-in fade-in"
@@ -914,17 +912,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 <span className="truncate max-w-[130px]">{folderName}</span>
                 <span className="text-[8.5px] bg-emerald-500/40 text-emerald-200 px-1 rounded ml-0.5">IN-PLACE</span>
               </span>
-            ) : (files.length > 0 && requestFolderPermission && (
-              <button
-                type="button"
-                onClick={requestFolderPermission}
-                title="কম্পিউটারে সরাসরি ফাইলের নাম রিনেম করার জন্য একবার ফোল্ডার পারমিশন দিন"
-                className="px-2.5 py-0.5 h-7 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 font-bold text-[10.5px] flex items-center gap-1.5 shrink-0 transition-all cursor-pointer animate-pulse"
-              >
-                <FolderCheck size={12} className="text-amber-400 shrink-0" />
-                <span>ফোল্ডার পারমিশন দিন (রিনেমের জন্য)</span>
-              </button>
-            ))}
+            )}
           </fieldset>
 
           {/* Processing Group */}

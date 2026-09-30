@@ -1269,26 +1269,6 @@ export default function App() {
     document.getElementById('folder-upload')?.click();
   };
 
-  const requestFolderPermission = async () => {
-    if (!('showDirectoryPicker' in window)) return;
-    try {
-      const firstHandle = Object.values(fileHandlesRef.current)[0];
-      // @ts-ignore
-      const dirHandle = await window.showDirectoryPicker({
-        mode: 'readwrite',
-        startIn: firstHandle || undefined
-      });
-      if (dirHandle) {
-        setDirectoryHandle(dirHandle);
-        directoryHandleRef.current = dirHandle;
-        setFolderName(dirHandle.name);
-        (window as any).__ss_active_dir = dirHandle;
-      }
-    } catch {
-      // User cancelled
-    }
-  };
-
   const handleFileSelectDirect = async () => {
     if ('showOpenFilePicker' in window) {
       try {
@@ -1777,24 +1757,7 @@ export default function App() {
     });
 
     let inPlaceRenamed = 0;
-    let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-    if (!activeDir && 'showDirectoryPicker' in window) {
-      try {
-        const firstHandle = Object.values(fileHandlesRef.current)[0];
-        // @ts-ignore
-        const dirHandle = await window.showDirectoryPicker({
-          mode: 'readwrite',
-          startIn: firstHandle || undefined
-        });
-        if (dirHandle) {
-          setDirectoryHandle(dirHandle);
-          directoryHandleRef.current = dirHandle;
-          setFolderName(dirHandle.name);
-          (window as any).__ss_active_dir = dirHandle;
-          activeDir = dirHandle;
-        }
-      } catch {}
-    }
+    const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
 
     for (const f of targetModeFiles) {
       if (f.title && f.title.trim()) {
@@ -1951,26 +1914,6 @@ export default function App() {
     }
 
     if (pendingFiles.length === 0) return;
-
-    // Prompt for folder permission if files were selected via SELECT FILE so they can be renamed directly on disk
-    if (!directoryHandleRef.current && !directoryHandle && 'showDirectoryPicker' in window) {
-      try {
-        const firstHandle = Object.values(fileHandlesRef.current)[0];
-        // @ts-ignore
-        const dirHandle = await window.showDirectoryPicker({
-          mode: 'readwrite',
-          startIn: firstHandle || undefined
-        });
-        if (dirHandle) {
-          setDirectoryHandle(dirHandle);
-          directoryHandleRef.current = dirHandle;
-          setFolderName(dirHandle.name);
-          (window as any).__ss_active_dir = dirHandle;
-        }
-      } catch {
-        // User cancelled or dismissed
-      }
-    }
 
     pushUndoSnapshot(`Bulk Metadata Generation`, filesRef.current);
 
@@ -2509,24 +2452,7 @@ export default function App() {
 
     const typeTitle = targetSingleId ? 'Single File' : (type === 'image' ? 'Image' : type === 'eps' ? 'Vector' : type === 'video' ? 'Video' : 'All');
 
-    let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-    if (!activeDir && 'showDirectoryPicker' in window) {
-      try {
-        const firstHandle = Object.values(fileHandlesRef.current)[0];
-        // @ts-ignore
-        const dirHandle = await window.showDirectoryPicker({
-          mode: 'readwrite',
-          startIn: firstHandle || undefined
-        });
-        if (dirHandle) {
-          setDirectoryHandle(dirHandle);
-          directoryHandleRef.current = dirHandle;
-          setFolderName(dirHandle.name);
-          (window as any).__ss_active_dir = dirHandle;
-          activeDir = dirHandle;
-        }
-      } catch {}
-    }
+    const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
 
     setEmbedPopup({
       isOpen: true,
@@ -2909,7 +2835,6 @@ export default function App() {
         showNotification={showNotification}
         folderName={folderName}
         directoryHandle={directoryHandle}
-        requestFolderPermission={requestFolderPermission}
       />
 
       {/* Settings Modal (Dedicated Clean Dropdown Component) */}
