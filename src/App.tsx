@@ -1215,6 +1215,7 @@ export default function App() {
                 id,
                 filename: file.name,
                 originalFilename: file.name,
+                initialDiskFilename: file.name,
                 currentDiskFilename: file.name,
                 title: '',
                 description: '',
@@ -1306,25 +1307,6 @@ export default function App() {
           }
           if (pickedFiles.length > 0) {
             handleFilesAdded(pickedFiles, handlesMap);
-
-            // Connect parent folder so Chrome allows in-place file renaming right where the file is!
-            if (!directoryHandleRef.current && !directoryHandle && 'showDirectoryPicker' in window) {
-              try {
-                // @ts-ignore
-                const dirHandle = await window.showDirectoryPicker({
-                  mode: 'readwrite',
-                  startIn: handles[0]
-                });
-                if (dirHandle) {
-                  setDirectoryHandle(dirHandle);
-                  directoryHandleRef.current = dirHandle;
-                  setFolderName(dirHandle.name);
-                  (window as any).__ss_active_dir = dirHandle;
-                }
-              } catch {
-                // User dismissed folder picker
-              }
-            }
             return;
           }
         }
@@ -1432,7 +1414,7 @@ export default function App() {
     metadata: Partial<StockMetadata>, 
     dirHandle?: any, 
     shouldDownload: boolean = false
-  ): Promise<{ success: boolean; writtenInPlace: boolean; blob: Blob; filename: string } | null> => {
+  ): Promise<{ success: boolean; writtenInPlace: boolean; renamedOnDisk?: boolean; downloaded?: boolean; blob: Blob; filename: string } | null> => {
     const fileMetadata = filesRef.current.find(f => f.id === id) || files.find(f => f.id === id);
     if (!fileMetadata) return null;
 
@@ -1623,23 +1605,37 @@ export default function App() {
             }
           }
           (fileMetadata as any).currentDiskFilename = targetFilename;
-          fileMetadata.originalFilename = targetFilename;
+          if (renamedOnDisk) {
+            fileMetadata.originalFilename = targetFilename;
+          }
           fileMetadata.filename = targetFilename;
         } catch (handleErr) {
           console.warn("Direct file handle write warning:", handleErr);
         }
       }
 
-      // 5. Zero-download rule:
-      // In-place embedding writes directly to the local file handle or directory handle right where the file is.
-      // Auto-download is strictly disabled per user requirement ("jekhane file acey oikhanei embed hour kotha, download hobe na").
-      if (shouldDownload && !writtenInPlace) {
+      // 5. Renaming delivery rule:
+      // If the file was renamed in-place in the directory handle (SELECT FOLDER), renamedOnDisk is true -> 0 downloads.
+      // If the file was selected with SELECT FILE and could not be renamed on disk (handle.move unsupported in browser),
+      // AND the target filename differs from the original disk filename (targetFilename !== initialDiskName):
+      // Deliver the renamed file with its new filename directly to the user's computer so the external filename is changed!
+      let downloaded = false;
+      const initialDiskName = (fileMetadata as any).initialDiskFilename || fileMetadata.originalFilename || originalFilename;
+      if (!renamedOnDisk && targetFilename !== initialDiskName) {
         triggerDirectFileDownload(outputBlob, targetFilename);
+        downloaded = true;
+        (fileMetadata as any).initialDiskFilename = targetFilename;
+        fileMetadata.originalFilename = targetFilename;
+      } else if (shouldDownload && !writtenInPlace) {
+        triggerDirectFileDownload(outputBlob, targetFilename);
+        downloaded = true;
       }
 
       return {
         success: true,
         writtenInPlace,
+        renamedOnDisk,
+        downloaded,
         blob: outputBlob,
         filename: targetFilename
       };
@@ -2676,6 +2672,7 @@ export default function App() {
           id,
           filename: file.name,
           originalFilename: file.name,
+          initialDiskFilename: file.name,
           currentDiskFilename: file.name,
           title: '',
           description: '',

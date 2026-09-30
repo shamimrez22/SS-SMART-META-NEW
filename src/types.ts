@@ -3,6 +3,7 @@ export interface StockMetadata {
   filename: string;
   originalFilename?: string;
   currentDiskFilename?: string;
+  initialDiskFilename?: string;
   title: string;
   description: string;
   keywords: string;
