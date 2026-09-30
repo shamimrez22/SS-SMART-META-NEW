@@ -587,8 +587,7 @@ export async function generateMetadata(
         }
       }
 
-      // Guaranteed fallback: Return commercial stock metadata so NO FILE EVER FAILS
-      return buildLocalSmartMetadata(file?.name || 'commercial_stock_image', settings);
+      throw new Error("Could not generate AI vision metadata for this image. Click RETRY to re-generate.");
     } else {
       const activeThirdPartyKeys = provider.name === 'groq'
         ? (allGroqKeys.length > 0 ? allGroqKeys : (provider.key ? [provider.key] : []))
@@ -605,21 +604,11 @@ export async function generateMetadata(
         }
       }
 
-      // If all configured keys failed, automatically recover using server Gemini so user never fails
-      try {
-        return await callServerGemini(file, settings, allGeminiKeys, previewUrl);
-      } catch (geminiFallbackErr) {
-        console.warn("Gemini fallback also failed, using local smart metadata:", geminiFallbackErr);
-        return buildLocalSmartMetadata(file?.name || 'commercial_stock_image', settings);
-      }
+      // If all configured keys failed, automatically recover using server Gemini
+      return await callServerGemini(file, settings, allGeminiKeys, previewUrl);
     }
   } catch (error) {
-    console.warn(`Safe recovery in generateMetadata:`, error);
-    try {
-      return await callServerGemini(file, settings, '', previewUrl);
-    } catch {
-      return buildLocalSmartMetadata(file?.name || 'commercial_stock_image', settings);
-    }
+    throw error;
   }
 }
 

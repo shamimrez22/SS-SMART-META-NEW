@@ -696,14 +696,14 @@ function generateSmartFallbackMetadata(
 
         // 1. Try vision models with the visual image/thumbnail first
         for (const model of modelsToTry) {
+          const callConfig: any = {
+            responseMimeType: "application/json",
+            systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET independently. Every asset must produce its own unique title, keywords, category, and its own unique, non-templated description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its visible subject, distinct objects, specific action, composition, camera angle, environment, and visible details. Never use repetitive templates or boilerplate across different assets. For similar images, accurately capture and highlight their visible differences. Do not invent details not visible in the asset. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords), category, rating (5).`
+          };
+          if (model.includes('3.8') || model.includes('3.1') || model.includes('3.7')) {
+            callConfig.thinkingConfig = { thinkingBudget: 0 };
+          }
           try {
-            const callConfig: any = {
-              responseMimeType: "application/json",
-              systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET independently. Every asset must produce its own unique title, keywords, category, and its own unique, non-templated description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its visible subject, distinct objects, specific action, composition, camera angle, environment, and visible details. Never use repetitive templates or boilerplate across different assets. For similar images, accurately capture and highlight their visible differences. Do not invent details not visible in the asset. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords), category, rating (5).`
-            };
-            if (model.includes('3.8') || model.includes('3.1') || model.includes('3.7')) {
-              callConfig.thinkingConfig = { thinkingBudget: 0 };
-            }
             response = await ai.models.generateContent({
               model,
               contents: parts,
@@ -725,9 +725,20 @@ function generateSmartFallbackMetadata(
             }
 
             if (isQuotaError) {
-              console.warn(`[API] Model ${model} hit rate limit / quota, cooling off and trying next available model on key:`, errMsg.slice(0, 120));
-              modelCooloffUntil.set(model, Date.now() + 60000);
-              continue; // Try next model on this key!
+              console.warn(`[API] Model ${model} rate limited, waiting 2.5s and retrying...`);
+              await new Promise(r => setTimeout(r, 2500));
+              try {
+                response = await ai.models.generateContent({
+                  model,
+                  contents: parts,
+                  config: callConfig
+                });
+                if (response?.text) break;
+              } catch (retryErr: any) {
+                console.warn(`[API] Model ${model} retry also rate limited, cooling off 6s:`, retryErr?.message?.slice(0, 100));
+                modelCooloffUntil.set(model, Date.now() + 6000);
+                continue; // Try next model on this key!
+              }
             }
 
             const is503 = err?.status === 503 || errMsg.includes('503') || errMsg.includes('UNAVAILABLE');
@@ -846,20 +857,20 @@ function generateSmartFallbackMetadata(
       }
 
       if (!parsed || !parsed.title) {
-        console.warn(`[API] Gemini models exhausted/failed for ${filename || 'file'}, using smart high-quality commercial fallback metadata.`);
-        parsed = generateSmartFallbackMetadata(filename || 'commercial_stock_image', minTitleWords, maxTitleWords, minDescriptionWords, maxDescriptionWords, maxKeywords);
+        console.warn(`[API] Gemini vision failed for ${filename || 'file'}, returning error so user can retry without wrong metadata.`);
+        return res.status(422).json({
+          success: false,
+          error: { message: "Could not generate AI vision metadata for this image. Click RETRY to re-generate." }
+        });
       }
 
       return res.json({ success: true, metadata: parsed });
     } catch (err: any) {
-      console.warn("Gemini Metadata Generation fallback used:", err?.message || err);
-      const minTitleWords = req.body?.minTitleWords || 7;
-      const maxTitleWords = req.body?.maxTitleWords || 15;
-      const minDescriptionWords = req.body?.minDescriptionWords || 20;
-      const maxDescriptionWords = req.body?.maxDescriptionWords || 45;
-      const maxKeywords = req.body?.maxKeywords || 50;
-      const fallback = generateSmartFallbackMetadata(req.body?.filename || 'commercial_stock_image', minTitleWords, maxTitleWords, minDescriptionWords, maxDescriptionWords, maxKeywords);
-      return res.json({ success: true, metadata: fallback });
+      console.warn("Gemini Metadata Generation error:", err?.message || err);
+      return res.status(500).json({
+        success: false,
+        error: { message: err?.message || "AI metadata generation failed. Click RETRY to re-generate." }
+      });
     }
   });
 

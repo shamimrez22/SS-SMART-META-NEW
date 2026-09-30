@@ -1881,7 +1881,10 @@ export default function App() {
       setFiles(prev => prev.map(f => f.id === id ? {
         ...f,
         status: 'error',
-        errorMessage: 'Regeneration could not complete. Original file is kept 100% safe and untouched.'
+        title: '',
+        keywords: '',
+        description: '',
+        errorMessage: error?.message || 'Regeneration could not complete. Original file is kept 100% safe and untouched.'
       } : f));
     }
   };
@@ -1943,20 +1946,15 @@ export default function App() {
     stopRef.current = false;
     setProgress({ current: 0, total: pendingFiles.length });
 
-    // High performance multi-worker parallel pipeline
-    // If user has 5 or more files, run 5 workers in parallel for super fast batch processing!
-    // If 1 file, starts instantly with 0ms delay!
-    const userConcurrency = settings.concurrency || 3;
-    const targetConcurrency = pendingFiles.length >= 5 
-      ? Math.max(5, userConcurrency) 
-      : Math.max(1, userConcurrency);
-    const concurrency = Math.min(targetConcurrency, pendingFiles.length);
+    // High performance paced worker pipeline to reliably process many images without 429 rate limits
+    const userConcurrency = settings.concurrency || 2;
+    const concurrency = Math.min(Math.max(1, Math.min(userConcurrency, 2)), pendingFiles.length);
     const pending = [...pendingFiles];
     
     const processNext = async (index: number) => {
-      // Instant start for first file (0ms delay), ultra-fast 25ms stagger for subsequent parallel workers
+      // Stagger workers by 600ms to avoid bursting the API simultaneously
       if (index > 0) {
-        await new Promise(resolve => setTimeout(resolve, index * 25));
+        await new Promise(resolve => setTimeout(resolve, index * 600));
       }
       
       while (!stopRef.current && pending.length > 0) {
@@ -2062,23 +2060,34 @@ export default function App() {
             }
 
             setProgress(prev => ({ ...prev, current: prev.current + 1 }));
+
+            // Respectful pacing delay between files (600ms) to stay within API rate limits cleanly
+            await new Promise(r => setTimeout(r, 600));
             break; // Success, exit retry loop
           } catch (error: any) {
-            if (retryCount < maxRetries && !stopRef.current) {
+            const errStr = String(error?.message || error || '');
+            const isRateLimit = errStr.includes('429') || errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('rate');
+            if (retryCount < (isRateLimit ? 2 : maxRetries) && !stopRef.current) {
               retryCount++;
-              await new Promise(r => setTimeout(r, 1500));
+              setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: 'retrying', errorMessage: 'Rate limit hit, retrying in 3s...' } : f));
+              await new Promise(r => setTimeout(r, isRateLimit ? 3000 : 1500));
               continue; // Retry AI analysis
             }
             console.warn(`Vision AI issue for ${fileMetadata.filename}:`, error?.message || error);
             
-            // STRICT ZERO-DELETION GUARANTEE:
-            // "er kono vabe i folde ba akta fileo kokho noi delete hobe na meta jodi kono karoney genareate naw hoi"
-            // Under NO circumstances should any file be deleted, renamed on disk, or overwritten if metadata is not generated!
-            // Original files are kept 100% safe, intact, and untouched.
+            // STRICT ZERO-DELETION & ZERO-WRONG-METADATA GUARANTEE:
+            // "jodi metda najenareate korrtey pare tahole erroer dekhabe abar amra regenareate kore thik kore nibo akta imager meta dataw vull dekha jabe na so correct thaktey hobe"
+            // If AI cannot generate metadata, leave title, keywords, and description clean and show ERROR!
+            // NEVER assign dummy fallback metadata or delete/alter the original file!
             setFiles(prev => prev.map(f => f.id === fileMetadata.id ? {
               ...f,
               status: 'error',
-              errorMessage: 'AI metadata could not be generated. Your original file has been kept 100% safe and untouched.'
+              title: '',
+              keywords: '',
+              description: '',
+              errorMessage: isRateLimit 
+                ? 'Rate limit reached. Click RETRY to generate metadata for this file.' 
+                : (error?.message || 'AI metadata generation failed. Click RETRY to re-generate.')
             } : f));
 
             setProgress(prev => ({ ...prev, current: prev.current + 1 }));

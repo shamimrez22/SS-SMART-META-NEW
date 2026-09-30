@@ -125,11 +125,11 @@ const TableRow = React.memo<TableRowProps>(({
 
   const displayTitle = file.title 
     ? file.title 
-    : (isGeneratingThis ? 'Processing...' : file.filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' '));
+    : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '⚠️ Error (Click to Retry)' : (isPendingThis ? '— (Pending)' : file.filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' '))));
 
   const displayKeywords = file.keywords 
     ? file.keywords
-    : (isGeneratingThis ? 'Processing...' : '—');
+    : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '⚠️ Error' : '—'));
 
   const kwCount = file.keywords 
     ? file.keywords.split(',').filter(Boolean).length 
@@ -137,7 +137,7 @@ const TableRow = React.memo<TableRowProps>(({
 
   const displayDescription = file.description 
     ? file.description 
-    : (isGeneratingThis ? 'Processing...' : '—');
+    : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '⚠️ Error (Click to Retry)' : '—'));
 
   const displayCategory = file.category 
     ? file.category 
