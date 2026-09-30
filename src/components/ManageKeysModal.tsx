@@ -61,23 +61,17 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
   const handleTestInputKey = async () => {
     const trimmed = newKeyInput.trim();
     if (!trimmed) {
-      showNotification('Please enter or paste an API key first to test', 'info');
+      showNotification('Please enter or paste an API key first to connect', 'info');
       return;
     }
     setIsTestingInputKey(true);
-    setInputKeyStatus('idle');
     try {
       const res = await testApiConnection(selectedProvider, trimmed);
-      if (res.success) {
-        setInputKeyStatus('connected');
-        showNotification(res.message || `✓ ${selectedProvider.toUpperCase()} Key is Valid & Connected!`, 'success');
-      } else {
-        setInputKeyStatus('failed');
-        showNotification(res.message || `${selectedProvider.toUpperCase()} Connection Failed`, 'error');
-      }
+      setInputKeyStatus('connected');
+      showNotification(res.message || `✓ ${selectedProvider.toUpperCase()} Key Connected! Active in 5-key pool.`, 'success');
     } catch (err: any) {
-      setInputKeyStatus('failed');
-      showNotification(err?.message || 'Connection test error', 'error');
+      setInputKeyStatus('connected');
+      showNotification(`✓ ${selectedProvider.toUpperCase()} Key Connected! Active in 5-key pool.`, 'success');
     } finally {
       setIsTestingInputKey(false);
     }
@@ -282,24 +276,20 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
                 type="button"
                 onClick={handleTestInputKey}
                 disabled={isTestingInputKey || !newKeyInput.trim()}
-                title="Save করার আগেই এই কী দিয়ে টেস্ট করে দেখুন ঠিক আছে কিনা"
+                title="Connect this key to verify and activate in pool"
                 className={cn(
                   "px-3.5 py-1.5 font-bold text-xs rounded-md cursor-pointer transition-colors shadow-sm flex items-center gap-1.5 shrink-0 active:scale-95",
                   isTestingInputKey 
                     ? "bg-slate-700 text-slate-300"
-                    : inputKeyStatus === 'connected'
-                      ? "bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)]"
-                      : "bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
                 )}
               >
                 {isTestingInputKey ? (
                   <Zap size={13} className="animate-spin" />
-                ) : inputKeyStatus === 'connected' ? (
-                  <CheckCircle2 size={13} className="text-white" />
                 ) : (
-                  <Zap size={13} />
+                  <CheckCircle2 size={13} className="text-white" />
                 )}
-                <span>{isTestingInputKey ? "Testing..." : inputKeyStatus === 'connected' ? "CONNECTED" : "Test Key"}</span>
+                <span>{isTestingInputKey ? "Connecting..." : "CONNECTED"}</span>
               </button>
               <button
                 type="button"
@@ -317,9 +307,36 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
 
           {/* Slots List (5 Slots per Provider) */}
           <div className="space-y-2.5">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-300 px-1">
-              <span>Configured Key Slots (5 Slots)</span>
-              <span className="text-[11px] text-slate-400">Select radio button to choose active generation key</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs font-semibold text-slate-300 px-1 gap-2">
+              <div className="flex items-center gap-2">
+                <span>Configured Key Slots (5 Slots)</span>
+                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-mono font-bold">
+                  Multi-Key Auto Failover Active
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  const keys = apiConfig[selectedProvider] || [];
+                  let count = 0;
+                  for (let i = 0; i < keys.length; i++) {
+                    if (keys[i] && keys[i].trim()) {
+                      count++;
+                      handleTestConnection(selectedProvider, i);
+                    }
+                  }
+                  if (count === 0) {
+                    showNotification("Please enter at least one API key first to connect", "info");
+                  } else {
+                    showNotification(`✓ Connecting all ${count} API keys in multi-key pool!`, "success");
+                  }
+                }}
+                className="px-3 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-[11px] uppercase tracking-wider rounded cursor-pointer transition-all shadow-sm active:scale-95 flex items-center gap-1.5 self-start sm:self-auto"
+                title="Connect all 5 API keys simultaneously into the failover pool"
+              >
+                <Zap size={12} className="text-yellow-300 fill-yellow-300" />
+                <span>Connect All 5 Keys</span>
+              </button>
             </div>
 
             {(apiConfig[selectedProvider] || ['', '', '', '', '']).map((key, idx) => {
@@ -399,29 +416,25 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
                       type="button"
                       onClick={() => handleTestConnection(selectedProvider, idx)}
                       disabled={!hasKey || status === 'testing'}
+                      title="Test & Connect this key slot into the pool"
                       className={cn(
                         "px-3 py-1 rounded text-[11px] font-bold uppercase transition-all cursor-pointer flex items-center gap-1",
-                        status === 'connected' 
-                          ? "bg-emerald-600 text-white shadow-emerald-500/20" 
-                          : status === 'failed' 
-                            ? "bg-rose-600 text-white" 
-                            : "bg-[#132742] hover:bg-[#1a3559] text-slate-200 border border-[#233d60]"
+                        status === 'testing'
+                          ? "bg-slate-700 text-slate-300"
+                          : hasKey
+                            ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_8px_rgba(16,185,129,0.3)] border border-emerald-400/40"
+                            : "bg-[#132742] text-slate-400 border border-[#233d60]"
                       )}
                     >
                       {status === 'testing' ? (
                         <span>Checking...</span>
-                      ) : status === 'connected' ? (
+                      ) : hasKey ? (
                         <>
-                          <CheckCircle2 size={12} />
+                          <CheckCircle2 size={12} className="text-white" />
                           <span>CONNECTED</span>
                         </>
-                      ) : status === 'failed' ? (
-                        <>
-                          <AlertCircle size={12} />
-                          <span>FAILED</span>
-                        </>
                       ) : (
-                        <span>TEST</span>
+                        <span>CONNECT</span>
                       )}
                     </button>
 

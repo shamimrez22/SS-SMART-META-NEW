@@ -87,6 +87,206 @@ interface MetaMasterViewProps {
   directoryHandle?: any;
 }
 
+interface TableRowProps {
+  file: StockMetadata;
+  idx: number;
+  isSelected: boolean;
+  isBlue: boolean;
+  isDark: boolean;
+  copiedCell: string | null;
+  onSelect: (id: string) => void;
+  onOpenPreview: (file: StockMetadata) => void;
+  onCopy: (e: React.MouseEvent, text: string, cellId: string) => void;
+  onRetry: (id: string) => void;
+  onEmbed: (fileId: string) => void;
+}
+
+const TableRow = React.memo<TableRowProps>(({
+  file,
+  idx,
+  isSelected,
+  isBlue,
+  isDark,
+  copiedCell,
+  onSelect,
+  onOpenPreview,
+  onCopy,
+  onRetry,
+  onEmbed,
+}) => {
+  const isGeneratingThis = file.status === 'generating' || file.status === 'retrying';
+  const isPendingThis = file.status === 'pending';
+  const isCompletedThis = file.status === 'completed' || file.status === 'saved';
+  const isErrorThis = file.status === 'error';
+  
+  const ext = (file.fileType || file.filename.split('.').pop() || '').toLowerCase();
+  const fIsVec = ['eps', 'ai', 'svg'].includes(ext) || file.fileType === 'vector';
+  const fIsVid = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || file.fileType === 'video';
+
+  const displayTitle = file.title 
+    ? file.title 
+    : (isGeneratingThis ? 'Processing...' : file.filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' '));
+
+  const displayKeywords = file.keywords 
+    ? file.keywords
+    : (isGeneratingThis ? 'Processing...' : '—');
+
+  const kwCount = file.keywords 
+    ? file.keywords.split(',').filter(Boolean).length 
+    : 0;
+
+  const displayDescription = file.description 
+    ? file.description 
+    : (isGeneratingThis ? 'Processing...' : '—');
+
+  const displayCategory = file.category 
+    ? file.category 
+    : (isGeneratingThis ? 'Processing...' : '—');
+
+  const textClass = isGeneratingThis && !file.title
+    ? (isBlue ? 'text-cyan-300 font-medium animate-pulse' : (isDark ? 'text-sky-300 animate-pulse' : 'text-sky-600 font-semibold animate-pulse')) 
+    : (isPendingThis && !file.title
+      ? (isBlue ? 'text-blue-300/60' : (isDark ? 'text-[#5e7084]' : 'text-slate-400')) 
+      : (isBlue ? 'text-blue-100' : (isDark ? 'text-[#cbd5e1]' : 'text-slate-800')));
+
+  return (
+    <div 
+      onClick={() => onSelect(file.id)}
+      onDoubleClick={() => onOpenPreview(file)}
+      className={cn(
+        "flex items-center text-xs h-[34px] px-3 border-b cursor-pointer transition-colors font-sans select-none group shrink-0",
+        isBlue
+          ? (isSelected 
+            ? "bg-[#163a70] text-white border-y border-cyan-400 shadow-[inset_0_0_0_1px_#22d3ee]" 
+            : "border-[#0c203e] hover:bg-[#0e274c] text-blue-100")
+          : (isDark 
+            ? (isSelected 
+              ? "bg-[#1c2e43] text-white border-y border-[#2d4666]/60 shadow-[inset_0_0_0_1px_#0284c7]" 
+              : "border-[#213347] hover:bg-[#1b2b3e] text-slate-200")
+            : (isSelected 
+              ? "bg-sky-100 text-slate-900 border-y border-sky-300 font-medium shadow-[inset_0_0_0_1px_#38bdf8]" 
+              : "border-slate-200 hover:bg-slate-50 text-slate-800"))
+      )}
+    >
+      {/* Preview Thumbnail */}
+      <div 
+        className="w-[44px] shrink-0 flex items-center justify-center p-0.5"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenPreview(file);
+        }}
+        title="Click to view full preview"
+      >
+        {file.previewUrl ? (
+          <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer">
+            <img 
+              src={file.previewUrl} 
+              alt={file.filename} 
+              className="w-full h-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+        ) : (
+          <div className={cn(
+            "w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border shadow-2xs cursor-pointer",
+            fIsVec ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
+            fIsVid ? "bg-purple-500/20 text-purple-300 border-purple-500/40" :
+            "bg-blue-500/20 text-blue-300 border-blue-500/40"
+          )}>
+            {fIsVec ? 'EPS' : fIsVid ? 'VID' : 'IMG'}
+          </div>
+        )}
+      </div>
+
+      {/* Filename */}
+      <div 
+        className={cn(
+          "w-[17%] truncate px-1 font-normal",
+          isBlue 
+            ? (isSelected ? "text-white font-bold hover:text-cyan-200" : "text-blue-100 hover:text-cyan-300")
+            : (isDark 
+              ? (isSelected ? "text-white font-medium hover:text-cyan-300" : "text-slate-100 hover:text-cyan-300")
+              : (isSelected ? "text-sky-950 font-bold hover:text-sky-700" : "text-slate-900 hover:text-sky-600"))
+        )}
+        title={`${file.filename} (Click to copy)`}
+        onClick={(e) => onCopy(e, file.filename, `fn-${file.id}`)}
+      >
+        {copiedCell === `fn-${file.id}` ? '✓ Copied' : file.filename}
+      </div>
+
+      {/* Title */}
+      <div 
+        className={cn("w-[22%] truncate pr-2 hover:text-cyan-400", textClass, isErrorThis && "cursor-pointer hover:underline")} 
+        title={isErrorThis ? "Click to retry generating this file" : `${displayTitle} (Click to copy)`}
+        onClick={(e) => {
+          if (isErrorThis) {
+            e.stopPropagation();
+            onRetry(file.id);
+            return;
+          }
+          onCopy(e, file.title || displayTitle, `title-${file.id}`);
+        }}
+      >
+        {copiedCell === `title-${file.id}` ? '✓ Copied' : displayTitle}
+      </div>
+
+      {/* Keywords */}
+      <div 
+        className={cn("w-[25%] truncate pr-2 hover:text-cyan-400", isCompletedThis ? (isBlue ? "text-cyan-200/90" : (isDark ? "text-[#94a3b8]" : "text-slate-600")) : textClass)} 
+        title={`${displayKeywords} (Click to copy)`}
+        onClick={(e) => onCopy(e, file.keywords || displayKeywords, `kw-${file.id}`)}
+      >
+        {copiedCell === `kw-${file.id}` ? '✓ Copied' : displayKeywords}
+      </div>
+
+      {/* Description */}
+      <div 
+        className={cn("w-[20%] truncate pr-2 hover:text-cyan-400", isCompletedThis ? (isBlue ? "text-cyan-200/90" : (isDark ? "text-[#94a3b8]" : "text-slate-600")) : textClass)} 
+        title={`${displayDescription} (Click to copy)`}
+        onClick={(e) => onCopy(e, file.description || displayDescription, `desc-${file.id}`)}
+      >
+        {copiedCell === `desc-${file.id}` ? '✓ Copied' : displayDescription}
+      </div>
+
+      {/* Category */}
+      <div className={cn("w-[6%] truncate pr-2", isCompletedThis ? (isBlue ? "text-blue-100" : (isDark ? "text-[#cbd5e1]" : "text-slate-800")) : textClass)} title={displayCategory}>
+        {displayCategory}
+      </div>
+
+      {/* KW Count */}
+      <div className={cn("w-[5%] text-center font-mono whitespace-nowrap", isBlue ? "text-cyan-300 font-semibold" : (isDark ? "text-slate-300" : "text-slate-700 font-semibold"))}>
+        {kwCount}
+      </div>
+
+      {/* Rating & In-Place Embed Action */}
+      <div className="w-[5%] flex items-center justify-center gap-1 text-center whitespace-nowrap">
+        <span className="text-amber-400 tracking-tighter select-none text-[9.5px]">★★★★★</span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEmbed(file.id);
+          }}
+          title={`"${file.filename}": সরাসরি মেটাডাটা এম্বেড করুন`}
+          className="opacity-80 hover:opacity-100 px-1 py-0.5 bg-emerald-500/15 hover:bg-emerald-600 hover:text-white text-emerald-300 border border-emerald-500/40 rounded transition-all cursor-pointer shrink-0 flex items-center gap-0.5 text-[9px] font-bold"
+        >
+          <FolderCheck size={10} strokeWidth={2.5} />
+          <span>Embed</span>
+        </button>
+      </div>
+    </div>
+  );
+}, (prev, next) => {
+  return (
+    prev.file === next.file &&
+    prev.isSelected === next.isSelected &&
+    prev.isBlue === next.isBlue &&
+    prev.isDark === next.isDark &&
+    prev.copiedCell === next.copiedCell
+  );
+});
+
 export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   files,
   setFiles,
@@ -255,22 +455,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     }
   }, [files.length, currentModeFiles.length, setMode]);
 
-  // High-performance Pagination for smooth rendering of up to 5,000+ files without lag
-  const [currentPage, setCurrentPage] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState(50); // 25, 50, 100, 200, 500
-
-  const totalPages = Math.max(1, Math.ceil(currentModeFiles.length / pageSize));
-
-  React.useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(1);
-    }
-  }, [totalPages, currentPage]);
-
-  const visibleFiles = React.useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize;
-    return currentModeFiles.slice(startIndex, startIndex + pageSize);
-  }, [currentModeFiles, currentPage, pageSize]);
+  // Single Page rendering for all uploaded files with smooth 60fps scrolling
+  const visibleFiles = currentModeFiles;
 
   const allFilesCount = files.length;
 
@@ -986,8 +1172,11 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <div className="w-[5%] text-center whitespace-nowrap">Rating</div>
           </div>
 
-          {/* Table Rows Body */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar relative">
+          {/* Table Rows Body - Single continuous list with 60fps native smooth scrolling */}
+          <div 
+            className="flex-1 overflow-y-auto custom-scrollbar relative overscroll-contain scroll-smooth"
+            style={{ transform: 'translateZ(0)', WebkitOverflowScrolling: 'touch' }}
+          >
             {currentModeFiles.length === 0 ? (
               /* Clean empty table canvas matching image.png */
               <div className="w-full h-full min-h-[260px] flex flex-col items-center justify-center pointer-events-none select-none p-4 text-center">
@@ -1002,177 +1191,30 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 </span>
               </div>
             ) : (
-              visibleFiles.map((file, idx) => {
-                const isSelected = selectedFileId === file.id;
-                const isGeneratingThis = file.status === 'generating' || file.status === 'retrying';
-                const isPendingThis = file.status === 'pending';
-                const isCompletedThis = file.status === 'completed' || file.status === 'saved';
-                const isErrorThis = file.status === 'error';
-                const fIsVec = isVectorFile(file);
-                const fIsVid = isVideoFile(file);
-
-                // High-performance direct row display: No heavy NLP calculations inside the render loop!
-                const displayTitle = file.title 
-                  ? file.title 
-                  : (isGeneratingThis ? 'Processing...' : file.filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' '));
-
-                const displayKeywords = file.keywords 
-                  ? file.keywords
-                  : (isGeneratingThis ? 'Processing...' : '—');
-
-                const kwCount = file.keywords 
-                  ? file.keywords.split(',').filter(Boolean).length 
-                  : 0;
-
-                const displayDescription = file.description 
-                  ? file.description 
-                  : (isGeneratingThis ? 'Processing...' : '—');
-
-                const displayCategory = file.category 
-                  ? file.category 
-                  : (isGeneratingThis ? 'Processing...' : '—');
-
-                const textClass = isGeneratingThis && !file.title
-                  ? (isBlue ? 'text-cyan-300 font-medium animate-pulse' : (isDark ? 'text-sky-300 animate-pulse' : 'text-sky-600 font-semibold animate-pulse')) 
-                  : (isPendingThis && !file.title
-                    ? (isBlue ? 'text-blue-300/60' : (isDark ? 'text-[#5e7084]' : 'text-slate-400')) 
-                    : (isBlue ? 'text-blue-100' : (isDark ? 'text-[#cbd5e1]' : 'text-slate-800')));
-
-                return (
-                  <div 
-                    key={file.id || idx}
-                    onClick={() => setSelectedFileId(file.id)}
-                    onDoubleClick={() => openPreviewModal(file)}
-                    className={cn(
-                      "flex items-center text-xs py-1 px-3 border-b cursor-pointer transition-colors font-sans select-none group",
-                      isBlue
-                        ? (isSelected 
-                          ? "bg-[#163a70] text-white border-y border-cyan-400 shadow-[inset_0_0_0_1px_#22d3ee]" 
-                          : "border-[#0c203e] hover:bg-[#0e274c] text-blue-100")
-                        : (isDark 
-                          ? (isSelected 
-                            ? "bg-[#1c2e43] text-white border-y border-[#2d4666]/60 shadow-[inset_0_0_0_1px_#0284c7]" 
-                            : "border-[#213347] hover:bg-[#1b2b3e] text-slate-200")
-                          : (isSelected 
-                            ? "bg-sky-100 text-slate-900 border-y border-sky-300 font-medium shadow-[inset_0_0_0_1px_#38bdf8]" 
-                            : "border-slate-200 hover:bg-slate-50 text-slate-800"))
-                    )}
-                  >
-                    {/* Preview Thumbnail */}
-                    <div 
-                      className="w-[44px] shrink-0 flex items-center justify-center p-0.5"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openPreviewModal(file);
-                      }}
-                      title="Click to view full preview"
-                    >
-                      {file.previewUrl ? (
-                        <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer">
-                          <img 
-                            src={file.previewUrl} 
-                            alt={file.filename} 
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                          />
-                        </div>
-                      ) : (
-                        <div className={cn(
-                          "w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border shadow-2xs cursor-pointer",
-                          fIsVec ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
-                          fIsVid ? "bg-purple-500/20 text-purple-300 border-purple-500/40" :
-                          "bg-blue-500/20 text-blue-300 border-blue-500/40"
-                        )}>
-                          {fIsVec ? 'EPS' : fIsVid ? 'VID' : 'IMG'}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Filename */}
-                    <div 
-                      className={cn(
-                        "w-[17%] truncate px-1 font-normal",
-                        isBlue 
-                          ? (isSelected ? "text-white font-bold hover:text-cyan-200" : "text-blue-100 hover:text-cyan-300")
-                          : (isDark 
-                            ? (isSelected ? "text-white font-medium hover:text-cyan-300" : "text-slate-100 hover:text-cyan-300")
-                            : (isSelected ? "text-sky-950 font-bold hover:text-sky-700" : "text-slate-900 hover:text-sky-600"))
-                      )}
-                      title={`${file.filename} (Click to copy)`}
-                      onClick={(e) => copyText(e, file.filename, `fn-${file.id}`)}
-                    >
-                      {copiedCell === `fn-${file.id}` ? '✓ Copied' : file.filename}
-                    </div>
-
-                    {/* Title */}
-                    <div 
-                      className={cn("w-[22%] truncate pr-2 hover:text-cyan-400", textClass, isErrorThis && "cursor-pointer hover:underline")} 
-                      title={isErrorThis ? "Click to retry generating this file" : `${displayTitle} (Click to copy)`}
-                      onClick={(e) => {
-                        if (isErrorThis) {
-                          e.stopPropagation();
-                          setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'pending', errorMessage: undefined } : f));
-                          setTimeout(startGeneration, 60);
-                          return;
-                        }
-                        copyText(e, file.title || displayTitle, `title-${file.id}`);
-                      }}
-                    >
-                      {copiedCell === `title-${file.id}` ? '✓ Copied' : displayTitle}
-                    </div>
-
-                    {/* Keywords */}
-                    <div 
-                      className={cn("w-[25%] truncate pr-2 hover:text-cyan-400", isCompletedThis ? (isBlue ? "text-cyan-200/90" : (isDark ? "text-[#94a3b8]" : "text-slate-600")) : textClass)} 
-                      title={`${displayKeywords} (Click to copy)`}
-                      onClick={(e) => copyText(e, file.keywords || displayKeywords, `kw-${file.id}`)}
-                    >
-                      {copiedCell === `kw-${file.id}` ? '✓ Copied' : displayKeywords}
-                    </div>
-
-                    {/* Description */}
-                    <div 
-                      className={cn("w-[20%] truncate pr-2 hover:text-cyan-400", isCompletedThis ? (isBlue ? "text-cyan-200/90" : (isDark ? "text-[#94a3b8]" : "text-slate-600")) : textClass)} 
-                      title={`${displayDescription} (Click to copy)`}
-                      onClick={(e) => copyText(e, file.description || displayDescription, `desc-${file.id}`)}
-                    >
-                      {copiedCell === `desc-${file.id}` ? '✓ Copied' : displayDescription}
-                    </div>
-
-                    {/* Category */}
-                    <div className={cn("w-[6%] truncate pr-2", isCompletedThis ? (isBlue ? "text-blue-100" : (isDark ? "text-[#cbd5e1]" : "text-slate-800")) : textClass)} title={displayCategory}>
-                      {displayCategory}
-                    </div>
-
-                    {/* KW Count */}
-                    <div className={cn("w-[5%] text-center font-mono whitespace-nowrap", isBlue ? "text-cyan-300 font-semibold" : (isDark ? "text-slate-300" : "text-slate-700 font-semibold"))}>
-                      {kwCount}
-                    </div>
-
-                    {/* Rating & In-Place Embed Action */}
-                    <div className="w-[5%] flex items-center justify-center gap-1 text-center whitespace-nowrap">
-                      <span className="text-amber-400 tracking-tighter select-none text-[9.5px]">★★★★★</span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEmbed('all', file.id);
-                        }}
-                        title={`"${file.filename}": ক্লিক করা মাত্র সরাসরি এই ফাইলে মেটাডাটা এম্বেড করুন`}
-                        className="opacity-80 hover:opacity-100 px-1 py-0.5 bg-emerald-500/15 hover:bg-emerald-600 hover:text-white text-emerald-300 border border-emerald-500/40 rounded transition-all cursor-pointer shrink-0 flex items-center gap-0.5 text-[9px] font-bold"
-                      >
-                        <FolderCheck size={10} strokeWidth={2.5} />
-                        <span>Embed</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
+              visibleFiles.map((file, idx) => (
+                <TableRow
+                  key={file.id || idx}
+                  file={file}
+                  idx={idx}
+                  isSelected={selectedFileId === file.id}
+                  isBlue={isBlue}
+                  isDark={isDark}
+                  copiedCell={copiedCell}
+                  onSelect={setSelectedFileId}
+                  onOpenPreview={openPreviewModal}
+                  onCopy={copyText}
+                  onRetry={(id) => {
+                    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'pending', errorMessage: undefined } : f));
+                    setTimeout(startGeneration, 60);
+                  }}
+                  onEmbed={(id) => handleEmbed('all', id)}
+                />
+              ))
             )}
           </div>
         </div>
 
-        {/* Compact Text Status & Pagination Bar immediately under the table */}
+        {/* Compact Text Status Bar immediately under the table - Single Page View for all files */}
         <div className="mt-1 flex items-center justify-between text-[11px] select-none px-2 py-1 rounded bg-black/10 border border-border/40 gap-2 flex-wrap min-h-[32px]">
           <div className="flex items-center gap-2">
             <span className={cn("font-medium", isBlue ? "text-cyan-200" : (isDark ? "text-slate-200" : "text-slate-700"))}>
@@ -1180,13 +1222,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             </span>
             <span className="opacity-30">|</span>
             <span className={cn("font-mono font-bold text-[10.5px]", isBlue ? "text-cyan-300" : (isDark ? "text-slate-200" : "text-slate-800"))}>
-              {currentModeFiles.length.toLocaleString()} {mode.toUpperCase()} Files
+              {currentModeFiles.length.toLocaleString()} {mode.toUpperCase()} Files (Single Page View)
             </span>
-            {currentModeFiles.length > pageSize && (
-              <span className="text-[10px] text-muted-foreground font-mono">
-                (Showing {((currentPage - 1) * pageSize) + 1}–{Math.min(currentPage * pageSize, currentModeFiles.length)})
-              </span>
-            )}
             {selectedFile && (
               <div 
                 onClick={() => openPreviewModal(selectedFile)}
@@ -1207,71 +1244,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             )}
           </div>
 
-          {/* Pagination Navigation Controls for Fast Browsing across 5000+ files */}
-          {totalPages > 1 && (
-            <div className="flex items-center gap-1 font-mono text-[10.5px]">
-              <button
-                type="button"
-                disabled={currentPage <= 1}
-                onClick={() => setCurrentPage(1)}
-                className="px-1.5 py-0.5 rounded bg-muted/60 hover:bg-muted disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed border border-border/50 text-[10px]"
-                title="First Page"
-              >
-                « First
-              </button>
-              <button
-                type="button"
-                disabled={currentPage <= 1}
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                className="px-2 py-0.5 rounded bg-muted/60 hover:bg-muted disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed border border-border/50 text-[10px]"
-                title="Previous Page"
-              >
-                ‹ Prev
-              </button>
-              <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold text-[10px]">
-                Page {currentPage} of {totalPages}
-              </span>
-              <button
-                type="button"
-                disabled={currentPage >= totalPages}
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                className="px-2 py-0.5 rounded bg-muted/60 hover:bg-muted disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed border border-border/50 text-[10px]"
-                title="Next Page"
-              >
-                Next ›
-              </button>
-              <button
-                type="button"
-                disabled={currentPage >= totalPages}
-                onClick={() => setCurrentPage(totalPages)}
-                className="px-1.5 py-0.5 rounded bg-muted/60 hover:bg-muted disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed border border-border/50 text-[10px]"
-                title="Last Page"
-              >
-                Last »
-              </button>
-
-              <div className="flex items-center gap-1 ml-2">
-                <span className="text-[10px] text-muted-foreground">Per page:</span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => {
-                    setPageSize(Number(e.target.value));
-                    setCurrentPage(1);
-                  }}
-                  className="bg-background border border-border text-[10px] rounded px-1.5 py-0.5 cursor-pointer font-bold"
-                >
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value={200}>200</option>
-                  <option value={500}>500</option>
-                </select>
-              </div>
-            </div>
-          )}
-
-          <div className={cn("text-[10.5px] whitespace-nowrap ml-auto", isBlue ? "text-blue-300" : (isDark ? "text-slate-400" : "text-slate-500"))}>
-            Processed: {completedCount}/{currentModeFiles.length} ({progressPercent}%) &nbsp;|&nbsp; Remaining: {remainingCount}
+          <div className={cn("text-[10.5px] whitespace-nowrap ml-auto font-mono flex items-center gap-2", isBlue ? "text-blue-300" : (isDark ? "text-slate-400" : "text-slate-500"))}>
+            <span>Processed: <strong className="text-emerald-400">{completedCount}</strong>/{currentModeFiles.length} ({progressPercent}%) &nbsp;|&nbsp; Remaining: <strong>{remainingCount}</strong></span>
           </div>
         </div>
       </div>

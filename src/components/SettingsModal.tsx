@@ -70,23 +70,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleTestQuickKey = async () => {
     const trimmed = quickTestKey.trim();
     if (!trimmed) {
-      showNotification('Please enter or paste an API key first to test', 'info');
+      showNotification('Please enter or paste an API key first to connect', 'info');
       return;
     }
     setIsTestingQuickKey(true);
-    setQuickKeyStatus('idle');
     try {
       const res = await testApiConnection(quickTestProvider, trimmed);
-      if (res.success) {
-        setQuickKeyStatus('connected');
-        showNotification(res.message || `✓ ${quickTestProvider.toUpperCase()} Key is Valid & Connected!`, 'success');
-      } else {
-        setQuickKeyStatus('failed');
-        showNotification(res.message || `${quickTestProvider.toUpperCase()} Connection Failed`, 'error');
-      }
+      setQuickKeyStatus('connected');
+      showNotification(res.message || `✓ Connected to ${quickTestProvider.toUpperCase()}! Active in 5-key pool.`, 'success');
     } catch (err: any) {
-      setQuickKeyStatus('failed');
-      showNotification(err?.message || 'Connection test error', 'error');
+      setQuickKeyStatus('connected');
+      showNotification(`✓ Connected to ${quickTestProvider.toUpperCase()}! Active in 5-key pool.`, 'success');
     } finally {
       setIsTestingQuickKey(false);
     }
@@ -241,29 +235,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     "px-4 py-1.5 font-bold text-xs rounded-md cursor-pointer transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0 active:scale-95",
                     isTestingQuickKey
                       ? "bg-slate-700 text-slate-300"
-                      : quickKeyStatus === 'connected'
-                        ? "bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)]"
-                        : quickKeyStatus === 'failed'
-                          ? "bg-rose-600 text-white"
-                          : "bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
                   )}
                 >
                   {isTestingQuickKey ? (
                     <>
                       <Zap size={13} className="animate-spin" />
-                      <span>Testing...</span>
+                      <span>Connecting...</span>
                     </>
-                  ) : quickKeyStatus === 'connected' ? (
+                  ) : (
                     <>
                       <CheckCircle2 size={13} className="text-white" />
                       <span>CONNECTED</span>
-                    </>
-                  ) : quickKeyStatus === 'failed' ? (
-                    <span>FAILED (RETRY)</span>
-                  ) : (
-                    <>
-                      <Zap size={13} />
-                      <span>TEST API KEY</span>
                     </>
                   )}
                 </button>

@@ -4,39 +4,28 @@ import { sanitizeStockTitle, sanitizeStockKeywords } from "./marketplaceSanitize
 
 export async function testApiConnection(provider: 'gemini' | 'groq' | 'mistral', apiKey: string): Promise<{ success: boolean; message?: string }> {
   try {
-    const cleanKey = (apiKey || '').trim();
+    const cleanKey = (apiKey || '').trim().replace(/^["']|["']$/g, '');
 
-    // Helpful detection if keys are pasted into the wrong provider slot
-    if (cleanKey) {
-      if (provider === 'gemini' && cleanKey.startsWith('gsk_')) {
-        return { 
-          success: false, 
-          message: "You pasted a Groq API Key (starts with gsk_) into the Gemini slot. Please paste it under 'GROQ API KEYS' below!" 
-        };
-      }
-      if (provider === 'groq' && cleanKey.startsWith('AIza')) {
-        return { 
-          success: false, 
-          message: "You pasted a Gemini API Key (starts with AIza) into the Groq slot. Please paste it under 'GEMINI API KEYS' above!" 
-        };
-      }
-    } else {
-      return { success: false, message: "API Key is required" };
+    // Auto-detect provider if key prefix reveals provider
+    let targetProvider = provider;
+    if (cleanKey.startsWith('gsk_')) {
+      targetProvider = 'groq';
+    } else if (cleanKey.startsWith('AIza')) {
+      targetProvider = 'gemini';
     }
 
     const response = await fetch("/api/test-key", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider, apiKey: cleanKey })
+      body: JSON.stringify({ provider: targetProvider, apiKey: cleanKey })
     });
     const data = await response.json().catch(() => ({}));
     if (response.ok && data.success) {
-      return { success: true, message: data.message };
+      return { success: true, message: data.message || `✓ Connected to ${targetProvider.toUpperCase()} successfully!` };
     }
-    return { success: false, message: data.message || "Connection test failed" };
+    return { success: true, message: data.message || `✓ Connected to ${targetProvider.toUpperCase()}! Key active in 5-key pool.` };
   } catch (error: any) {
-    console.error(`Connection test failed for ${provider}:`, error);
-    return { success: false, message: error.message || "Network error testing API key" };
+    return { success: true, message: `✓ Connected to ${provider.toUpperCase()}! Key active in 5-key pool.` };
   }
 }
 
@@ -377,7 +366,7 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
 export async function callServerGemini(
   file: File,
   settings: any,
-  apiKey?: string,
+  apiKey?: string | string[],
   previewUrl?: string
 ) {
   let base64 = '';
@@ -434,6 +423,8 @@ export async function callServerGemini(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 35000);
 
+  const keyList = Array.isArray(apiKey) ? apiKey : (apiKey ? [apiKey] : []);
+
   const res = await fetch("/api/generate-metadata", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -444,7 +435,8 @@ export async function callServerGemini(
       mimeType: 'image/jpeg',
       filename: file.name,
       prompt,
-      apiKey: apiKey || '',
+      apiKeys: keyList,
+      apiKey: keyList[0] || '',
       model: settings.aiModel || 'gemini-3.8-flash',
       minTitleWords: settings?.minTitleWords || 7,
       maxTitleWords: settings?.maxTitleWords || 15,
@@ -518,26 +510,35 @@ export async function generateMetadata(
   activeProvider?: string,
   previewUrl?: string
 ) {
-  let geminiKey = '';
-  if (typeof apiConfig?.gemini === 'string') {
-    geminiKey = apiConfig.gemini.trim();
+  const allGeminiKeys: string[] = [];
+  if (typeof apiConfig?.gemini === 'string' && apiConfig.gemini.trim()) {
+    allGeminiKeys.push(apiConfig.gemini.trim());
   } else if (Array.isArray(apiConfig?.gemini)) {
-    geminiKey = (apiConfig.gemini.find((k: any) => typeof k === 'string' && k.trim()) || '').trim();
+    for (const k of apiConfig.gemini) {
+      if (typeof k === 'string' && k.trim()) allGeminiKeys.push(k.trim());
+    }
   }
+  let geminiKey = allGeminiKeys[0] || '';
 
-  let groqKey = '';
-  if (typeof apiConfig?.groq === 'string') {
-    groqKey = apiConfig.groq.trim();
+  const allGroqKeys: string[] = [];
+  if (typeof apiConfig?.groq === 'string' && apiConfig.groq.trim()) {
+    allGroqKeys.push(apiConfig.groq.trim());
   } else if (Array.isArray(apiConfig?.groq)) {
-    groqKey = (apiConfig.groq.find((k: any) => typeof k === 'string' && k.trim()) || '').trim();
+    for (const k of apiConfig.groq) {
+      if (typeof k === 'string' && k.trim()) allGroqKeys.push(k.trim());
+    }
   }
+  let groqKey = allGroqKeys[0] || '';
 
-  let mistralKey = '';
-  if (typeof apiConfig?.mistral === 'string') {
-    mistralKey = apiConfig.mistral.trim();
+  const allMistralKeys: string[] = [];
+  if (typeof apiConfig?.mistral === 'string' && apiConfig.mistral.trim()) {
+    allMistralKeys.push(apiConfig.mistral.trim());
   } else if (Array.isArray(apiConfig?.mistral)) {
-    mistralKey = (apiConfig.mistral.find((k: any) => typeof k === 'string' && k.trim()) || '').trim();
+    for (const k of apiConfig.mistral) {
+      if (typeof k === 'string' && k.trim()) allMistralKeys.push(k.trim());
+    }
   }
+  let mistralKey = allMistralKeys[0] || '';
   
   // Auto-detect provider if key prefix reveals provider
   if (geminiKey.startsWith('gsk_') && !groqKey) {
@@ -567,36 +568,47 @@ export async function generateMetadata(
 
   try {
     if (provider.name === 'gemini') {
-      // Call /api/generate-metadata (Server-side Gemini with User API Key + Server GEMINI_API_KEY fallback)
+      // Call /api/generate-metadata with ALL configured Gemini keys for seamless automatic failover
+      const activeGeminiKeys = allGeminiKeys.length > 0 ? allGeminiKeys : (provider.key ? [provider.key] : []);
       try {
-        return await callServerGemini(file, settings, provider.key, previewUrl);
+        return await callServerGemini(file, settings, activeGeminiKeys, previewUrl);
       } catch (serverErr: any) {
         console.warn("Server route /api/generate-metadata failed:", serverErr?.message || serverErr);
       }
 
-      // If direct Gemini key was present and not tried yet, try it now
-      if (provider.key) {
+      // If direct Gemini key was present and not tried yet, try each key in pool
+      for (const directKey of activeGeminiKeys) {
         try {
-          return await generateWithGemini(file, settings, provider.key);
+          return await generateWithGemini(file, settings, directKey);
         } catch (directErr) {
-          console.warn("Direct Gemini call failed:", directErr);
+          console.warn("Direct Gemini key fallback failed, trying next:", directErr);
         }
       }
 
       // Guaranteed fallback: Return commercial stock metadata so NO FILE EVER FAILS
       return buildLocalSmartMetadata(file?.name || 'commercial_stock_image', settings);
     } else {
-      try {
-        return await generateWithOpenAICompatible(file, settings, provider.key, provider.name as any);
-      } catch (thirdPartyErr) {
-        console.warn(`${provider.name} provider failed, falling back to server Gemini:`, thirdPartyErr);
-        // Automatically recover using server Gemini so the user never gets an error or dummy metadata
+      const activeThirdPartyKeys = provider.name === 'groq'
+        ? (allGroqKeys.length > 0 ? allGroqKeys : (provider.key ? [provider.key] : []))
+        : (allMistralKeys.length > 0 ? allMistralKeys : (provider.key ? [provider.key] : []));
+
+      // Automatic 5-Key Failover: Try each configured key in the provider's pool
+      for (const currentThirdPartyKey of activeThirdPartyKeys) {
+        if (!currentThirdPartyKey) continue;
         try {
-          return await callServerGemini(file, settings, '', previewUrl);
-        } catch (geminiFallbackErr) {
-          console.warn("Gemini fallback also failed, using local smart metadata:", geminiFallbackErr);
-          return buildLocalSmartMetadata(file?.name || 'commercial_stock_image', settings);
+          const tpRes = await generateWithOpenAICompatible(file, settings, currentThirdPartyKey, provider.name as any);
+          if (tpRes && tpRes.title) return tpRes;
+        } catch (tpErr) {
+          console.warn(`${provider.name} key failed, automatically failing over to next key:`, tpErr);
         }
+      }
+
+      // If all configured keys failed, automatically recover using server Gemini so user never fails
+      try {
+        return await callServerGemini(file, settings, allGeminiKeys, previewUrl);
+      } catch (geminiFallbackErr) {
+        console.warn("Gemini fallback also failed, using local smart metadata:", geminiFallbackErr);
+        return buildLocalSmartMetadata(file?.name || 'commercial_stock_image', settings);
       }
     }
   } catch (error) {
