@@ -553,7 +553,7 @@ export default function App() {
       autoDownload: false,
       promptMode: 'default',
       marketplace: 'universal',
-      aiModel: 'gemini-3.8-flash',
+      aiModel: 'gemini-2.5-flash',
       titlePrefix: '',
       titleSuffix: '',
       keywordsPrefix: '',
@@ -580,8 +580,8 @@ export default function App() {
       filenameFormat: 'exact_title'
     };
     const loaded = initialSaved?.settings ? { ...defaultSettings, ...initialSaved.settings } : defaultSettings;
-    if (!loaded.aiModel || loaded.aiModel === 'gemini-2.5-flash' || loaded.aiModel === 'gemini-2.5-flash-lite') {
-      loaded.aiModel = 'gemini-3.8-flash';
+    if (!loaded.aiModel || loaded.aiModel === 'gemini-3.8-flash' || loaded.aiModel === 'gemini-2.5-flash-lite') {
+      loaded.aiModel = 'gemini-2.5-flash';
     }
     return loaded;
   });
@@ -1378,21 +1378,36 @@ export default function App() {
     }
   };
 
-  const triggerDirectFileDownload = (blob: Blob, filename: string) => {
+  const downloadQueueRef = useRef<Array<{ blob: Blob; filename: string }>>([]);
+  const isDownloadingRef = useRef(false);
+
+  const processDownloadQueue = () => {
+    if (isDownloadingRef.current || downloadQueueRef.current.length === 0) return;
+    isDownloadingRef.current = true;
+    const item = downloadQueueRef.current.shift()!;
     try {
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(item.blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = filename;
+      a.download = item.filename;
       document.body.appendChild(a);
       a.click();
       setTimeout(() => {
-        document.body.removeChild(a);
+        if (a.parentNode) document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }, 1000);
     } catch (e) {
       console.warn("Direct file download trigger error:", e);
     }
+    setTimeout(() => {
+      isDownloadingRef.current = false;
+      processDownloadQueue();
+    }, 200);
+  };
+
+  const triggerDirectFileDownload = (blob: Blob, filename: string) => {
+    downloadQueueRef.current.push({ blob, filename });
+    processDownloadQueue();
   };
 
   const saveMetadataToLocalFile = async (
@@ -1518,6 +1533,7 @@ export default function App() {
       setFileObjects(prev => ({ ...prev, [id]: updatedFile }));
 
       let writtenInPlace = false;
+      let renamedOnDisk = false;
 
       // 3. Silent in-place disk write: Directory handle if local folder is active (TOP PRIORITY for full renaming & in-place replacement)
       const targetDir = dirHandle || directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
@@ -1530,6 +1546,7 @@ export default function App() {
             await writable.write(outputBlob);
             await writable.close();
             writtenInPlace = true;
+            renamedOnDisk = true;
             fileMetadata.handle = newFileHandle;
 
             // Remove older file name entries so ONLY the new renamed file remains in the folder!
@@ -1576,8 +1593,10 @@ export default function App() {
           if (typeof fileMetadata.handle.move === 'function' && targetFilename !== originalFilename) {
             try {
               await fileMetadata.handle.move(targetFilename);
+              renamedOnDisk = (fileMetadata.handle.name === targetFilename);
             } catch (mErr) {
               console.warn("Direct file handle move error:", mErr);
+              renamedOnDisk = false;
             }
           }
           (fileMetadata as any).currentDiskFilename = targetFilename;
@@ -1588,9 +1607,13 @@ export default function App() {
         }
       }
 
-      // 5. Zero-download rule: Hard-disable any auto-download
-      // The user strictly requested that no separate file downloads occur.
-      // Metadata and renaming must only write directly in-place.
+      // 5. Ensure "BAHIRER FILE NAME CHANGE HOI":
+      // When files are selected via "SELECT FILE", the browser cannot rename the existing file on the user's OS without a directory handle.
+      // If the file was not renamed on disk (renamedOnDisk is false), we immediately export/download the renamed file (targetFilename)
+      // containing 100% of the embedded metadata. This ensures that on the user's computer ("bahire"), the file with the new name is saved!
+      if (!renamedOnDisk) {
+        triggerDirectFileDownload(outputBlob, targetFilename);
+      }
 
       return {
         success: true,
@@ -1719,21 +1742,9 @@ export default function App() {
         if (newName && newName !== f.filename) {
           count++;
           const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-          if (activeDir) {
-            const res = await saveMetadataToLocalFile(f.id, { filename: newName }, activeDir, false);
-            if (res && res.writtenInPlace) {
-              inPlaceRenamed++;
-            }
-          } else {
-            setFiles(prev => prev.map(item => item.id === f.id ? { ...item, filename: newName } : item));
-            if (fileObjectsRef.current[f.id]) {
-              try {
-                const oldF = fileObjectsRef.current[f.id];
-                const updatedF = new File([oldF], newName, { type: oldF.type, lastModified: oldF.lastModified });
-                fileObjectsRef.current[f.id] = updatedF;
-                setFileObjects(prev => ({ ...prev, [f.id]: updatedF }));
-              } catch {}
-            }
+          const res = await saveMetadataToLocalFile(f.id, { filename: newName }, activeDir, false);
+          if (res && res.writtenInPlace) {
+            inPlaceRenamed++;
           }
         }
       }

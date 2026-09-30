@@ -171,17 +171,12 @@ async function startServer() {
 const modelCooloffUntil = new Map<string, number>();
 
 function getAvailableGeminiModels(preferredModel?: string): string[] {
-  // Ultra-fast, highly reliable production models with generous rate limits
+  // Ultra-fast, highly reliable production models (sub-second to 1.5s latency)
   const allowed = [
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-3.8-flash",
     "gemini-3.1-flash-lite",
-    "gemini-flash-latest",
-    "gemini-flash-lite-latest",
-    "gemini-3.7-flash",
-    "gemini-3.5-flash",
-    "gemini-3.6-flash"
+    "gemini-3.8-flash",
+    "gemini-flash-latest"
   ];
   let candidates: string[] = [];
   if (preferredModel && allowed.includes(preferredModel)) {
@@ -704,13 +699,17 @@ function generateSmartFallbackMetadata(
         // 1. Try vision models with the visual image/thumbnail first
         for (const model of modelsToTry) {
           try {
+            const callConfig: any = {
+              responseMimeType: "application/json",
+              systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET independently. Every asset must produce its own unique title, keywords, category, and its own unique, non-templated description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its visible subject, distinct objects, specific action, composition, camera angle, environment, and visible details. Never use repetitive templates or boilerplate across different assets. For similar images, accurately capture and highlight their visible differences. Do not invent details not visible in the asset. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords), category, rating (5).`
+            };
+            if (model.includes('3.8') || model.includes('3.1') || model.includes('3.7')) {
+              callConfig.thinkingConfig = { thinkingBudget: 0 };
+            }
             response = await ai.models.generateContent({
               model,
               contents: parts,
-              config: {
-                responseMimeType: "application/json",
-                systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET independently. Every asset must produce its own unique title, keywords, category, and its own unique, non-templated description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its visible subject, distinct objects, specific action, composition, camera angle, environment, and visible details. Never use repetitive templates or boilerplate across different assets. For similar images, accurately capture and highlight their visible differences. Do not invent details not visible in the asset. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords), category, rating (5).`
-              }
+              config: callConfig
             });
             if (response?.text) {
               break;
@@ -747,13 +746,17 @@ function generateSmartFallbackMetadata(
           for (const model of modelsToTry) {
             try {
               const textOnlyPrompt = `${promptText}\n\n[FILE CONTEXT]\nFilename: ${filename || 'stock_asset'}\nAnalyze this subject and create top-ranking commercial stock metadata. Return JSON with title (strictly ${minTitleWords}-${maxTitleWords} words), description, keywords, category, rating.`;
+              const textCallConfig: any = { 
+                responseMimeType: "application/json",
+                systemInstruction: `You are an elite Stock Photography & Footage Metadata SEO Specialist. Analyze this specific asset independently. Never copy or repeat descriptions across different files. For similar images, accurately reflect visible differences (subject, action, composition, angle, environment). Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} words), description, keywords, category, rating.`
+              };
+              if (model.includes('3.8') || model.includes('3.1') || model.includes('3.7')) {
+                textCallConfig.thinkingConfig = { thinkingBudget: 0 };
+              }
               response = await ai.models.generateContent({
                 model,
                 contents: textOnlyPrompt,
-                config: { 
-                  responseMimeType: "application/json",
-                  systemInstruction: `You are an elite Stock Photography & Footage Metadata SEO Specialist. Analyze this specific asset independently. Never copy or repeat descriptions across different files. For similar images, accurately reflect visible differences (subject, action, composition, angle, environment). Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} words), description, keywords, category, rating.`
-                }
+                config: textCallConfig
               });
               if (response?.text) break;
             } catch (textErr: any) {

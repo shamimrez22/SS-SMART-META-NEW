@@ -421,7 +421,7 @@ export async function callServerGemini(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 35000);
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
 
   const keyList = Array.isArray(apiKey) ? apiKey : (apiKey ? [apiKey] : []);
 
@@ -437,7 +437,7 @@ export async function callServerGemini(
       prompt,
       apiKeys: keyList,
       apiKey: keyList[0] || '',
-      model: settings.aiModel || 'gemini-3.8-flash',
+      model: settings.aiModel || 'gemini-2.5-flash',
       minTitleWords: settings?.minTitleWords || 7,
       maxTitleWords: settings?.maxTitleWords || 15,
       minDescriptionWords: settings?.minDescriptionWords || 20,
@@ -1851,20 +1851,10 @@ async function fileToBase64(file: File): Promise<string> {
   });
 }
 
-async function resizeImage(file: File, maxWidth: number = 720, maxHeight: number = 720, quality: number = 0.75): Promise<string> {
+async function resizeImage(file: File, maxWidth: number = 480, maxHeight: number = 480, quality: number = 0.68): Promise<string> {
   if (!file || file.size < 50) return '';
   
-  // For files <= 2MB, FileReader is instantaneous (5ms) and preserves 100% visual detail
-  if (file.size <= 2 * 1024 * 1024) {
-    try {
-      const b64 = await fileToBase64(file);
-      if (b64 && b64.length > 200) return b64;
-    } catch (e) {
-      console.warn("Direct fileToBase64 fallback:", e);
-    }
-  }
-
-  // Method 1: Hardware-accelerated createImageBitmap (Instant, runs off-main-thread)
+  // Method 1: Hardware-accelerated createImageBitmap (Instant off-main-thread, reduces 2MB-20MB to ~25KB in 5ms)
   if (typeof window !== 'undefined' && 'createImageBitmap' in window) {
     try {
       const bmp = await createImageBitmap(file);
