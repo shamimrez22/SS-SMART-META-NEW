@@ -70,7 +70,7 @@ import {
   generateIllustratorScript 
 } from './services/embedService';
 import { StockMetadata, ApiConfig, GeneratorSettings, ApiStatus, HistoryItem, StockMarketplace } from './types';
-import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail, applyTitleAndKeywordsAffixes, buildLocalSmartMetadata, enforceStockTitleWordLimits } from './services/aiService';
+import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail, renderSvgThumbnail, applyTitleAndKeywordsAffixes, buildLocalSmartMetadata, enforceStockTitleWordLimits } from './services/aiService';
 import { AssetInspector } from './components/AssetInspector';
 import { ExtensionsModal } from './components/ExtensionsModal';
 import { MetaMasterView } from './components/MetaMasterView';
@@ -307,7 +307,11 @@ const FileRow = React.memo(({ index, style, data }: any) => {
           title="Click to view full preview & metadata"
         >
           {file.previewUrl ? (
-            <img src={file.previewUrl} alt="" className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
+            ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((file.fileType || '').toLowerCase()) && !file.previewUrl.startsWith('data:image/') ? (
+              <video src={file.previewUrl} className="w-full h-full object-cover pointer-events-none" muted playsInline preload="metadata" />
+            ) : (
+              <img src={file.previewUrl} alt="" className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
+            )
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground bg-muted/40">
               <FileText size={16} />
@@ -2736,6 +2740,40 @@ export default function App() {
         setFileObjects(prev => ({ ...prev, ...allAddedFileObjects }));
         setIsLoadingFiles(false);
         showNotification(`✓ ${totalCount.toLocaleString()}টি ফাইল সফলভাবে যুক্ত হয়েছে!`, 'success');
+
+        // Automatically extract high-resolution static image previews for videos, SVGs, and EPS vectors in background
+        const addedIds = Object.keys(allAddedFileObjects);
+        const pendingMedia = addedIds.filter(id => {
+          const f = allAddedFileObjects[id];
+          if (!f) return false;
+          const e = f.name.split('.').pop()?.toLowerCase() || '';
+          return isVideo(e) || isVector(e);
+        });
+
+        if (pendingMedia.length > 0) {
+          (async () => {
+            for (const id of pendingMedia) {
+              const file = allAddedFileObjects[id];
+              if (!file) continue;
+              const ext = file.name.split('.').pop()?.toLowerCase() || '';
+              try {
+                let thumb: string | undefined;
+                if (isVideo(ext)) {
+                  thumb = await extractVideoThumbnail(file);
+                } else if (ext === 'svg') {
+                  thumb = await renderSvgThumbnail(file);
+                } else if (isVector(ext)) {
+                  thumb = await extractEpsThumbnail(file);
+                }
+                if (thumb && thumb.startsWith('data:image/')) {
+                  setFiles(prev => prev.map(f => f.id === id ? { ...f, previewUrl: thumb } : f));
+                }
+              } catch (e) {
+                console.warn("Background thumb extraction:", e);
+              }
+            }
+          })();
+        }
       }
     };
 

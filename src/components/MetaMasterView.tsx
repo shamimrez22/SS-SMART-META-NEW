@@ -99,6 +99,7 @@ interface TableRowProps {
   onCopy: (e: React.MouseEvent, text: string, cellId: string) => void;
   onRetry: (id: string) => void;
   onEmbed: (fileId: string) => void;
+  onUpdatePreview?: (id: string, previewUrl: string) => void;
 }
 
 const TableRow = React.memo<TableRowProps>(({
@@ -113,6 +114,7 @@ const TableRow = React.memo<TableRowProps>(({
   onCopy,
   onRetry,
   onEmbed,
+  onUpdatePreview,
 }) => {
   const isGeneratingThis = file.status === 'generating' || file.status === 'retrying';
   const isPendingThis = file.status === 'pending';
@@ -178,14 +180,46 @@ const TableRow = React.memo<TableRowProps>(({
         title="Click to view full preview"
       >
         {file.previewUrl ? (
-          <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer">
-            <img 
-              src={file.previewUrl} 
-              alt={file.filename} 
-              className="w-full h-full object-cover"
-              loading="lazy"
-              decoding="async"
-            />
+          <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer relative">
+            {fIsVid && !file.previewUrl.startsWith('data:image/') ? (
+              <video 
+                src={file.previewUrl} 
+                className="w-full h-full object-cover pointer-events-none" 
+                muted 
+                playsInline 
+                preload="metadata"
+                onLoadedData={(e) => {
+                  try {
+                    const v = e.currentTarget;
+                    if (v.videoWidth > 0 && onUpdatePreview) {
+                      const c = document.createElement('canvas');
+                      c.width = 120;
+                      c.height = 120;
+                      const ctx = c.getContext('2d');
+                      if (ctx) {
+                        ctx.drawImage(v, 0, 0, 120, 120);
+                        const thumb = c.toDataURL('image/jpeg', 0.85);
+                        if (thumb && thumb.length > 100) {
+                          onUpdatePreview(file.id, thumb);
+                        }
+                      }
+                    }
+                  } catch {}
+                }}
+              />
+            ) : (
+              <img 
+                src={file.previewUrl} 
+                alt={file.filename} 
+                className="w-full h-full object-cover"
+                loading="lazy"
+                decoding="async"
+                onError={(e) => {
+                  // Hide broken image icon if image fails
+                  (e.target as HTMLElement).style.display = 'none';
+                }}
+              />
+            )}
           </div>
         ) : (
           <div className={cn(
@@ -194,7 +228,7 @@ const TableRow = React.memo<TableRowProps>(({
             fIsVid ? "bg-purple-500/20 text-purple-300 border-purple-500/40" :
             "bg-blue-500/20 text-blue-300 border-blue-500/40"
           )}>
-            {fIsVec ? 'EPS' : fIsVid ? 'VID' : 'IMG'}
+            {fIsVec ? 'EPS' : fIsVid ? '🎬' : 'IMG'}
           </div>
         )}
       </div>
@@ -1220,6 +1254,9 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                     setTimeout(startGeneration, 60);
                   }}
                   onEmbed={(id) => handleEmbed('all', id)}
+                  onUpdatePreview={(id, previewUrl) => {
+                    setFiles(prev => prev.map(f => f.id === id ? { ...f, previewUrl } : f));
+                  }}
                 />
               ))
             )}
@@ -1248,7 +1285,11 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 title="Click to view full preview modal"
               >
                 {selectedFile.previewUrl && (
-                  <img src={selectedFile.previewUrl} alt="" className="w-4 h-4 rounded object-cover border border-cyan-400/40" />
+                  ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((selectedFile.fileType || '').toLowerCase()) && !selectedFile.previewUrl.startsWith('data:image/') ? (
+                    <video src={selectedFile.previewUrl} className="w-4 h-4 rounded object-cover border border-cyan-400/40 pointer-events-none" muted playsInline preload="metadata" />
+                  ) : (
+                    <img src={selectedFile.previewUrl} alt="" className="w-4 h-4 rounded object-cover border border-cyan-400/40" />
+                  )
                 )}
                 <span className="font-bold truncate max-w-[160px] text-[10px]">{selectedFile.filename}</span>
                 <span className="text-[9px] underline font-medium opacity-80 group-hover/chip:opacity-100">Preview 🔍</span>

@@ -410,15 +410,15 @@ export async function callServerGemini(
     }
   }
 
-  // Fallback: If file-based extraction was empty, use previewUrl if available
+  // Fallback: If file-based extraction was empty, use previewUrl if it is a valid image dataUrl or image blob
   if (!base64 && previewUrl && typeof previewUrl === 'string') {
-    if (previewUrl.startsWith('data:')) {
+    if (previewUrl.startsWith('data:image/')) {
       base64 = previewUrl;
-    } else {
+    } else if (!isVideo) {
       try {
         const pRes = await fetch(previewUrl);
         const pBlob = await pRes.blob();
-        if (pBlob && pBlob.size > 100) {
+        if (pBlob && pBlob.size > 100 && (pBlob.type?.startsWith('image/') || !pBlob.type)) {
           base64 = await fileToBase64(pBlob as any);
         }
       } catch {}
@@ -426,7 +426,7 @@ export async function callServerGemini(
   }
 
   if (!base64 || base64.length < 50) {
-    throw new Error("Could not extract image visual data for AI analysis. Please re-select the file.");
+    throw new Error(isVideo ? "Could not extract video visual frame for AI analysis. Please click RETRY." : "Could not extract image visual data for AI analysis. Please re-select the file.");
   }
 
   let epsInfo = '';
@@ -519,7 +519,8 @@ export async function callServerGemini(
         keywords: cleanKeywords,
         description: cleanDesc,
         category: String(data.metadata.category || 'People').trim(),
-        rating: data.metadata.rating || 5
+        rating: data.metadata.rating || 5,
+        previewUrl: base64 && base64.startsWith('data:image/') ? base64 : undefined
       };
     }
   }
@@ -1147,10 +1148,13 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
     const blobUrl = URL.createObjectURL(typedBlob);
 
     const video = document.createElement('video');
-    video.preload = 'metadata';
+    video.preload = 'auto';
     video.muted = true;
     video.playsInline = true;
     video.src = blobUrl;
+    try {
+      video.load();
+    } catch {}
 
     const cleanup = () => {
       try {
@@ -1166,7 +1170,7 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
         cleanup();
         resolve(undefined);
       }
-    }, 4000);
+    }, 1500);
 
     const capture = () => {
       if (resolved) return;
@@ -1195,7 +1199,7 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(video, 0, 0, w, h);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
           cleanup();
           resolve(dataUrl);
           return;
@@ -1205,6 +1209,12 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
       }
       cleanup();
       resolve(undefined);
+    };
+
+    video.onloadeddata = () => {
+      if (video.videoWidth > 0 && !resolved) {
+        capture();
+      }
     };
 
     video.onloadedmetadata = () => {
@@ -1223,7 +1233,7 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
 
     video.oncanplay = () => {
       if (video.videoWidth > 0 && !resolved) {
-        setTimeout(capture, 50);
+        capture();
       }
     };
 
@@ -1243,7 +1253,7 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
   // For codecs browser canvas cannot decode directly (e.g. MKV, AVI, ProRes MOV, HEVC)
   if (typeof window !== 'undefined' && file.size > 0) {
     try {
-      const sliceSize = Math.min(file.size, 12 * 1024 * 1024);
+      const sliceSize = Math.min(file.size, 60 * 1024 * 1024);
       const chunk = file.slice(0, sliceSize);
       const ext = file.name.split('.').pop()?.toLowerCase() || 'mp4';
       const controller = new AbortController();
@@ -1445,7 +1455,10 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
     const hasVisualThumb = parts.length > 1;
     parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: EPS Vector Illustration\nFilename: ${file.name}\n${epsInfo}\nNote: ${hasVisualThumb ? "A visual thumbnail extracted from this EPS illustration has been provided above for visual analysis." : "Visual preview was not embedded in this EPS file. Analyze the vector filename, embedded layer names, artboard bounds, typography text, and color palette above to generate accurate, high-ranking commercial stock title, description, and keywords."}`;
   } else if (isVideo) {
-    parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: Video Footage (${file.name})\nNote: ${parts.length > 1 ? "An actual visual frame captured directly from this video has been provided above. Analyze this frame carefully to identify the exact real-world subject matter, action, environment, objects, and setting." : "Visual preview unavailable. Generate metadata based on filename: " + file.name}`;
+    if (parts.length <= 1) {
+      throw new Error("Could not extract visual frame from this video. Please click RETRY to re-generate.");
+    }
+    parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: Video Footage (${file.name})\nNote: An actual visual frame captured directly from this video has been provided above. Analyze this frame carefully to identify the exact real-world subject matter, action, environment, objects, and setting. Base metadata 100% on what is visually seen in the video frame!`;
   } else if (!isSupportedImage) {
     parts[parts.length - 1].text += `\n\n[FILE CONTEXT]\nType: ${file.type || 'Unknown'}\nNote: Visual preview unavailable. Generate metadata based on filename: "${file.name}".`;
   }

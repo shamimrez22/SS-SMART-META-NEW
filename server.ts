@@ -16,8 +16,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.raw({ type: ['application/postscript', 'application/octet-stream', 'image/x-eps', 'image/eps'], limit: '60mb' }));
-  app.use(express.json({ limit: '60mb' }));
+  app.use(express.raw({ type: ['application/postscript', 'application/octet-stream', 'image/x-eps', 'image/eps', 'video/*'], limit: '80mb' }));
+  app.use(express.json({ limit: '80mb' }));
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
