@@ -387,6 +387,13 @@ export async function callServerGemini(
     } catch {
       base64 = await fileToBase64(file);
     }
+  } else if (ext === 'svg') {
+    try {
+      const svgThumb = await renderSvgThumbnail(file);
+      if (svgThumb) base64 = svgThumb;
+    } catch (e) {
+      console.warn("SVG thumbnail extraction:", e);
+    }
   } else if (isVector) {
     try {
       const thumb = await extractEpsThumbnail(file, true);
@@ -889,6 +896,66 @@ function findEmbeddedBinaryJpeg(buf: ArrayBuffer): string | null {
   return null;
 }
 
+export async function renderSvgThumbnail(file: File): Promise<string | undefined> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
+  try {
+    const text = await file.text();
+    if (!text || !text.includes('<svg')) return undefined;
+    const blob = new Blob([text], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    return new Promise((resolve) => {
+      const img = new Image();
+      const timer = setTimeout(() => {
+        URL.revokeObjectURL(url);
+        resolve(undefined);
+      }, 5000);
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const canvas = document.createElement('canvas');
+          const maxDim = 512;
+          let w = img.width || 512;
+          let h = img.height || 512;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          canvas.width = Math.max(w, 100);
+          canvas.height = Math.max(h, 100);
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const b64 = canvas.toDataURL('image/jpeg', 0.85);
+            URL.revokeObjectURL(url);
+            resolve(b64);
+            return;
+          }
+        } catch (e) {
+          console.warn("SVG canvas draw error:", e);
+        }
+        URL.revokeObjectURL(url);
+        resolve(undefined);
+      };
+      img.onerror = () => {
+        clearTimeout(timer);
+        URL.revokeObjectURL(url);
+        resolve(undefined);
+      };
+      img.src = url;
+    });
+  } catch (err) {
+    console.warn("renderSvgThumbnail error:", err);
+    return undefined;
+  }
+}
+
 export async function extractEpsThumbnail(file: File, forAi: boolean = false): Promise<string | undefined> {
   try {
     // 1. High-Resolution True-Color XMP JPEG/PNG Thumbnail (Best Quality, Universal)
@@ -1070,14 +1137,19 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return undefined;
   }
-  return new Promise((resolve) => {
+
+  // 1. First try browser HTML5 <video> canvas capture
+  const browserThumb = await new Promise<string | undefined>((resolve) => {
     let resolved = false;
+    const ext = file?.name?.split('.').pop()?.toLowerCase() || '';
+    const mime = file.type || (ext === 'webm' ? 'video/webm' : ext === 'mov' ? 'video/quicktime' : 'video/mp4');
+    const typedBlob = file.type ? file : new Blob([file], { type: mime });
+    const blobUrl = URL.createObjectURL(typedBlob);
+
     const video = document.createElement('video');
     video.preload = 'metadata';
     video.muted = true;
     video.playsInline = true;
-
-    const blobUrl = URL.createObjectURL(file);
     video.src = blobUrl;
 
     const cleanup = () => {
@@ -1094,33 +1166,9 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
         cleanup();
         resolve(undefined);
       }
-    }, 7000);
+    }, 4000);
 
-    video.onloadedmetadata = () => {
-      try {
-        // Seek into video (e.g. 20% or 1s) to avoid black first frames
-        const duration = video.duration || 2;
-        const seekTime = Math.min(Math.max(duration * 0.25, 0.5), duration > 1 ? duration - 0.2 : 0);
-        video.currentTime = seekTime;
-      } catch (e) {
-        capture();
-      }
-    };
-
-    video.onseeked = () => {
-      capture();
-    };
-
-    video.onerror = () => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        cleanup();
-        resolve(undefined);
-      }
-    };
-
-    function capture() {
+    const capture = () => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timer);
@@ -1142,12 +1190,12 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
           }
         }
 
-        canvas.width = w;
-        canvas.height = h;
+        canvas.width = Math.max(w, 100);
+        canvas.height = Math.max(h, 100);
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(video, 0, 0, w, h);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
           cleanup();
           resolve(dataUrl);
           return;
@@ -1157,8 +1205,68 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
       }
       cleanup();
       resolve(undefined);
-    }
+    };
+
+    video.onloadedmetadata = () => {
+      try {
+        const duration = video.duration || 2;
+        const seekTime = Math.min(Math.max(duration * 0.25, 0.5), duration > 1 ? duration - 0.2 : 0);
+        video.currentTime = seekTime;
+      } catch (e) {
+        capture();
+      }
+    };
+
+    video.onseeked = () => {
+      capture();
+    };
+
+    video.oncanplay = () => {
+      if (video.videoWidth > 0 && !resolved) {
+        setTimeout(capture, 50);
+      }
+    };
+
+    video.onerror = () => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        cleanup();
+        resolve(undefined);
+      }
+    };
   });
+
+  if (browserThumb) return browserThumb;
+
+  // 2. High-performance Server-side FFmpeg extraction (/api/render-video-thumb)
+  // For codecs browser canvas cannot decode directly (e.g. MKV, AVI, ProRes MOV, HEVC)
+  if (typeof window !== 'undefined' && file.size > 0) {
+    try {
+      const sliceSize = Math.min(file.size, 12 * 1024 * 1024);
+      const chunk = file.slice(0, sliceSize);
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'mp4';
+      const controller = new AbortController();
+      const tId = setTimeout(() => controller.abort(), 9000);
+
+      const res = await fetch(`/api/render-video-thumb?ext=${encodeURIComponent(ext)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: chunk,
+        signal: controller.signal
+      });
+      clearTimeout(tId);
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.preview) return data.preview;
+      }
+    } catch (ffErr) {
+      console.warn("Server FFmpeg thumbnail extraction:", ffErr);
+    }
+  }
+
+  return undefined;
 }
 
 async function extractEpsMetadata(file: File): Promise<string> {
@@ -1405,8 +1513,7 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
   }
 
   if (!response) {
-    console.warn("Direct Gemini models failed, using smart fallback:", lastError);
-    return buildLocalSmartMetadata(file?.name || 'stock_asset', settings);
+    throw new Error(lastError?.message || "Could not generate AI vision metadata for this asset. Click RETRY to re-generate.");
   }
 
   try {

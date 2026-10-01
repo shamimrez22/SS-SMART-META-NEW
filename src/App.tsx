@@ -1275,9 +1275,10 @@ export default function App() {
         // @ts-ignore
         const handles = await window.showOpenFilePicker({
           multiple: true,
+          excludeAcceptAllOption: false,
           types: [
             {
-              description: 'All Media & Vector Assets',
+              description: 'All Media & Vector Assets (Images, EPS, Videos)',
               accept: {
                 'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff', '.bmp', '.gif', '.heic', '.avif'],
                 'application/postscript': ['.eps', '.ai'],
@@ -1435,12 +1436,11 @@ export default function App() {
         ? metadata.rating
         : (fileMetadata.rating !== undefined && fileMetadata.rating > 0) ? fileMetadata.rating : 5;
 
-      if (!titleVal || !kwVal) {
-        const smart = buildLocalSmartMetadata(originalFilename, settings);
-        if (!titleVal) titleVal = smart.title;
-        if (!kwVal) kwVal = smart.keywords;
-        if (!descVal) descVal = smart.description;
-        if (!catVal) catVal = smart.category;
+      // STRICT ZERO-WRONG-METADATA & ZERO-DELETION GUARANTEE:
+      // "er kono vabe i folde ba akta fileo kokho noi delete hobe na meta jodi kono karoney genareate naw hoi"
+      // If metadata is not generated or failed, NEVER generate fake wrong metadata or rename/delete files!
+      if (!titleVal || !kwVal || fileMetadata.status === 'error' || metadata.status === 'error') {
+        return null;
       }
 
       // Strictly eliminate 'universal', 'marketplace', 'marketplaces' terms from keywords
@@ -1556,9 +1556,7 @@ export default function App() {
             // (Under NO circumstances should a folder or even a single file EVER be deleted if metadata was not generated!)
             const hasValidGeneratedMetadata = Boolean(
               (metadata.title || fileMetadata.title) &&
-              (metadata.title || fileMetadata.title)!.trim().length >= 4 &&
-              metadata.status !== 'error' &&
-              fileMetadata.status !== 'error'
+              (metadata.title || fileMetadata.title)!.trim().length >= 4
             );
 
             if (hasValidGeneratedMetadata && writtenInPlace && renamedOnDisk && targetFilename) {
@@ -1855,20 +1853,22 @@ export default function App() {
 
     try {
       const result = await generateMetadata(actualFile, settings, apiConfig, providerToUse, fileMetadata.previewUrl);
-      if (result?.title) {
-        result.title = enforceStockTitleWordLimits(
-          result.title,
-          settings?.minTitleWords || 7,
-          settings?.maxTitleWords || 15,
-          {
-            filename: actualFile.name,
-            isVector: fileMetadata.fileType === 'vector',
-            isVideo: fileMetadata.fileType === 'video',
-            category: result.category,
-            keywords: result.keywords
-          }
-        );
+      if (!result || !result.title || !String(result.title).trim()) {
+        throw new Error("Could not generate valid metadata for this asset. Original file is kept 100% safe.");
       }
+
+      result.title = enforceStockTitleWordLimits(
+        result.title,
+        settings?.minTitleWords || 7,
+        settings?.maxTitleWords || 15,
+        {
+          filename: actualFile.name,
+          isVector: fileMetadata.fileType === 'vector',
+          isVideo: fileMetadata.fileType === 'video',
+          category: result.category,
+          keywords: result.keywords
+        }
+      );
       const newFilename = sanitizeStockFilename(result.title, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg', settings.filenameFormat || 'exact_title');
 
       const updatedMetadata: StockMetadata = { 
@@ -2696,6 +2696,7 @@ export default function App() {
         allAddedFileObjects[id] = file;
 
         const isImg = isImage(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
+        const isMedia = isImg || isVideo(ext) || ext === 'svg';
 
         chunkItems.push({
           id,
@@ -2709,8 +2710,8 @@ export default function App() {
           rating: 5,
           status: 'pending',
           fileType: ext,
-          // Generate lightweight URL object for first 60 images (zero CPU overhead)
-          previewUrl: (isImg && i < 60) ? URL.createObjectURL(file) : undefined,
+          // Generate lightweight URL object for preview
+          previewUrl: (isMedia && i < 100) ? URL.createObjectURL(file) : undefined,
           handle: handlesMap?.[file.name] || (file as any).handle || undefined
         });
 

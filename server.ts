@@ -136,6 +136,78 @@ async function startServer() {
     }
   });
 
+  // High-performance Video Keyframe rendering endpoint using FFmpeg
+  app.post("/api/render-video-thumb", async (req, res) => {
+    let buffer: Buffer | null = null;
+    if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+      buffer = req.body;
+    } else if (req.body && req.body.base64) {
+      buffer = Buffer.from(req.body.base64, "base64");
+    }
+
+    if (!buffer || buffer.length === 0) {
+      return res.status(400).json({ error: { message: "Missing video data" } });
+    }
+
+    const rawExt = (req.query.ext as string) || "mp4";
+    const ext = rawExt.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || "mp4";
+    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const tempVideoPath = path.join(os.tmpdir(), `video_${uniqueId}.${ext}`);
+    const tempJpgPath = path.join(os.tmpdir(), `frame_${uniqueId}.jpg`);
+
+    try {
+      await fs.promises.writeFile(tempVideoPath, buffer);
+
+      let extracted = false;
+      // Seek 1 second into video to capture meaningful subject content (avoid initial black frames)
+      try {
+        await execFileAsync("ffmpeg", [
+          "-ss", "00:00:01",
+          "-i", tempVideoPath,
+          "-vf", "scale='min(640,iw)':-1",
+          "-vframes", "1",
+          "-q:v", "3",
+          "-y",
+          tempJpgPath
+        ], { timeout: 8000 });
+        if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
+          extracted = true;
+        }
+      } catch (ffErr) {}
+
+      // Fallback: Seek from beginning if video is shorter than 1s
+      if (!extracted) {
+        try {
+          await execFileAsync("ffmpeg", [
+            "-i", tempVideoPath,
+            "-vf", "scale='min(640,iw)':-1",
+            "-vframes", "1",
+            "-q:v", "3",
+            "-y",
+            tempJpgPath
+          ], { timeout: 8000 });
+          if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
+            extracted = true;
+          }
+        } catch (ffStartErr) {}
+      }
+
+      if (extracted) {
+        const jpgBuffer = await fs.promises.readFile(tempJpgPath);
+        const dataUrl = `data:image/jpeg;base64,${jpgBuffer.toString("base64")}`;
+        return res.json({ preview: dataUrl });
+      } else {
+        return res.status(422).json({ error: { message: "Could not extract video keyframe" } });
+      }
+    } catch (err: any) {
+      console.warn("Video thumbnail error:", err?.message || err);
+      return res.status(500).json({ error: { message: err?.message || "Failed to render video keyframe" } });
+    } finally {
+      try { if (fs.existsSync(tempVideoPath)) await fs.promises.unlink(tempVideoPath); } catch {}
+      try { if (fs.existsSync(tempJpgPath)) await fs.promises.unlink(tempJpgPath); } catch {}
+    }
+  });
+
   // API Proxy for Groq and Mistral to avoid CORS issues
   app.post("/api/ai-proxy", async (req, res) => {
     const { url, apiKey, body } = req.body;
