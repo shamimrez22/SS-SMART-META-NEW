@@ -843,44 +843,43 @@ function isBarcodeOrCorrupted(rgba: Uint8ClampedArray | Uint8Array, width: numbe
 
 /**
  * Searches for high-res true-color JPEG/PNG thumbnails embedded in Adobe Illustrator XMP blocks
+ * Uses ultra-fast indexOf slice scanning without catastrophic regex backtracking
  */
 function findXmpJpegThumbnail(text: string): { dataUrl: string; mime: string } | null {
-  // 1. Any tag ending in :image> or <image>
-  const imageTagMatches = text.matchAll(/<([a-zA-Z0-9_]+:)?image\b[^>]*>([\s\S]*?)<\/\1?image>/gi);
-  for (const m of imageTagMatches) {
-    const b64 = cleanBase64(m[2]);
-    if (b64.length > 80) {
-      const mime = b64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
-      return { dataUrl: `data:${mime};base64,${b64}`, mime };
+  if (!text || text.length < 50) return null;
+
+  // 1. Check for <image> tag directly
+  let searchPos = 0;
+  while (searchPos < text.length) {
+    const imgStart = text.indexOf('<image', searchPos);
+    if (imgStart === -1) break;
+
+    const tagClose = text.indexOf('>', imgStart);
+    if (tagClose === -1) break;
+
+    const endTag = text.indexOf('</image>', tagClose);
+    const altEndTag = text.indexOf('</xmpGImg:image>', tagClose);
+    const endPos = (endTag !== -1 && altEndTag !== -1) ? Math.min(endTag, altEndTag) : (endTag !== -1 ? endTag : altEndTag);
+
+    if (endPos > tagClose) {
+      const rawPayload = text.slice(tagClose + 1, endPos);
+      const b64 = cleanBase64(rawPayload);
+      if (b64.length > 80) {
+        const mime = b64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
+        return { dataUrl: `data:${mime};base64,${b64}`, mime };
+      }
     }
+    searchPos = tagClose + 1;
   }
 
-  // 2. Alt / Thumbnails container: <xmp:Thumbnails>...<image>...
-  const thumbMatch = text.match(/<xmp:Thumbnails>[\s\S]*?<image>([\s\S]*?)<\/image>/i);
-  if (thumbMatch) {
-    const b64 = cleanBase64(thumbMatch[1]);
-    if (b64.length > 80) {
-      const mime = b64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
-      return { dataUrl: `data:${mime};base64,${b64}`, mime };
-    }
-  }
-
-  // 3. Attribute format: image="..." or :image="..."
-  const attrMatches = text.matchAll(/(?:[a-zA-Z0-9_]+:)?image="([^"]+)"/gi);
-  for (const m of attrMatches) {
-    const b64 = cleanBase64(m[1]);
-    if (b64.length > 80) {
-      const mime = b64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
-      return { dataUrl: `data:${mime};base64,${b64}`, mime };
-    }
-  }
-
-  // 4. Raw base64 JPEG sequence starting with /9j/ inside XMP
-  const directJpeg = text.match(/\/9j\/[a-zA-Z0-9+/=&#;\s]{120,}/);
-  if (directJpeg) {
-    const b64 = cleanBase64(directJpeg[0]);
-    if (b64.length > 80) {
-      return { dataUrl: `data:image/jpeg;base64,${b64}`, mime: 'image/jpeg' };
+  // 2. Direct base64 JPEG marker (/9j/)
+  const jfifPos = text.indexOf('/9j/');
+  if (jfifPos !== -1) {
+    // Read up to 500KB of base64 data
+    const chunk = text.slice(jfifPos, jfifPos + 512000);
+    const cleaned = chunk.replace(/[^A-Za-z0-9+/=]/g, '');
+    if (cleaned.length > 100) {
+      return { dataUrl: `data:image/jpeg;base64,${cleaned}`, mime: 'image/jpeg' };
     }
   }
 
@@ -897,18 +896,18 @@ function findEmbeddedBinaryJpeg(buf: ArrayBuffer): string | null {
   for (let i = 0; i < len - 100; i++) {
     if (u8[i] === 0xFF && u8[i + 1] === 0xD8 && u8[i + 2] === 0xFF) {
       // Find JPEG EOI (FF D9)
-      const maxScan = Math.min(len - 1, i + 8 * 1024 * 1024);
+      const maxScan = Math.min(len - 1, i + 2 * 1024 * 1024);
       let foundEnd = -1;
       for (let j = i + 200; j < maxScan; j++) {
         if (u8[j] === 0xFF && u8[j + 1] === 0xD9) {
           foundEnd = j + 2;
-          if (foundEnd - i >= 4096) break;
+          if (foundEnd - i >= 2048) break;
         }
       }
-      if (foundEnd > i + 1024) {
+      if (foundEnd > i + 512) {
         const jpegBytes = u8.subarray(i, foundEnd);
         let binary = '';
-        const chunk = 8192;
+        const chunk = 16384;
         for (let c = 0; c < jpegBytes.length; c += chunk) {
           const sub = jpegBytes.subarray(c, Math.min(c + chunk, jpegBytes.length));
           binary += String.fromCharCode.apply(null, sub as unknown as number[]);
@@ -926,114 +925,55 @@ const epsThumbnailCache = new Map<string, string>();
 const videoThumbnailCache = new Map<string, string>();
 
 export async function renderSvgThumbnail(file: File): Promise<string | undefined> {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
-  const cacheKey = `${file.name}_${file.size}_${file.lastModified}`;
-  if (svgThumbnailCache.has(cacheKey)) {
-    return svgThumbnailCache.get(cacheKey);
-  }
+  // SVG files can be rendered instantly natively using an Object URL
   try {
-    const text = await file.text();
-    if (!text || !text.includes('<svg')) return undefined;
-    const blob = new Blob([text], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    return new Promise((resolve) => {
-      const img = new Image();
-      const timer = setTimeout(() => {
-        URL.revokeObjectURL(url);
-        resolve(undefined);
-      }, 5000);
-      img.onload = () => {
-        clearTimeout(timer);
-        try {
-          const canvas = document.createElement('canvas');
-          const maxDim = 512;
-          let w = img.width || 512;
-          let h = img.height || 512;
-          if (w > maxDim || h > maxDim) {
-            if (w > h) {
-              h = Math.round((h * maxDim) / w);
-              w = maxDim;
-            } else {
-              h = Math.round((w * maxDim) / h);
-              h = maxDim;
-            }
-          }
-          canvas.width = Math.max(w, 100);
-          canvas.height = Math.max(h, 100);
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            const b64 = canvas.toDataURL('image/jpeg', 0.85);
-            URL.revokeObjectURL(url);
-            svgThumbnailCache.set(cacheKey, b64);
-            resolve(b64);
-            return;
-          }
-        } catch (e) {
-          console.warn("SVG canvas draw error:", e);
-        }
-        URL.revokeObjectURL(url);
-        resolve(undefined);
-      };
-      img.onerror = () => {
-        clearTimeout(timer);
-        URL.revokeObjectURL(url);
-        resolve(undefined);
-      };
-      img.src = url;
-    });
-  } catch (e) {
-    console.warn("SVG parse error:", e);
+    return URL.createObjectURL(file);
+  } catch {
     return undefined;
   }
 }
 
 export async function extractEpsThumbnail(file: File, forAi: boolean = false): Promise<string | undefined> {
+  const cacheKey = `${file.name}_${file.size}_${file.lastModified}`;
+  if (epsThumbnailCache.has(cacheKey)) {
+    return epsThumbnailCache.get(cacheKey);
+  }
+
+  let headText = '';
   try {
-    // 1. High-Resolution True-Color XMP JPEG/PNG Thumbnail (Best Quality, Universal)
-    // Adobe Illustrator, Freepik, Adobe Stock, Shutterstock, and Vecteezy embed a 300-800px full-color preview in XMP
+    // 1. Fast High-Resolution True-Color XMP JPEG/PNG Thumbnail (Scan first 1.5MB max)
     try {
-      const headSlice = await file.slice(0, Math.min(6291456, file.size)).arrayBuffer();
-      const headText = new TextDecoder('latin1').decode(headSlice);
+      const headSlice = await file.slice(0, Math.min(1572864, file.size)).arrayBuffer();
+      headText = new TextDecoder('latin1').decode(headSlice);
 
-      let xmpResult = findXmpJpegThumbnail(headText);
-      if (!xmpResult && file.size > 6291456) {
-        try {
-          const tailSlice = await file.slice(Math.max(0, file.size - 4194304)).arrayBuffer();
-          const tailText = new TextDecoder('latin1').decode(tailSlice);
-          xmpResult = findXmpJpegThumbnail(tailText);
-        } catch {}
-      }
-
+      const xmpResult = findXmpJpegThumbnail(headText);
       if (xmpResult && xmpResult.dataUrl) {
+        epsThumbnailCache.set(cacheKey, xmpResult.dataUrl);
         return xmpResult.dataUrl;
       }
     } catch (xmpErr) {
       console.warn("XMP thumbnail extraction attempt:", xmpErr);
     }
 
-    // 2. Embedded Binary JFIF/JPEG Stream in EPS File
+    // 2. Embedded Binary JFIF/JPEG Stream in EPS File (Fast 1.5MB scan)
     try {
-      const scanLen = Math.min(8 * 1024 * 1024, file.size);
+      const scanLen = Math.min(1572864, file.size);
       const scanBuf = await file.slice(0, scanLen).arrayBuffer();
       const jpegDataUrl = findEmbeddedBinaryJpeg(scanBuf);
       if (jpegDataUrl) {
+        epsThumbnailCache.set(cacheKey, jpegDataUrl);
         return jpegDataUrl;
       }
     } catch (binErr) {
       console.warn("Binary JPEG scan attempt:", binErr);
     }
 
-    // 3. Server-Side Ghostscript Vector Rendering (/api/render-eps)
-    // When running in full-stack container, Ghostscript renders PostScript paths at 150 DPI
-    if (typeof window !== 'undefined' && file.size <= 45 * 1024 * 1024) {
+    // 3. Server-Side Ghostscript Vector Rendering (/api/render-eps) - ONLY when needed for AI or when forAi is true
+    if (forAi && typeof window !== 'undefined' && file.size <= 40 * 1024 * 1024) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-        // Stream raw file directly to server for maximum speed and zero memory overhead
         const res = await fetch('/api/render-eps', {
           method: 'POST',
           headers: { 'Content-Type': 'application/postscript' },
@@ -1045,11 +985,12 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
         if (res.ok) {
           const resData = await res.json();
           if (resData.preview) {
+            epsThumbnailCache.set(cacheKey, resData.preview);
             return resData.preview;
           }
         }
       } catch (apiErr) {
-        // Handled silently for static hosts like Cloudflare Pages
+        // Handled silently
       }
     }
 
@@ -1073,7 +1014,6 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
               const width = ifds[0].width;
               const height = ifds[0].height;
               if (width > 0 && height > 0 && rgba) {
-                // Verify this preview is NOT a corrupted vertical zebra-stripe/barcode artifact
                 if (!isBarcodeOrCorrupted(rgba, width, height)) {
                   const canvas = document.createElement('canvas');
                   canvas.width = width;
@@ -1082,89 +1022,31 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
                   if (ctx) {
                     const imgData = new ImageData(new Uint8ClampedArray(rgba), width, height);
                     ctx.putImageData(imgData, 0, 0);
-                    return canvas.toDataURL('image/jpeg', 0.88);
+                    const tiffData = canvas.toDataURL('image/jpeg', 0.88);
+                    epsThumbnailCache.set(cacheKey, tiffData);
+                    return tiffData;
                   }
-                } else {
-                  console.warn("TIFF preview rejected: detected stride/barcode glitch pattern");
                 }
               }
             }
           }
         }
       } catch (tiffErr) {
-        console.warn("TIFF preview extraction fallback:", tiffErr);
+        // Handled silently
       }
     }
 
-    // 5. PostScript %%BeginPreview: hex raster (with Glitch Detection)
-    try {
-      const headSlice = await file.slice(0, Math.min(524288, file.size)).arrayBuffer();
-      const headText = new TextDecoder('latin1').decode(headSlice);
-      const previewMatch = headText.match(/%%BeginPreview:\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)([\s\S]*?)%%EndPreview/i);
-      if (previewMatch) {
-        const width = parseInt(previewMatch[1], 10);
-        const height = parseInt(previewMatch[2], 10);
-        const depth = parseInt(previewMatch[3], 10);
-        const hexData = previewMatch[5].replace(/^[ \t]*%[ \t]*/gm, '').replace(/[^0-9a-fA-F]/g, '');
-        if (width > 10 && height > 10 && hexData.length > 0) {
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            const imgData = ctx.createImageData(width, height);
-            const data = imgData.data;
-            if (depth === 1) {
-              const bytesPerRow = Math.ceil(width / 8);
-              for (let y = 0; y < height; y++) {
-                for (let x = 0; x < width; x++) {
-                  const byteIdx = y * bytesPerRow + Math.floor(x / 8);
-                  const hexByte = hexData.substr(byteIdx * 2, 2);
-                  const byteVal = parseInt(hexByte, 16) || 0;
-                  const bit = (byteVal >> (7 - (x % 8))) & 1;
-                  const pixelIdx = (y * width + x) * 4;
-                  const val = bit ? 0 : 255;
-                  data[pixelIdx] = val;
-                  data[pixelIdx + 1] = val;
-                  data[pixelIdx + 2] = val;
-                  data[pixelIdx + 3] = 255;
-                }
-              }
-            } else if (depth === 8) {
-              for (let i = 0; i < width * height; i++) {
-                const byteVal = parseInt(hexData.substr(i * 2, 2), 16) || 255;
-                data[i * 4] = byteVal;
-                data[i * 4 + 1] = byteVal;
-                data[i * 4 + 2] = byteVal;
-                data[i * 4 + 3] = 255;
-              }
-            }
-            if (!isBarcodeOrCorrupted(data, width, height)) {
-              ctx.putImageData(imgData, 0, 0);
-              return canvas.toDataURL('image/jpeg', 0.88);
-            }
-          }
-        }
-      }
-    } catch (hexErr) {
-      console.warn("Hex preview extraction fallback:", hexErr);
+    // 5. Clean Vector Artboard Fallback (Instant, zero lag)
+    if (forAi) return undefined;
+    const artboard = generateVectorArtboardThumbnail(file.name, headText);
+    if (artboard) {
+      epsThumbnailCache.set(cacheKey, artboard);
+      return artboard;
     }
-
-    // 6. Vector Artboard Fallback
-    // CRITICAL: When generating for AI vision model, return undefined!
-    // Never send synthetic blueprint curves to the AI, or it will hallucinate grid/blueprint metadata!
-    if (forAi) {
-      return undefined;
-    }
-
-    // For UI display, render clean vector artboard card
-    const headSlice = await file.slice(0, Math.min(65536, file.size)).arrayBuffer();
-    const headText = new TextDecoder('latin1').decode(headSlice);
-    return generateVectorArtboardThumbnail(file.name, headText);
-  } catch (e) {
-    console.error("EPS preview error:", e);
-    return undefined;
+  } catch (err) {
+    console.warn("EPS thumb error:", err);
   }
+  return undefined;
 }
 
 export async function extractVideoThumbnail(file: File): Promise<string | undefined> {

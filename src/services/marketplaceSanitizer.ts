@@ -173,6 +173,8 @@ export function sanitizeStockKeywords(
   // If AI writes a run-on sentence without commas (e.g. "a high quality picture of happy birthday celebration party"):
   // Strip sentence filler words and unpack cleanly into 1-word or 2-word tags!
   const candidateTags: string[] = [];
+  const singleWordPool: string[] = [];
+
   for (const chunk of rawChunks) {
     const cleanedChunk = chunk.replace(/^[\d+.)\s-]+/, '').trim();
     if (!cleanedChunk) continue;
@@ -211,10 +213,29 @@ export function sanitizeStockKeywords(
       if (isSingleOnly) {
         candidateTags.push(words[0], words[1]);
       } else {
+        // Keep 2-word phrase intact (e.g. "happy birthday")
         candidateTags.push(`${words[0]} ${words[1]}`);
       }
     } else if (words.length === 1) {
-      candidateTags.push(words[0]);
+      if (isDoubleOnly) {
+        // Collect single words to pair up into 2-word compound phrases
+        singleWordPool.push(words[0]);
+      } else {
+        candidateTags.push(words[0]);
+      }
+    }
+  }
+
+  // If in Double Keywords mode, pair up collected single words into 2-word phrases
+  if (isDoubleOnly && singleWordPool.length > 0) {
+    for (let i = 0; i < singleWordPool.length - 1; i += 2) {
+      candidateTags.push(`${singleWordPool[i]} ${singleWordPool[i + 1]}`);
+    }
+    // If one lone single word remains, pair it with a complementary stock tag
+    if (singleWordPool.length % 2 === 1) {
+      const lastWord = singleWordPool[singleWordPool.length - 1];
+      const companion = ['design', 'element', 'concept', 'vector', 'illustration', 'background', 'style'].find(c => c !== lastWord) || 'art';
+      candidateTags.push(`${lastWord} ${companion}`);
     }
   }
 
@@ -295,16 +316,31 @@ export function sanitizeStockKeywords(
       .split(/\s+/)
       .filter(w => w.length > 2 && !STOCK_STOP_WORDS.has(w) && !PROHIBITED_TRADEMARKS.has(w) && !PROHIBITED_BUZZWORDS.has(w));
 
-    // Move title nouns to the front of validKeywords if present, or prepend if missing
-    for (let i = titleWords.length - 1; i >= 0; i--) {
-      const tw = titleWords[i];
-      const existingIdx = validKeywords.indexOf(tw);
-      if (existingIdx !== -1) {
-        validKeywords.splice(existingIdx, 1);
-        validKeywords.unshift(tw);
-      } else if (validKeywords.length < targetCount) {
-        validKeywords.unshift(tw);
-        seen.add(tw);
+    if (isDoubleOnly) {
+      // Form 2-word title pairs (e.g. "happy birthday", "greeting card")
+      for (let i = 0; i < titleWords.length - 1; i += 2) {
+        const pair = `${titleWords[i]} ${titleWords[i + 1]}`;
+        const existingIdx = validKeywords.indexOf(pair);
+        if (existingIdx !== -1) {
+          validKeywords.splice(existingIdx, 1);
+          validKeywords.unshift(pair);
+        } else if (validKeywords.length < targetCount && !seen.has(pair)) {
+          validKeywords.unshift(pair);
+          seen.add(pair);
+        }
+      }
+    } else {
+      // Move title nouns to the front of validKeywords if present, or prepend if missing
+      for (let i = titleWords.length - 1; i >= 0; i--) {
+        const tw = titleWords[i];
+        const existingIdx = validKeywords.indexOf(tw);
+        if (existingIdx !== -1) {
+          validKeywords.splice(existingIdx, 1);
+          validKeywords.unshift(tw);
+        } else if (validKeywords.length < targetCount) {
+          validKeywords.unshift(tw);
+          seen.add(tw);
+        }
       }
     }
   }
@@ -336,7 +372,36 @@ export function sanitizeStockKeywords(
     }
   }
 
-  const finalKeywords = validKeywords.slice(0, targetCount).join(', ');
+  let processedKeywords = validKeywords;
+  if (isDoubleOnly) {
+    const doubleOnlyList: string[] = [];
+    const orphanSingles: string[] = [];
+    for (const kw of validKeywords) {
+      if (kw.includes(' ')) {
+        doubleOnlyList.push(kw);
+      } else {
+        orphanSingles.push(kw);
+      }
+    }
+    for (let i = 0; i < orphanSingles.length - 1; i += 2) {
+      const combined = `${orphanSingles[i]} ${orphanSingles[i + 1]}`;
+      if (!seen.has(combined)) {
+        doubleOnlyList.push(combined);
+        seen.add(combined);
+      }
+    }
+    if (orphanSingles.length % 2 === 1) {
+      const last = orphanSingles[orphanSingles.length - 1];
+      const paired = `${last} concept`;
+      if (!seen.has(paired)) {
+        doubleOnlyList.push(paired);
+        seen.add(paired);
+      }
+    }
+    processedKeywords = doubleOnlyList;
+  }
+
+  const finalKeywords = processedKeywords.slice(0, targetCount).join(', ');
 
   return {
     keywords: finalKeywords,

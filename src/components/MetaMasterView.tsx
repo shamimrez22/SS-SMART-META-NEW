@@ -183,9 +183,9 @@ const TableRow = React.memo<TableRowProps>(({
         {file.previewUrl ? (
           <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer relative">
             {fIsVid && !file.previewUrl.startsWith('data:image/') ? (
-              <div className="w-full h-full bg-gradient-to-br from-indigo-950 to-purple-950 flex items-center justify-center text-purple-300 font-bold relative">
-                <span className="text-[11px]">🎬</span>
-                <span className="absolute bottom-0 right-0 text-[7px] bg-black/80 text-purple-200 px-0.5 rounded-tl font-bold leading-none">VID</span>
+              <div className="w-full h-full relative bg-purple-950 flex flex-col items-center justify-center text-purple-200">
+                <span className="text-[11px] leading-none">🎬</span>
+                <span className="text-[6.5px] font-bold text-purple-300 font-mono tracking-tighter">VID</span>
               </div>
             ) : (
               <div className="w-full h-full relative">
@@ -317,6 +317,50 @@ const TableRow = React.memo<TableRowProps>(({
   );
 });
 
+const LiveTimerWidget = React.memo<{ isGenerating: boolean; isPaused: boolean; isBlue: boolean; isDark: boolean }>(({
+  isGenerating,
+  isPaused,
+  isBlue,
+  isDark
+}) => {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    let interval: any = null;
+    if (isGenerating && !isPaused) {
+      interval = setInterval(() => {
+        setElapsed(prev => prev + 1);
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isGenerating, isPaused]);
+
+  const formatTimer = (secs: number) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  return (
+    <div 
+      onClick={() => setElapsed(0)}
+      title="Click to reset timer"
+      className={cn(
+        "flex items-center gap-1.5 text-[11px] font-mono cursor-pointer transition-colors px-1.5 py-0.5 rounded border shrink-0 whitespace-nowrap",
+        isBlue 
+          ? "border-[#1d4ed8] bg-[#07152b] text-cyan-300 hover:text-white shadow-[0_0_8px_rgba(34,211,238,0.25)]" 
+          : (isDark ? "border-slate-700/80 bg-[#0f1722] text-slate-300 hover:text-cyan-300" : "border-slate-300 bg-white text-slate-700 hover:text-sky-700 shadow-2xs")
+      )}
+    >
+      <span>Elapsed: {formatTimer(elapsed)}</span>
+      <span className="opacity-40">|</span>
+      <span>Total: {formatTimer(elapsed + (isGenerating ? 15 : 0))}</span>
+    </div>
+  );
+});
+
 export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   files,
   setFiles,
@@ -372,9 +416,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   const [currentLicense, setCurrentLicense] = useState<LicenseStatusResult>(checkCurrentLicenseStatus);
   const adminConfig = getAdminConfig();
 
-  // Live Timer
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-
   // Dynamic Theme state (Dark, Light, System)
   const [systemIsDark, setSystemIsDark] = useState(() => {
     return typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : true;
@@ -410,24 +451,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
       window.removeEventListener('focus', updateLicense);
     };
   }, []);
-
-  useEffect(() => {
-    let interval: any = null;
-    if (isGenerating && !isPaused) {
-      interval = setInterval(() => {
-        setElapsedSeconds(prev => prev + 1);
-      }, 1000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isGenerating, isPaused]);
-
-  const formatTimer = (secs: number) => {
-    const m = Math.floor(secs / 60).toString().padStart(2, '0');
-    const s = (secs % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
-  };
 
   const copyText = (e: React.MouseEvent, text: string, cellId: string) => {
     e.stopPropagation();
@@ -504,6 +527,15 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  const handleRowRetry = React.useCallback((id: string) => {
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'pending', errorMessage: undefined } : f));
+    setTimeout(() => startGeneration(), 60);
+  }, [setFiles, startGeneration]);
+
+  const handleRowEmbed = React.useCallback((id: string) => {
+    handleEmbed('all', id);
+  }, [handleEmbed]);
 
   const handleTableScroll = React.useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
@@ -710,8 +742,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
         "border-b px-2.5 py-1 flex flex-col gap-1 shrink-0 transition-colors",
         isBlue ? "bg-[#07162c] border-[#1d4ed8]" : (isDark ? "bg-[#14202d] border-[#233449]" : "bg-[#f8fafc] border-slate-200")
       )}>
-        {/* Row 1: Mode, Theme, Generation Options, Application (Squeezed to fit on 1 line without scrollbar) */}
-        <div className="flex items-center gap-1.5 flex-nowrap shrink-0 overflow-hidden w-full">
+        {/* Row 1: Mode, Theme, Generation Options, Application */}
+        <div className="flex items-center gap-1.5 flex-wrap w-full py-0.5">
           {/* Mode Group */}
           <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
             <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Mode</legend>
@@ -1080,6 +1112,63 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             </button>
           </fieldset>
 
+          {/* Keyword Style Quick Selector (Double Keywords e.g. "happy birthday", Single, Mixed) */}
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap flex items-center gap-1", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>
+              <Tag size={10} className="text-amber-400" />
+              <span>Keyword Style (কীওয়ার্ড ধরন)</span>
+            </legend>
+            <button
+              type="button"
+              onClick={() => {
+                setSettings(prev => ({ ...prev, keywordStyle: 'mixed', singleWordKeywords: false }));
+                showNotification('Keyword Style: Mixed (Single & 2-word phrases e.g. "happy birthday")', 'info');
+              }}
+              title="Mixed: Generates both 2-word compound phrases ('happy birthday') and single words"
+              className={cn(
+                "px-2 py-0.5 h-7 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95 flex items-center gap-0.5",
+                (!settings.keywordStyle || settings.keywordStyle === 'mixed') && !settings.singleWordKeywords
+                  ? "bg-[#22c55e] text-white shadow-xs ring-1 ring-emerald-300"
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+              )}
+            >
+              <span>Mixed</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettings(prev => ({ ...prev, keywordStyle: 'single', singleWordKeywords: true }));
+                showNotification('Keyword Style: Single Keywords (1-word tags only, e.g. "happy", "birthday")', 'info');
+              }}
+              title="Single Keywords Only: Strictly 1-word tags (e.g. 'happy', 'birthday', 'party')"
+              className={cn(
+                "px-2 py-0.5 h-7 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95 flex items-center gap-0.5",
+                settings.keywordStyle === 'single' || settings.singleWordKeywords
+                  ? "bg-[#0284c7] text-white shadow-xs ring-1 ring-sky-300"
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+              )}
+            >
+              <span>Single (1-Word)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettings(prev => ({ ...prev, keywordStyle: 'double', singleWordKeywords: false }));
+                showNotification('Keyword Style: Double Keywords (Strictly 2-word phrases e.g. "happy birthday", "birthday party")', 'success');
+              }}
+              title="Double Keywords: Strictly 2-word compound phrases (e.g. 'happy birthday', 'birthday party', 'festive cake') - never split!"
+              className={cn(
+                "px-2.5 py-0.5 h-7 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95 flex items-center gap-1 shadow-xs",
+                settings.keywordStyle === 'double'
+                  ? "bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-xs ring-1 ring-amber-300"
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+              )}
+            >
+              <span>Double (2-Words)</span>
+              <span className="text-[10px]">✨</span>
+            </button>
+          </fieldset>
+
           {/* Target Marketplace SEO Group */}
           <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
             <legend className={cn("text-[10px] font-bold px-1 flex items-center gap-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>
@@ -1335,11 +1424,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                       onSelect={setSelectedFileId}
                       onOpenPreview={openPreviewModal}
                       onCopy={copyText}
-                      onRetry={(id) => {
-                        setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'pending', errorMessage: undefined } : f));
-                        setTimeout(() => startGeneration(), 60);
-                      }}
-                      onEmbed={(id) => handleEmbed('all', id)}
+                      onRetry={handleRowRetry}
+                      onEmbed={handleRowEmbed}
                     />
                   ))}
                 </div>
@@ -1357,11 +1443,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   onSelect={setSelectedFileId}
                   onOpenPreview={openPreviewModal}
                   onCopy={copyText}
-                  onRetry={(id) => {
-                    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'pending', errorMessage: undefined } : f));
-                    setTimeout(() => startGeneration(), 60);
-                  }}
-                  onEmbed={(id) => handleEmbed('all', id)}
+                  onRetry={handleRowRetry}
+                  onEmbed={handleRowEmbed}
                 />
               ))
             )}
@@ -1370,7 +1453,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
 
         {/* Compact Text Status Bar immediately under the table - Single Page View for all files */}
         <div className="mt-1 flex items-center justify-between text-[11px] select-none px-2 py-1 rounded bg-black/10 border border-border/40 gap-2 flex-wrap min-h-[32px]">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className={cn("font-medium", isBlue ? "text-cyan-200" : (isDark ? "text-slate-200" : "text-slate-700"))}>
               {isGenerating ? "● Processing..." : "✓ Ready"}
             </span>
@@ -1378,6 +1461,28 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <span className={cn("font-mono font-bold text-[10.5px]", isBlue ? "text-cyan-300" : (isDark ? "text-slate-200" : "text-slate-800"))}>
               {currentModeFiles.length.toLocaleString()} {mode.toUpperCase()} Files (Single Page View)
             </span>
+            <span className="opacity-30">|</span>
+            {/* Interactive Keyword Style Status Badge */}
+            <button
+              type="button"
+              onClick={() => {
+                const nextStyle = settings.keywordStyle === 'double' ? 'mixed' : settings.keywordStyle === 'single' ? 'double' : 'single';
+                setSettings(prev => ({ ...prev, keywordStyle: nextStyle, singleWordKeywords: nextStyle === 'single' }));
+                showNotification(`Keyword Style switched to: ${nextStyle === 'double' ? 'Double Keywords (2-Words, e.g. "happy birthday")' : nextStyle === 'single' ? 'Single Keywords (1-Word Only)' : 'Mixed Keywords'}`, 'info');
+              }}
+              title="Click to cycle Keyword Style: Mixed -> Single -> Double (2-Words)"
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 active:scale-95 shadow-2xs",
+                settings.keywordStyle === 'double' 
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/60 shadow-[0_0_6px_rgba(245,158,11,0.25)]" 
+                  : (settings.keywordStyle === 'single' || settings.singleWordKeywords
+                    ? "bg-sky-500/20 text-sky-300 border border-sky-500/60" 
+                    : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/60")
+              )}
+            >
+              <Tag size={10} className={settings.keywordStyle === 'double' ? "text-amber-400" : "text-cyan-400"} />
+              <span>KW: <strong>{settings.keywordStyle === 'double' ? 'Double (2-Words) ✨' : (settings.keywordStyle === 'single' || settings.singleWordKeywords) ? 'Single Words' : 'Mixed'}</strong></span>
+            </button>
             {selectedFile && (
               <div 
                 onClick={() => openPreviewModal(selectedFile)}
@@ -1514,7 +1619,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             onClick={() => {
               setFiles([]);
               setSelectedFileId(null);
-              setElapsedSeconds(0);
               showNotification("Workspace refreshed! Clean slate ready.", "info");
             }}
             className="px-2.5 py-0.5 bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-bold rounded text-[11px] cursor-pointer transition-colors shadow-xs active:scale-95 whitespace-nowrap shrink-0"
@@ -1587,21 +1691,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             </button>
           </div>
 
-          {/* Timers */}
-          <div 
-            onClick={() => setElapsedSeconds(0)}
-            title="Click to reset timer"
-            className={cn(
-              "flex items-center gap-1.5 text-[11px] font-mono cursor-pointer transition-colors px-1.5 py-0.5 rounded border shrink-0 whitespace-nowrap",
-              isBlue 
-                ? "border-[#1d4ed8] bg-[#07152b] text-cyan-300 hover:text-white shadow-[0_0_8px_rgba(34,211,238,0.25)]" 
-                : (isDark ? "border-slate-700/80 bg-[#0f1722] text-slate-300 hover:text-cyan-300" : "border-slate-300 bg-white text-slate-700 hover:text-sky-700 shadow-2xs")
-            )}
-          >
-            <span>Elapsed: {formatTimer(elapsedSeconds)}</span>
-            <span className="opacity-40">|</span>
-            <span>Total: {formatTimer(elapsedSeconds + (isGenerating ? 15 : 0))}</span>
-          </div>
+          {/* Isolated Live Timer Widget - 0ms overhead, never causes root re-renders */}
+          <LiveTimerWidget isGenerating={isGenerating} isPaused={isPaused} isBlue={isBlue} isDark={isDark} />
         </div>
       </footer>
 

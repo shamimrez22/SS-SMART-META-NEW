@@ -650,41 +650,6 @@ export default function App() {
     } catch {}
   }, [theme]);
 
-  // Global tactile button feedback: crisp micro-sound and instant response on every button click
-  useEffect(() => {
-    let audioCtx: AudioContext | null = null;
-    const playTactileFeedback = () => {
-      try {
-        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-        if (!AudioCtxClass) return;
-        if (!audioCtx) audioCtx = new AudioCtxClass();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        const now = audioCtx.currentTime;
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(750, now);
-        osc.frequency.exponentialRampToValueAtTime(320, now + 0.025);
-        gain.gain.setValueAtTime(0.03, now);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.025);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start(now);
-        osc.stop(now + 0.025);
-      } catch {}
-    };
-
-    const handleGlobalClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      const btn = target?.closest('button');
-      if (btn && !btn.disabled) {
-        playTactileFeedback();
-      }
-    };
-    window.addEventListener('click', handleGlobalClick, { capture: true, passive: true });
-    return () => window.removeEventListener('click', handleGlobalClick, { capture: true });
-  }, []);
-
   const filesRef = useRef(files);
   useEffect(() => {
     filesRef.current = files;
