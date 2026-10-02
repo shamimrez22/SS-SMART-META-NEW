@@ -875,8 +875,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           {/* Keyword Style Group: Single Keyword, Double Keyword (e.g. "happy birthday"), Mixed */}
           <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap whitespace-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
             <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap flex items-center gap-1", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>
-              <Tag size={10} className="text-cyan-400" />
-              <span>Keyword Style</span>
+              <Tag size={10} className="text-amber-400" />
+              <span>Keyword Style (কীওয়ার্ড ধরন)</span>
             </legend>
             <button 
               type="button"
@@ -908,7 +908,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
               )}
             >
-              Single
+              Single (1-Word)
             </button>
             <button 
               type="button"
@@ -924,7 +924,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
               )}
             >
-              Double (2-Words)
+              Double (2-Words) ✨
             </button>
           </fieldset>
 
@@ -1109,63 +1109,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             >
               <Trash2 size={11} />
               <span>Clear</span>
-            </button>
-          </fieldset>
-
-          {/* Keyword Style Quick Selector (Double Keywords e.g. "happy birthday", Single, Mixed) */}
-          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap flex items-center gap-1", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>
-              <Tag size={10} className="text-amber-400" />
-              <span>Keyword Style (কীওয়ার্ড ধরন)</span>
-            </legend>
-            <button
-              type="button"
-              onClick={() => {
-                setSettings(prev => ({ ...prev, keywordStyle: 'mixed', singleWordKeywords: false }));
-                showNotification('Keyword Style: Mixed (Single & 2-word phrases e.g. "happy birthday")', 'info');
-              }}
-              title="Mixed: Generates both 2-word compound phrases ('happy birthday') and single words"
-              className={cn(
-                "px-2 py-0.5 h-7 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95 flex items-center gap-0.5",
-                (!settings.keywordStyle || settings.keywordStyle === 'mixed') && !settings.singleWordKeywords
-                  ? "bg-[#22c55e] text-white shadow-xs ring-1 ring-emerald-300"
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
-              )}
-            >
-              <span>Mixed</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSettings(prev => ({ ...prev, keywordStyle: 'single', singleWordKeywords: true }));
-                showNotification('Keyword Style: Single Keywords (1-word tags only, e.g. "happy", "birthday")', 'info');
-              }}
-              title="Single Keywords Only: Strictly 1-word tags (e.g. 'happy', 'birthday', 'party')"
-              className={cn(
-                "px-2 py-0.5 h-7 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95 flex items-center gap-0.5",
-                settings.keywordStyle === 'single' || settings.singleWordKeywords
-                  ? "bg-[#0284c7] text-white shadow-xs ring-1 ring-sky-300"
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
-              )}
-            >
-              <span>Single (1-Word)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSettings(prev => ({ ...prev, keywordStyle: 'double', singleWordKeywords: false }));
-                showNotification('Keyword Style: Double Keywords (Strictly 2-word phrases e.g. "happy birthday", "birthday party")', 'success');
-              }}
-              title="Double Keywords: Strictly 2-word compound phrases (e.g. 'happy birthday', 'birthday party', 'festive cake') - never split!"
-              className={cn(
-                "px-2.5 py-0.5 h-7 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95 flex items-center gap-1 shadow-xs",
-                settings.keywordStyle === 'double'
-                  ? "bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-xs ring-1 ring-amber-300"
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
-              )}
-            >
-              <span>Double (2-Words)</span>
-              <span className="text-[10px]">✨</span>
             </button>
           </fieldset>
 
