@@ -978,13 +978,13 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Processing</legend>
             <button 
               type="button"
-              onClick={startGeneration}
-              disabled={isGenerating || currentModeFiles.length === 0}
-              title={`Generate metadata for ${currentModeFiles.length} files in current ${mode.toUpperCase()} view`}
+              onClick={() => startGeneration()}
+              disabled={isGenerating || files.length === 0}
+              title={isGenerating ? "AI Metadata generation in progress..." : `Generate metadata for ${currentModeFiles.length > 0 ? currentModeFiles.length : files.length} files in workspace`}
               className="px-2.5 py-1 h-7 bg-[#22c55e] hover:bg-[#16a34a] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all disabled:opacity-50 shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
               <Play size={11} fill="currentColor" />
-              <span>Start</span>
+              <span>{isGenerating ? 'Generating...' : 'Start'}</span>
             </button>
             <button 
               type="button"
@@ -997,11 +997,12 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <button 
               type="button"
               onClick={() => {
-                const targetIds = new Set(currentModeFiles.map(f => f.id));
-                setFiles(prev => prev.map(f => (targetIds.has(f.id) && f.status === 'error') ? { ...f, status: 'pending' } : f));
-                setTimeout(startGeneration, 100);
+                const targetList = currentModeFiles.length > 0 ? currentModeFiles : files;
+                const targetIds = new Set(targetList.map(f => f.id));
+                setFiles(prev => prev.map(f => (targetIds.has(f.id) && f.status === 'error') ? { ...f, status: 'pending', errorMessage: undefined } : f));
+                setTimeout(() => startGeneration(), 80);
               }}
-              disabled={isGenerating || currentModeFiles.length === 0}
+              disabled={isGenerating || files.length === 0}
               className="px-2.5 py-1 h-7 bg-[#06b6d4] hover:bg-[#0891b2] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all disabled:opacity-50 shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
               <RefreshCw size={11} className={isGenerating ? "animate-spin" : ""} />
@@ -1279,7 +1280,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                       onCopy={copyText}
                       onRetry={(id) => {
                         setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'pending', errorMessage: undefined } : f));
-                        setTimeout(startGeneration, 60);
+                        setTimeout(() => startGeneration(), 60);
                       }}
                       onEmbed={(id) => handleEmbed('all', id)}
                     />
@@ -1301,7 +1302,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   onCopy={copyText}
                   onRetry={(id) => {
                     setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'pending', errorMessage: undefined } : f));
-                    setTimeout(startGeneration, 60);
+                    setTimeout(() => startGeneration(), 60);
                   }}
                   onEmbed={(id) => handleEmbed('all', id)}
                 />

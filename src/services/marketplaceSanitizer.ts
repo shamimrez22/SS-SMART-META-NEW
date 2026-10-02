@@ -154,9 +154,34 @@ export function sanitizeStockKeywords(
   targetCount: number = 50,
   singleWordOnly: boolean = false
 ): { keywords: string; removedTrademarks: string[]; removedBuzzwords: string[]; duplicateCount: number } {
-  const inputList = Array.isArray(rawKeywords)
-    ? rawKeywords
-    : (rawKeywords || '').split(',').map(k => k.trim());
+  // 1. Normalize input and split by any standard delimiter (commas, newlines, semicolons, tabs, pipes, bullets)
+  const rawString = Array.isArray(rawKeywords)
+    ? rawKeywords.join(', ')
+    : String(rawKeywords || '');
+
+  const rawChunks = rawString
+    .split(/[,;\n\r|•\t]+/)
+    .map(c => c.trim())
+    .filter(Boolean);
+
+  // 2. HARD SENTENCE-TO-KEYWORDS UNPACKING:
+  // If AI or input writes a run-on sentence without commas (e.g. "birthday happy party celebration balloon balloons colorful"):
+  // Automatically unpack into individual single words or clean 2-word tags so every tag has a comma!
+  const candidateTags: string[] = [];
+  for (const chunk of rawChunks) {
+    const cleanedChunk = chunk.replace(/^[\d+.)\s-]+/, '').trim();
+    if (!cleanedChunk) continue;
+
+    const words = cleanedChunk.split(/\s+/).filter(Boolean);
+    if (words.length >= 3) {
+      // 3 or more words without commas is a sentence: unpack every word individually!
+      for (const w of words) {
+        if (w.trim()) candidateTags.push(w.trim());
+      }
+    } else {
+      candidateTags.push(cleanedChunk);
+    }
+  }
 
   const removedTrademarks: string[] = [];
   const removedBuzzwords: string[] = [];
@@ -165,17 +190,36 @@ export function sanitizeStockKeywords(
   const seen = new Set<string>();
   const validKeywords: string[] = [];
 
-  for (const rawTag of inputList) {
+  for (const rawTag of candidateTags) {
     let tag = rawTag.toLowerCase().trim();
 
-    // Remove unwanted symbols including brackets and parentheses
-    tag = tag.replace(/[/\\#@$%*~^{}[\]()<>"'`;!?_]/g, '').trim();
+    // Remove unwanted symbols including brackets, periods, and parentheses
+    tag = tag.replace(/[/\\#@$%*~^{}[\]()<>"'`;!?_.]/g, '').trim();
 
     if (!tag || tag.length < 2) continue;
 
-    // Single word formatting if requested
+    // Single word formatting if requested or if tag has multiple words in singleWordOnly mode
     if (singleWordOnly && tag.includes(' ')) {
       tag = tag.split(/\s+/)[0];
+    } else if (tag.includes(' ')) {
+      const subWords = tag.split(/\s+/);
+      if (subWords.length > 2) {
+        for (const sw of subWords) {
+          if (sw.length >= 2 && !seen.has(sw) && !STOCK_STOP_WORDS.has(sw)) {
+            seen.add(sw);
+            validKeywords.push(sw);
+          }
+        }
+        continue;
+      }
+    }
+
+    // Deduplicate repeated adjacent words (e.g., "abstract abstract" -> "abstract")
+    if (tag.includes(' ')) {
+      const parts = tag.split(/\s+/);
+      if (parts.length === 2 && parts[0] === parts[1]) {
+        tag = parts[0];
+      }
     }
 
     // Trademark check

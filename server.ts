@@ -777,10 +777,15 @@ CRITICAL DIRECTIVES:
 - Base your metadata 100% on what is VISUALLY SHOWN in the asset!
 - Do NOT base metadata on random numbers, dates, or timestamps from the filename!
 - Never invent typography, dates, or timestamps unless written text is clearly visible in the image itself.
+- HARD DIRECTIVE ON KEYWORDS (STRICT MANDATE):
+  * EVERY SINGLE KEYWORD MUST BE SEPARATED BY A COMMA AND SPACE: e.g. "tag1, tag2, tag3, tag4"!
+  * NEVER write a sentence, paragraph, or word chain without commas!
+  * MAXIMUM 1 TO 2 WORDS PER KEYWORD TAG (e.g. "balloons", "birthday party", "festive background"). NEVER write 3 or more words together without commas!
+  * Writing space-separated words without commas (e.g. "birthday happy party celebration balloon balloons colorful festive") is STRICTLY PROHIBITED and will cause immediate rejection!
 Return ONLY valid JSON with keys:
 - title: Commercial stock title (strictly ${minTitleWords}-${maxTitleWords} words) describing what is visually shown.
 - description: Natural commercial description (${minDescriptionWords}-${maxDescriptionWords} words) describing the visual scene, subject, elements, and commercial utility.
-- keywords: (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords) describing the visual elements, character, actions, colors, and concept.
+- keywords: (${Math.min(45, maxKeywords)}-${maxKeywords} strictly comma-separated keywords, each separated by ", ") describing the visual elements, character, actions, colors, and concept.
 - category: A relevant stock category (e.g. ${isVideoAsset ? 'Footage, ' : ''}Illustrations, Cartoons, Business, Concepts, Technology, Nature, People).
 - rating: 5.`;
       parts.push({ text: promptText });
@@ -802,7 +807,7 @@ Return ONLY valid JSON with keys:
         for (const model of modelsToTry) {
           const callConfig: any = {
             responseMimeType: "application/json",
-            systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET VISUALLY. Every asset must produce its own unique title, keywords, category, and its own unique description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its visible subject, distinct objects, specific action, composition, colors, environment, and visible details. Never invent details from numbers in the filename. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords), category, rating (5).`
+            systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET VISUALLY. Every asset must produce its own unique title, keywords, category, and its own unique description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its visible subject, distinct objects, specific action, composition, colors, environment, and visible details. Never invent details from numbers in the filename. HARD MANDATE FOR KEYWORDS: Every single keyword MUST be separated by a comma (", ")! NEVER write multi-word sentences or words without commas! Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (${Math.min(45, maxKeywords)}-${maxKeywords} strictly comma-separated individual keywords), category, rating (5).`
           };
           if (model.includes('3.8') || model.includes('3.1') || model.includes('3.7')) {
             callConfig.thinkingConfig = { thinkingBudget: 0 };
@@ -878,19 +883,33 @@ Return ONLY valid JSON with keys:
       }
 
       if (parsed) {
-        if (Array.isArray(parsed.keywords)) {
-          parsed.keywords = parsed.keywords.map((k: any) => String(k).trim()).filter(Boolean).join(', ');
-        }
-        if (typeof parsed.keywords === 'string') {
-          // Remove unwanted generic buzzwords like "concept", "commercial", "stock photo"
-          parsed.keywords = parsed.keywords
-            .split(',')
-            .map((k: string) => k.trim())
-            .filter((k: string) => {
-              const lk = k.toLowerCase();
-              return lk && !['universal', 'marketplace', 'marketplaces', 'concept', 'commercial', 'stock photo', 'stock image', 'asset'].includes(lk);
-            })
-            .join(', ');
+        if (parsed.keywords) {
+          const rawKwStr = Array.isArray(parsed.keywords)
+            ? parsed.keywords.map((k: any) => String(k).trim()).join(', ')
+            : String(parsed.keywords);
+
+          // Split by commas, newlines, semicolons, tabs, bullets
+          const rawChunks = rawKwStr.split(/[,;\n\r|•\t]+/).map((s: string) => s.trim()).filter(Boolean);
+          const cleanTags: string[] = [];
+          const seenTags = new Set<string>();
+
+          for (const chunk of rawChunks) {
+            const words = chunk.split(/\s+/).filter(Boolean);
+            // If chunk has 3 or more words without commas, unpack each word individually
+            const tokens = words.length >= 3 ? words : [chunk];
+            for (const t of tokens) {
+              const cleaned = t.replace(/[/\\#@$%*~^{}[\]()<>"'`;!?_.]/g, '').trim().toLowerCase();
+              if (
+                cleaned.length >= 2 &&
+                !seenTags.has(cleaned) &&
+                !['universal', 'marketplace', 'marketplaces', 'concept', 'commercial', 'stock photo', 'stock image', 'asset', 'vulval'].includes(cleaned)
+              ) {
+                seenTags.add(cleaned);
+                cleanTags.push(cleaned);
+              }
+            }
+          }
+          parsed.keywords = cleanTags.slice(0, maxKeywords || 50).join(', ');
         }
         if (typeof parsed.title === 'string') {
           parsed.title = parsed.title.replace(/^["'`\s]+|["'`\s]+$/g, '').trim();

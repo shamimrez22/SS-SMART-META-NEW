@@ -381,32 +381,50 @@ export async function callServerGemini(
     Boolean(file.type?.startsWith('image/'))
   );
 
-  if (isSupportedImage) {
+  // 0. Instant reuse of existing image thumbnail if already available (avoids re-extracting video/vector on main thread)
+  if (previewUrl && typeof previewUrl === 'string' && previewUrl.startsWith('data:image/')) {
+    base64 = previewUrl;
+  } else if (isSupportedImage) {
     try {
       base64 = await resizeImage(file, 480, 480, 0.7);
     } catch {
       base64 = await fileToBase64(file);
     }
   } else if (ext === 'svg') {
-    try {
-      const svgThumb = await renderSvgThumbnail(file);
-      if (svgThumb) base64 = svgThumb;
-    } catch (e) {
-      console.warn("SVG thumbnail extraction:", e);
+    const cacheKey = `${file.name}_${file.size}_${file.lastModified}`;
+    if (svgThumbnailCache.has(cacheKey)) {
+      base64 = svgThumbnailCache.get(cacheKey)!;
+    } else {
+      try {
+        const svgThumb = await renderSvgThumbnail(file);
+        if (svgThumb) base64 = svgThumb;
+      } catch (e) {
+        console.warn("SVG thumbnail extraction:", e);
+      }
     }
   } else if (isVector) {
-    try {
-      const thumb = await extractEpsThumbnail(file, true);
-      if (thumb) base64 = thumb;
-    } catch (e) {
-      console.warn("EPS thumbnail extraction for AI:", e);
+    const cacheKey = `${file.name}_${file.size}_${file.lastModified}`;
+    if (epsThumbnailCache.has(cacheKey)) {
+      base64 = epsThumbnailCache.get(cacheKey)!;
+    } else {
+      try {
+        const thumb = await extractEpsThumbnail(file, true);
+        if (thumb) base64 = thumb;
+      } catch (e) {
+        console.warn("EPS thumbnail extraction for AI:", e);
+      }
     }
   } else if (isVideo) {
-    try {
-      const vThumb = await extractVideoThumbnail(file);
-      if (vThumb) base64 = vThumb;
-    } catch (e) {
-      console.warn("Video thumbnail extraction for AI:", e);
+    const cacheKey = `${file.name}_${file.size}_${file.lastModified}`;
+    if (videoThumbnailCache.has(cacheKey)) {
+      base64 = videoThumbnailCache.get(cacheKey)!;
+    } else {
+      try {
+        const vThumb = await extractVideoThumbnail(file);
+        if (vThumb) base64 = vThumb;
+      } catch (e) {
+        console.warn("Video thumbnail extraction for AI:", e);
+      }
     }
   }
 
@@ -2027,17 +2045,72 @@ async function resizeImage(file: File, maxWidth: number = 480, maxHeight: number
       if (ctx) {
         ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        bmp.close(); // Free native bitmap memory immediately
         if (dataUrl && dataUrl.length > 200) {
           return dataUrl;
         }
+      } else {
+        bmp.close();
       }
     } catch (bmpErr) {
-      console.warn("createImageBitmap fallback to direct base64:", bmpErr);
+      console.warn("createImageBitmap fallback to HTMLImageElement:", bmpErr);
     }
   }
 
-  // Guaranteed fallback: direct file to base64
-  return await fileToBase64(file);
+  // Method 2: HTMLImageElement scaling fallback
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    try {
+      const scaledDataUrl = await new Promise<string>((resolve, reject) => {
+        const img = new Image();
+        const objUrl = URL.createObjectURL(file);
+        img.onload = () => {
+          try {
+            let { width, height } = img;
+            if (width > maxWidth || height > maxHeight) {
+              if (width > height) {
+                height = Math.round(height * (maxWidth / width));
+                width = maxWidth;
+              } else {
+                width = Math.round(width * (maxHeight / height));
+                height = maxHeight;
+              }
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, width);
+            canvas.height = Math.max(1, height);
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              const dataUrl = canvas.toDataURL('image/jpeg', quality);
+              URL.revokeObjectURL(objUrl);
+              resolve(dataUrl);
+              return;
+            }
+          } catch (e) {
+            URL.revokeObjectURL(objUrl);
+            reject(e);
+            return;
+          }
+          URL.revokeObjectURL(objUrl);
+          reject(new Error("Canvas context failed"));
+        };
+        img.onerror = (e) => {
+          URL.revokeObjectURL(objUrl);
+          reject(e);
+        };
+        img.src = objUrl;
+      });
+      if (scaledDataUrl && scaledDataUrl.length > 200) {
+        return scaledDataUrl;
+      }
+    } catch {}
+  }
+
+  // Guaranteed fallback for small files only: avoid giant base64 strings in memory
+  if (file.size <= 8 * 1024 * 1024) {
+    return await fileToBase64(file);
+  }
+  return '';
 }
 
 function getMarketplaceDirectives(marketplace: string = 'universal'): string {
@@ -2177,7 +2250,10 @@ ${marketplaceRules}
    - Formulate a fluent, highly descriptive editorial English paragraph of strictly ${minDescriptionWords}-${maxDescriptionWords} words.
 
 4. KEYWORDS SPECIFICATIONS (MANDATORY EXACTLY ${targetCount} KEYWORDS):
-   - You MUST provide a comma-separated list of EXACTLY ${targetCount} keywords. Do NOT provide fewer than ${targetCount} keywords under any circumstances!
+   - HARD DIRECTIVE: You MUST provide a strictly comma-separated list of EXACTLY ${targetCount} keywords separated by ", ".
+   - ABSOLUTE PROHIBITION ON SENTENCES OR UNSPLIT PHRASES: NEVER write a sentence, paragraph, or phrase without commas!
+   - MAXIMUM 1 TO 2 WORDS PER KEYWORD TAG (e.g. "balloon", "birthday party", "festive background"). NEVER write 3 or more words together without commas!
+   - Writing long space-separated words without commas (e.g. "birthday happy party celebration balloon balloons colorful festive") is STRICTLY FORBIDDEN and causes immediate rejection!
    - Ordered in strict SEO tiers for maximum marketplace sales:
      * Keywords 1-10 (PRIMARY SUBJECT & CORE VISUAL NOUNS): The exact literal elements, main subject, visible numbers (e.g. 2027), nouns, key objects, and materials. (Adobe Stock indexes these 10 tags with highest weight!)
      * Keywords 11-25 (ENVIRONMENT, SETTING & TECHNIQUE): Specific location type, weather, lighting, color palette, camera angle (aerial, top view, isometric, flat lay), style (minimalist, modern, corporate, vintage).

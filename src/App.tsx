@@ -87,6 +87,7 @@ import {
   syncLocalKeysToServer
 } from './services/licenseService';
 import { cn, sanitizeFilenameForFs, sanitizeStockFilename } from './lib/utils';
+import { sanitizeStockKeywords } from './services/marketplaceSanitizer';
 
 const STORAGE_KEY = 'ai-metadata-pro-config';
 const HISTORY_KEY = 'ai-metadata-pro-history';
@@ -892,6 +893,42 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndoBulk, handleRedoBulk]);
 
+  // Universal Tactile & Click Feedback for ALL Buttons across the App
+  // ("sob buttoney jeno click korley jeno money hoi buttoney click hoicey")
+  useEffect(() => {
+    const handleGlobalButtonClick = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement)?.closest('button');
+      if (!target || target.disabled) return;
+
+      // 1. Tactile Haptic Vibration on Touch/Mobile Devices (10ms)
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        try { navigator.vibrate(10); } catch {}
+      }
+
+      // 2. Crisp subtle mechanical micro-click sound via Web Audio API (zero audio asset dependencies, 100% instant & non-blocking)
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(650, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(320, ctx.currentTime + 0.018);
+          gain.gain.setValueAtTime(0.035, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.018);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.02);
+        }
+      } catch {}
+    };
+
+    window.addEventListener('click', handleGlobalButtonClick, true);
+    return () => window.removeEventListener('click', handleGlobalButtonClick, true);
+  }, []);
+
   const handleApplyAffixesToAllFiles = useCallback(() => {
     if (!settings.titlePrefix?.trim() && !settings.titleSuffix?.trim() && !settings.keywordsPrefix?.trim() && !settings.keywordsSuffix?.trim()) {
       showNotification("Please enter a Title Prefix/Suffix or Keywords Prefix/Suffix first.", "error");
@@ -1258,6 +1295,7 @@ export default function App() {
         }
 
         Object.assign(fileObjectsRef.current, newFileObjects);
+        filesRef.current = [...filesRef.current, ...newItems];
         setFileObjects(prev => ({ ...prev, ...newFileObjects }));
         setFiles(prev => [...prev, ...newItems]);
         if (newItems.length > 0) {
@@ -1730,6 +1768,8 @@ export default function App() {
         console.warn(`Error bundling ${targetFilename}:`, e);
         zip.file(targetFilename, file);
       }
+      // Micro-yield to prevent browser hang on huge zip batches
+      await new Promise(r => setTimeout(r, 10));
     }
 
     // Also include both Photoshop & Illustrator JSX scripts inside the ZIP bundle!
@@ -1786,6 +1826,8 @@ export default function App() {
           }
         }
       }
+      // Micro-yield to keep UI 60fps responsive during bulk rename
+      await new Promise(r => setTimeout(r, 8));
     }
 
     if (inPlaceRenamed > 0) {
@@ -1804,9 +1846,10 @@ export default function App() {
     pushUndoSnapshot(`Regenerate "${fileMetadata.filename}"`, filesRef.current);
 
     let providerToUse: 'gemini' | 'groq' | 'mistral' = (activeKey?.provider as any) || 'gemini';
-    let currentKey = (apiConfig[providerToUse]?.[activeKey.index] || '').trim();
+    const activeKeyIdx = (activeKey && typeof activeKey.index === 'number') ? activeKey.index : 0;
+    let currentKey = (apiConfig?.[providerToUse]?.[activeKeyIdx] || '').trim();
     if (!currentKey) {
-      const inProvider = (apiConfig[providerToUse] || []).find((k: string) => k && k.trim());
+      const inProvider = (apiConfig?.[providerToUse] || []).find((k: string) => k && k.trim());
       if (inProvider) currentKey = inProvider.trim();
     }
 
@@ -1917,7 +1960,7 @@ export default function App() {
     }
   };
 
-  const startGeneration = async (overrideMode?: 'all' | 'image' | 'vector' | 'video') => {
+  const startGeneration = async (overrideMode?: 'all' | 'image' | 'vector' | 'video' | any) => {
     if (isGenerating) return;
 
     const isVector = (f: StockMetadata) => {
@@ -1929,8 +1972,12 @@ export default function App() {
       return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
     };
 
-    const effectiveMode = overrideMode || mode;
-    let targetFiles = filesRef.current.filter(f => {
+    const effectiveMode = (typeof overrideMode === 'string' && ['all', 'image', 'vector', 'video'].includes(overrideMode))
+      ? overrideMode
+      : mode;
+
+    const allCurrentFiles = filesRef.current.length > 0 ? filesRef.current : files;
+    let targetFiles = allCurrentFiles.filter(f => {
       if (effectiveMode === 'all') return true;
       if (effectiveMode === 'vector') return isVector(f);
       if (effectiveMode === 'video') return isVideo(f);
@@ -1938,8 +1985,8 @@ export default function App() {
       return true;
     });
 
-    if (targetFiles.length === 0 && filesRef.current.length > 0) {
-      targetFiles = [...filesRef.current];
+    if (targetFiles.length === 0 && allCurrentFiles.length > 0) {
+      targetFiles = [...allCurrentFiles];
     }
     
     let pendingFiles = targetFiles.filter(f => f.status === 'pending');
@@ -1951,12 +1998,13 @@ export default function App() {
 
     if (pendingFiles.length === 0) return;
 
-    pushUndoSnapshot(`Bulk Metadata Generation`, filesRef.current);
+    pushUndoSnapshot(`Bulk Metadata Generation`, allCurrentFiles);
 
     let providerToUse: 'gemini' | 'groq' | 'mistral' = (activeKey?.provider as any) || 'gemini';
-    let currentKey = (apiConfig[providerToUse]?.[activeKey.index] || '').trim();
+    const activeKeyIdx = (activeKey && typeof activeKey.index === 'number') ? activeKey.index : 0;
+    let currentKey = (apiConfig?.[providerToUse]?.[activeKeyIdx] || '').trim();
     if (!currentKey) {
-      const inProvider = (apiConfig[providerToUse] || []).find((k: string) => k && k.trim());
+      const inProvider = (apiConfig?.[providerToUse] || []).find((k: string) => k && k.trim());
       if (inProvider) currentKey = inProvider.trim();
     }
 
@@ -1980,9 +2028,9 @@ export default function App() {
     const pending = [...pendingFiles];
     
     const processNext = async (index: number) => {
-      // Stagger workers by 600ms to avoid bursting the API simultaneously
+      // Stagger workers by 300ms to avoid bursting the API simultaneously
       if (index > 0) {
-        await new Promise(resolve => setTimeout(resolve, index * 600));
+        await new Promise(resolve => setTimeout(resolve, index * 300));
       }
       
       while (!stopRef.current && pending.length > 0) {
@@ -1996,7 +2044,7 @@ export default function App() {
         const fileMetadata = pending.shift()!;
         
         // Check if file still exists in the list (wasn't deleted)
-        if (!filesRef.current.some(f => f.id === fileMetadata.id)) {
+        if (!filesRef.current.some(f => f.id === fileMetadata.id) && !files.some(f => f.id === fileMetadata.id)) {
           continue;
         }
 
@@ -2046,6 +2094,8 @@ export default function App() {
         while (retryCount <= maxRetries && !stopRef.current) {
           try {
             setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: 'generating', errorMessage: undefined } : f));
+            // Tiny 20ms yield to allow browser to paint 'generating' state and keep UI 60fps responsive
+            await new Promise(r => setTimeout(r, 20));
 
             const timeoutPromise = new Promise((_, reject) => 
               setTimeout(() => reject(new Error("Vision analysis timed out")), 38000)
@@ -2076,14 +2126,14 @@ export default function App() {
 
             const newFilename = sanitizeStockFilename(result.title, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg', settings.filenameFormat || 'exact_title');
             
-            const cleanKw = (result.keywords || '')
-              .split(',')
-              .map((k: string) => k.trim())
-              .filter((k: string) => {
-                const lk = k.toLowerCase();
-                return lk && !['universal', 'marketplace', 'marketplaces', 'concept', 'commercial', 'stock photo', 'stock image', 'asset', 'vulval'].includes(lk);
-              })
-              .join(', ');
+            // Strictly enforce comma-separated tags and unpack any run-on sentences without commas
+            const sanitizedKwObj = sanitizeStockKeywords(
+              result.keywords || '',
+              result.title,
+              settings?.maxKeywords || 50,
+              settings?.singleWordKeywords
+            );
+            const cleanKw = sanitizedKwObj.keywords;
 
             const updatedMetadata = { 
               ...fileMetadata, 
@@ -2095,25 +2145,29 @@ export default function App() {
               errorMessage: undefined
             };
 
-            setFiles(prev => prev.map(f => {
-              if (f.id === fileMetadata.id) {
-                return updatedMetadata;
-              }
-              return f;
-            }));
+            setFiles(prev => prev.map(f => (f.id === fileMetadata.id ? updatedMetadata : f)));
 
-            // 100% embed and save metadata inside the file directly (both for SELECT FILE and SELECT FOLDER)
+            // Synchronize filesRef.current immediately
+            const fIndex = filesRef.current.findIndex(f => f.id === fileMetadata.id);
+            if (fIndex !== -1) {
+              filesRef.current[fIndex] = updatedMetadata;
+            }
+
+            // In-place disk write only if local folder handle or file handle is connected
             const currentDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-            try {
-              await saveMetadataToLocalFile(fileMetadata.id, updatedMetadata, currentDir, false);
-            } catch (saveErr) {
-              console.warn("Embed metadata save error:", saveErr);
+            const hasDirectDiskHandle = Boolean(currentDir || fileMetadata.handle || fileHandlesRef.current[fileMetadata.id]);
+            if (hasDirectDiskHandle) {
+              try {
+                await saveMetadataToLocalFile(fileMetadata.id, updatedMetadata, currentDir, false);
+              } catch (saveErr) {
+                console.warn("Embed metadata save error:", saveErr);
+              }
             }
 
             setProgress(prev => ({ ...prev, current: prev.current + 1 }));
 
-            // Respectful pacing delay between files (600ms) to stay within API rate limits cleanly
-            await new Promise(r => setTimeout(r, 600));
+            // Respectful pacing delay between files (300ms) to stay within API rate limits cleanly
+            await new Promise(r => setTimeout(r, 300));
             break; // Success, exit retry loop
           } catch (error: any) {
             const errStr = String(error?.message || error || '');
