@@ -762,6 +762,7 @@ function generateSmartFallbackMetadata(
       const ext = ((filename || '').split('.').pop() || '').toLowerCase();
       const isVideoAsset = Boolean(req.body.isVideo) || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
       const isVectorAsset = Boolean(req.body.isVector) || ['eps', 'ai', 'svg'].includes(ext);
+      const keywordStyle: 'mixed' | 'single' | 'double' = req.body.keywordStyle || (req.body.singleWordKeywords ? 'single' : 'mixed');
 
       const promptText = `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist.
 ${isVideoAsset ? `CRITICAL VIDEO FOOTAGE DIRECTIVES:
@@ -777,10 +778,16 @@ CRITICAL DIRECTIVES:
 - Base your metadata 100% on what is VISUALLY SHOWN in the asset!
 - Do NOT base metadata on random numbers, dates, or timestamps from the filename!
 - Never invent typography, dates, or timestamps unless written text is clearly visible in the image itself.
-- HARD DIRECTIVE ON KEYWORDS (STRICT MANDATE):
+- HARD DIRECTIVE ON KEYWORDS (STRICT MANDATE & ZERO SENTENCES):
   * EVERY SINGLE KEYWORD MUST BE SEPARATED BY A COMMA AND SPACE: e.g. "tag1, tag2, tag3, tag4"!
-  * NEVER write a sentence, paragraph, or word chain without commas!
-  * MAXIMUM 1 TO 2 WORDS PER KEYWORD TAG (e.g. "balloons", "birthday party", "festive background"). NEVER write 3 or more words together without commas!
+  * NEVER write a sentence, paragraph, verb, or description in keywords (e.g. NEVER write "a person having a birthday party")!
+  * MAXIMUM 1 TO 2 WORDS PER KEYWORD TAG. NEVER write 3 or more words together without commas!
+${keywordStyle === 'double' ? `  * MANDATORY DOUBLE KEYWORDS (2-WORD PHRASES):
+    - Every tag MUST be a 2-word phrase (e.g. "happy birthday", "birthday party", "celebration event", "party cake", "smiling friends")!
+    - DO NOT split "happy birthday" into "happy" and "birthday"! It MUST be kept as a 2-word compound phrase!` : keywordStyle === 'single' ? `  * MANDATORY SINGLE KEYWORDS ONLY:
+    - Every tag MUST be exactly ONE word only (e.g. "happy, birthday, celebration, party, cake, gifts, balloons")!
+    - Never combine words into phrases!` : `  * MANDATORY MIXED KEYWORDS:
+    - Include both high-ranking 2-word phrases (e.g. "happy birthday", "birthday party", "festive background") and single keywords (e.g. "celebration", "cake", "balloons")!`}
   * Writing space-separated words without commas (e.g. "birthday happy party celebration balloon balloons colorful festive") is STRICTLY PROHIBITED and will cause immediate rejection!
 Return ONLY valid JSON with keys:
 - title: Commercial stock title (strictly ${minTitleWords}-${maxTitleWords} words) describing what is visually shown.
@@ -894,11 +901,39 @@ Return ONLY valid JSON with keys:
           const seenTags = new Set<string>();
 
           for (const chunk of rawChunks) {
-            const words = chunk.split(/\s+/).filter(Boolean);
-            // If chunk has 3 or more words without commas, unpack each word individually
-            const tokens = words.length >= 3 ? words : [chunk];
+            const words = chunk
+              .replace(/[/\\#@$%*~^{}[\]()<>"'`;!?_.]/g, ' ')
+              .split(/\s+/)
+              .map((w: string) => w.trim().toLowerCase())
+              .filter((w: string) => w.length >= 2 && !['a', 'an', 'the', 'is', 'are', 'was', 'were', 'with', 'in', 'on', 'at', 'by', 'of', 'and'].includes(w));
+
+            let tokens: string[] = [];
+            if (keywordStyle === 'single') {
+              tokens = words;
+            } else if (keywordStyle === 'double') {
+              if (words.length >= 2) {
+                for (let i = 0; i < words.length - 1; i += 2) {
+                  tokens.push(`${words[i]} ${words[i + 1]}`);
+                }
+              } else if (words.length === 1) {
+                tokens.push(words[0]);
+              }
+            } else {
+              // Mixed: keep 2-word phrases intact, unpack 3+ words
+              if (words.length === 2) {
+                tokens.push(`${words[0]} ${words[1]}`);
+              } else if (words.length > 2) {
+                tokens.push(`${words[0]} ${words[1]}`);
+                for (let i = 2; i < words.length; i++) {
+                  tokens.push(words[i]);
+                }
+              } else if (words.length === 1) {
+                tokens.push(words[0]);
+              }
+            }
+
             for (const t of tokens) {
-              const cleaned = t.replace(/[/\\#@$%*~^{}[\]()<>"'`;!?_.]/g, '').trim().toLowerCase();
+              const cleaned = t.trim().toLowerCase();
               if (
                 cleaned.length >= 2 &&
                 !seenTags.has(cleaned) &&

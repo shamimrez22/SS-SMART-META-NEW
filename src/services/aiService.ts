@@ -481,6 +481,8 @@ export async function callServerGemini(
       apiKeys: keyList,
       apiKey: keyList[0] || '',
       model: settings.aiModel || 'gemini-2.5-flash-lite',
+      keywordStyle: settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed'),
+      singleWordKeywords: Boolean(settings?.singleWordKeywords),
       minTitleWords: settings?.minTitleWords || 7,
       maxTitleWords: settings?.maxTitleWords || 15,
       minDescriptionWords: settings?.minDescriptionWords || 20,
@@ -498,7 +500,8 @@ export async function callServerGemini(
       const cleanTitle = sanitizedTitleObj?.title || rawTitle;
 
       const rawKeywords = String(data.metadata.keywords || '').trim();
-      const sanitizedKwObj = sanitizeStockKeywords(rawKeywords, cleanTitle, settings?.maxKeywords || 50, settings?.singleWordKeywords);
+      const activeKwStyle = settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed');
+      const sanitizedKwObj = sanitizeStockKeywords(rawKeywords, cleanTitle, settings?.maxKeywords || 50, settings?.singleWordKeywords, activeKwStyle);
       const cleanKeywords = sanitizedKwObj?.keywords || rawKeywords;
 
       const finalTitle = enforceStockTitleWordLimits(
@@ -1646,13 +1649,15 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
     }
     
     const targetKWCount = settings.maxKeywords || 50;
+    const activeKwStyle = settings.keywordStyle || (settings.singleWordKeywords ? 'single' : 'mixed');
     result.keywords = ensure100PercentKeywords(
       result.keywords, 
       result.title, 
       result.description, 
       result.category, 
       targetKWCount,
-      settings.singleWordKeywords
+      settings.singleWordKeywords,
+      activeKwStyle
     );
 
     const affixed = applyTitleAndKeywordsAffixes(result.title, result.keywords, settings);
@@ -1663,7 +1668,8 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
       affixed.keywords,
       sanitizedTitleObj.title,
       targetKWCount,
-      settings.singleWordKeywords
+      settings.singleWordKeywords,
+      activeKwStyle
     );
 
     result.title = enforceStockTitleWordLimits(
@@ -1847,13 +1853,15 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
     }
     
     const targetKWCount = settings.maxKeywords || 50;
+    const activeKwStyle = settings.keywordStyle || (settings.singleWordKeywords ? 'single' : 'mixed');
     result.keywords = ensure100PercentKeywords(
       result.keywords, 
       result.title, 
       result.description, 
       result.category, 
       targetKWCount,
-      settings.singleWordKeywords
+      settings.singleWordKeywords,
+      activeKwStyle
     );
 
     const affixed = applyTitleAndKeywordsAffixes(result.title, result.keywords, settings);
@@ -1864,7 +1872,8 @@ async function generateWithOpenAICompatible(file: File, settings: any, apiKey: s
       affixed.keywords,
       sanitizedTitleObj.title,
       targetKWCount,
-      settings.singleWordKeywords
+      settings.singleWordKeywords,
+      activeKwStyle
     );
 
     result.title = enforceStockTitleWordLimits(
@@ -1895,14 +1904,27 @@ function ensure100PercentKeywords(
   description: string,
   category: string,
   targetCount: number = 50,
-  singleWordOnly: boolean = false
+  singleWordOnly: boolean = false,
+  keywordStyle: 'mixed' | 'single' | 'double' = 'mixed'
 ): string {
-  let list = (rawKeywords || '').split(',')
+  const isSingleOnly = singleWordOnly || keywordStyle === 'single';
+  const isDoubleOnly = keywordStyle === 'double';
+
+  // Always pre-sanitize with marketplace rules to eliminate run-on sentences & format properly
+  const sanitized = sanitizeStockKeywords(rawKeywords, title, targetCount, isSingleOnly, keywordStyle);
+  let list = (sanitized.keywords || '')
+    .split(',')
     .map(k => k.trim().toLowerCase().replace(/^[#.\s-]+|[#.\s-]+$/g, ''))
     .filter(k => k && k.length > 1);
 
-  if (singleWordOnly) {
+  if (isSingleOnly) {
     list = list.map(k => k.split(/\s+/)[0]).filter(Boolean);
+  } else if (isDoubleOnly) {
+    // If an item has more than 2 words, trim to 2 words
+    list = list.map(k => {
+      const parts = k.split(/\s+/).filter(Boolean);
+      return parts.length >= 2 ? `${parts[0]} ${parts[1]}` : parts[0];
+    }).filter(Boolean);
   }
 
   // Deduplicate while preserving original AI order
@@ -1927,19 +1949,28 @@ function ensure100PercentKeywords(
     .map(w => w.trim())
     .filter(w => w.length > 2 && !stopWords.has(w));
 
-  for (const w of words) {
-    if (!unique.includes(w) && unique.length < targetCount) {
-      unique.push(w);
+  if (isDoubleOnly) {
+    for (let i = 0; i < words.length - 1; i += 2) {
+      const pair = `${words[i]} ${words[i + 1]}`;
+      if (!unique.includes(pair) && unique.length < targetCount) {
+        unique.push(pair);
+      }
+    }
+  } else {
+    for (const w of words) {
+      if (!unique.includes(w) && unique.length < targetCount) {
+        unique.push(w);
+      }
     }
   }
 
   // Thematic stock keywords tightly tailored to category & subject
   const thematicFillers: Record<string, string[]> = {
-    'landscapes': ['scenic view', 'outdoor nature', 'wilderness', 'natural environment', 'travel destination', 'panoramic scenery', 'scenic landscape', 'peaceful nature', 'earth beauty', 'serene atmosphere', 'open horizon', 'ecotourism', 'wanderlust', 'natural beauty', 'wild landscape'],
-    'nature': ['biodiversity', 'natural habitat', 'green ecology', 'organic environment', 'pure nature', 'flora and fauna', 'environmental conservation', 'fresh outdoor', 'tranquil scenery', 'earth science', 'climate and weather', 'botanical landscape', 'vibrant greenery', 'natural wonder'],
+    'landscapes': ['scenic view', 'outdoor nature', 'wilderness landscape', 'natural environment', 'travel destination', 'panoramic scenery', 'scenic landscape', 'peaceful nature', 'earth beauty', 'serene atmosphere', 'open horizon', 'ecotourism', 'wanderlust', 'natural beauty', 'wild landscape'],
+    'nature': ['biodiversity nature', 'natural habitat', 'green ecology', 'organic environment', 'pure nature', 'flora fauna', 'conservation scenery', 'fresh outdoor', 'tranquil scenery', 'earth science', 'climate weather', 'botanical landscape', 'vibrant greenery', 'natural wonder'],
     'business': ['corporate strategy', 'professional enterprise', 'commercial success', 'economic growth', 'modern workplace', 'business leadership', 'strategic vision', 'industry benchmark', 'corporate management', 'financial progress', 'innovation concept', 'teamwork excellence', 'executive planning'],
-    'technology': ['digital transformation', 'modern innovation', 'futuristic concept', 'cutting edge', 'smart connectivity', 'high tech system', 'advanced computing', 'cyber infrastructure', 'automation technology', 'data intelligence', 'digital era', 'next generation', 'technological progress'],
-    'travel': ['adventure journey', 'tourism experience', 'explore world', 'scenic road trip', 'travel destination', 'discovery path', 'vacation getaway', 'global exploration', 'sightseeing adventure', 'wanderer spirit', 'tourist attraction', 'voyage concept', 'traveler guide', 'wayfarer journey'],
+    'technology': ['digital transformation', 'modern innovation', 'futuristic concept', 'cutting edge', 'smart connectivity', 'high tech', 'advanced computing', 'cyber infrastructure', 'automation technology', 'data intelligence', 'digital era', 'next generation', 'technological progress'],
+    'travel': ['adventure journey', 'tourism experience', 'explore world', 'scenic trip', 'travel destination', 'discovery path', 'vacation getaway', 'global exploration', 'sightseeing adventure', 'wanderer spirit', 'tourist attraction', 'voyage concept', 'traveler guide', 'wayfarer journey'],
     'transportation': ['transport vehicle', 'highway travel', 'asphalt roadway', 'transit journey', 'mobility concept', 'commute route', 'road trip adventure', 'navigation route', 'vehicle mobility', 'logistics highway', 'expressway transit', 'paved road', 'motorway travel', 'scenic driving'],
     'architecture': ['urban architecture', 'modern structure', 'architectural design', 'building exterior', 'structural perspective', 'contemporary construction', 'urban landmark', 'cityscape view', 'architectural engineering', 'built environment']
   };
@@ -1949,7 +1980,7 @@ function ensure100PercentKeywords(
   const fillers = thematicFillers[matchedTheme] || thematicFillers['landscapes'];
 
   for (const f of fillers) {
-    const term = singleWordOnly ? f.split(/\s+/)[0] : f;
+    const term = isSingleOnly ? f.split(/\s+/)[0] : f;
     if (!unique.includes(term) && unique.length < targetCount) {
       unique.push(term);
     }
@@ -2251,16 +2282,23 @@ ${marketplaceRules}
 
 4. KEYWORDS SPECIFICATIONS (MANDATORY EXACTLY ${targetCount} KEYWORDS):
    - HARD DIRECTIVE: You MUST provide a strictly comma-separated list of EXACTLY ${targetCount} keywords separated by ", ".
-   - ABSOLUTE PROHIBITION ON SENTENCES OR UNSPLIT PHRASES: NEVER write a sentence, paragraph, or phrase without commas!
-   - MAXIMUM 1 TO 2 WORDS PER KEYWORD TAG (e.g. "balloon", "birthday party", "festive background"). NEVER write 3 or more words together without commas!
-   - Writing long space-separated words without commas (e.g. "birthday happy party celebration balloon balloons colorful festive") is STRICTLY FORBIDDEN and causes immediate rejection!
+   - ABSOLUTE PROHIBITION ON SENTENCES OR UNSPLIT PHRASES (ZERO TOLERANCE): NEVER write a sentence, paragraph, verb, or description in keywords (e.g. NEVER write "a person celebrating birthday party", NEVER write full sentences)!
+   - MAXIMUM 1 TO 2 WORDS PER KEYWORD TAG. NEVER write 3 or more words together without commas!
+   - Every tag must be separated by a comma and space: "tag1, tag2, tag3, tag4"!
+${(settings.keywordStyle === 'double') ? `   - *** MANDATORY DOUBLE KEYWORDS ACTIVE (2-WORD COMPOUND PHRASES):
+     * EVERY keyword tag MUST be a 2-word phrase (e.g. "happy birthday", "birthday party", "celebration event", "party cake", "festive background", "happy moment", "smiling friends")!
+     * DO NOT split "happy birthday" into "happy" and "birthday"! It MUST be kept intact as "happy birthday"!
+     * No single words unless unavoidable, and NEVER 3 or more words in a single tag!` : (settings.keywordStyle === 'single' || settings.singleWordKeywords) ? `   - *** MANDATORY SINGLE KEYWORDS ONLY ACTIVE:
+     * EVERY keyword tag MUST be exactly ONE word only (e.g. "happy, birthday, celebration, party, cake, gifts, balloons, festive")!
+     * NEVER combine words together (do not output "happy birthday")!` : `   - *** MANDATORY MIXED KEYWORDS (SINGLE & 2-WORD PHRASES):
+     * Include both high-ranking 2-word stock phrases (e.g. "happy birthday", "birthday party", "festive background") AND precise single words (e.g. "celebration", "cake", "balloons")!
+     * Keep compound terms like "happy birthday" together instead of splitting them!`}
    - Ordered in strict SEO tiers for maximum marketplace sales:
      * Keywords 1-10 (PRIMARY SUBJECT & CORE VISUAL NOUNS): The exact literal elements, main subject, visible numbers (e.g. 2027), nouns, key objects, and materials. (Adobe Stock indexes these 10 tags with highest weight!)
      * Keywords 11-25 (ENVIRONMENT, SETTING & TECHNIQUE): Specific location type, weather, lighting, color palette, camera angle (aerial, top view, isometric, flat lay), style (minimalist, modern, corporate, vintage).
      * Keywords 26-38 (COMMERCIAL CONTEXT & INDUSTRY RELEVANCE): Accurate search terms describing the specific context, theme, and real-world usage of this exact subject matter (e.g. culinary, dining for food; domestic animal, pet care for pets; landscape, scenic for nature). NEVER include "isolated", "copy space", "white background", or "template" unless they factually apply to this specific asset!
      * Keywords 39-${targetCount} (HIGH-VOLUME BUYER SEARCH PHRASES): Common factual search terms, industry concepts, and buyer intent tags matching this exact visual content.
-   - ${singleWordKeywords ? "Format: strictly single words." : "Format: mix of precise single words and high-converting 2-word stock phrases."}
-   - No duplicate keywords. No irrelevant spam. No useless filler words.
+   - No duplicate keywords. No irrelevant spam. No useless filler words. Never write sentences.
 
 5. CATEGORY SELECTION:
    - Primary Stock Category: Landscapes, Nature, Business, Technology, People, Architecture, Travel, Food & Drink, Animals, Transportation, Backgrounds/Textures, Holidays/Celebrations.

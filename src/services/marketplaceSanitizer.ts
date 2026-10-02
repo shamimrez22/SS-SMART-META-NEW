@@ -152,8 +152,13 @@ export function sanitizeStockKeywords(
   rawKeywords: string | string[],
   titleContext: string = '',
   targetCount: number = 50,
-  singleWordOnly: boolean = false
+  singleWordOnly: boolean = false,
+  keywordStyle: 'mixed' | 'single' | 'double' = 'mixed'
 ): { keywords: string; removedTrademarks: string[]; removedBuzzwords: string[]; duplicateCount: number } {
+  // If singleWordOnly flag is passed as true, respect it
+  const isSingleOnly = singleWordOnly || keywordStyle === 'single';
+  const isDoubleOnly = keywordStyle === 'double';
+
   // 1. Normalize input and split by any standard delimiter (commas, newlines, semicolons, tabs, pipes, bullets)
   const rawString = Array.isArray(rawKeywords)
     ? rawKeywords.join(', ')
@@ -165,21 +170,51 @@ export function sanitizeStockKeywords(
     .filter(Boolean);
 
   // 2. HARD SENTENCE-TO-KEYWORDS UNPACKING:
-  // If AI or input writes a run-on sentence without commas (e.g. "birthday happy party celebration balloon balloons colorful"):
-  // Automatically unpack into individual single words or clean 2-word tags so every tag has a comma!
+  // If AI writes a run-on sentence without commas (e.g. "a high quality picture of happy birthday celebration party"):
+  // Strip sentence filler words and unpack cleanly into 1-word or 2-word tags!
   const candidateTags: string[] = [];
   for (const chunk of rawChunks) {
     const cleanedChunk = chunk.replace(/^[\d+.)\s-]+/, '').trim();
     if (!cleanedChunk) continue;
 
-    const words = cleanedChunk.split(/\s+/).filter(Boolean);
+    const words = cleanedChunk
+      .replace(/[/\\#@$%*~^{}[\]()<>"'`;!?_.]/g, ' ')
+      .split(/\s+/)
+      .map(w => w.trim().toLowerCase())
+      .filter(w => w && w.length >= 2 && !STOCK_STOP_WORDS.has(w));
+
     if (words.length >= 3) {
-      // 3 or more words without commas is a sentence: unpack every word individually!
-      for (const w of words) {
-        if (w.trim()) candidateTags.push(w.trim());
+      // 3 or more words is a sentence or phrase without commas
+      if (isDoubleOnly) {
+        // Form 2-word phrases e.g. ["happy birthday", "celebration party"]
+        for (let i = 0; i < words.length - 1; i += 2) {
+          candidateTags.push(`${words[i]} ${words[i + 1]}`);
+        }
+        if (words.length % 2 === 1 && words.length > 1) {
+          candidateTags.push(`${words[words.length - 2]} ${words[words.length - 1]}`);
+        }
+      } else if (isSingleOnly) {
+        // Individual single words
+        for (const w of words) {
+          candidateTags.push(w);
+        }
+      } else {
+        // Mixed: create 2-word phrase from first two words (e.g. "happy birthday"), plus individual keywords
+        if (words.length >= 2) {
+          candidateTags.push(`${words[0]} ${words[1]}`);
+        }
+        for (let i = 2; i < words.length; i++) {
+          candidateTags.push(words[i]);
+        }
       }
-    } else {
-      candidateTags.push(cleanedChunk);
+    } else if (words.length === 2) {
+      if (isSingleOnly) {
+        candidateTags.push(words[0], words[1]);
+      } else {
+        candidateTags.push(`${words[0]} ${words[1]}`);
+      }
+    } else if (words.length === 1) {
+      candidateTags.push(words[0]);
     }
   }
 
@@ -198,19 +233,14 @@ export function sanitizeStockKeywords(
 
     if (!tag || tag.length < 2) continue;
 
-    // Single word formatting if requested or if tag has multiple words in singleWordOnly mode
-    if (singleWordOnly && tag.includes(' ')) {
+    // Formatting based on mode
+    if (isSingleOnly && tag.includes(' ')) {
       tag = tag.split(/\s+/)[0];
     } else if (tag.includes(' ')) {
-      const subWords = tag.split(/\s+/);
+      const subWords = tag.split(/\s+/).filter(Boolean);
       if (subWords.length > 2) {
-        for (const sw of subWords) {
-          if (sw.length >= 2 && !seen.has(sw) && !STOCK_STOP_WORDS.has(sw)) {
-            seen.add(sw);
-            validKeywords.push(sw);
-          }
-        }
-        continue;
+        // Enforce maximum 2 words per tag!
+        tag = `${subWords[0]} ${subWords[1]}`;
       }
     }
 
@@ -281,7 +311,14 @@ export function sanitizeStockKeywords(
 
   // Supplement with high-converting commercial stock tags if count is below targetCount
   if (validKeywords.length < targetCount) {
-    const contextualBackfill = [
+    const contextualBackfill = isDoubleOnly ? [
+      'modern design', 'visual texture', 'creative element', 'artistic composition', 
+      'scenic background', 'color palette', 'clean detail', 'horizontal view', 
+      'close perspective', 'commercial utility', 'elegance style', 'vibrant atmosphere', 
+      'graphic element', 'contemporary style', 'decorative pattern', 'minimalist aesthetic', 
+      'balanced composition', 'natural lighting', 'studio presentation', 'artistic arrangement',
+      'high resolution', 'commercial project', 'digital design', 'concept visual'
+    ] : [
       'photography', 'composition', 'texture', 'element', 'detail', 'visual', 
       'perspective', 'lighting', 'backdrop', 'creative', 'modern', 'style', 
       'color palette', 'clarity', 'focus', 'design', 'presentation', 'pattern', 
@@ -291,7 +328,7 @@ export function sanitizeStockKeywords(
     ];
     for (const tag of contextualBackfill) {
       if (validKeywords.length >= targetCount) break;
-      const cleanTag = singleWordOnly && tag.includes(' ') ? tag.split(' ')[0] : tag;
+      const cleanTag = isSingleOnly && tag.includes(' ') ? tag.split(' ')[0] : tag;
       if (!seen.has(cleanTag) && !STOCK_STOP_WORDS.has(cleanTag)) {
         seen.add(cleanTag);
         validKeywords.push(cleanTag);

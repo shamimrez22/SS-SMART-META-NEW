@@ -54,6 +54,8 @@ export type StockMarketplace =
   | 'motionelements'
   | 'creativemarket';
 
+export type KeywordStyle = 'mixed' | 'single' | 'double';
+
 export interface GeneratorSettings {
   titleLength: [number, number];
   descriptionLength: [number, number];
@@ -77,6 +79,7 @@ export interface GeneratorSettings {
   titleChoice: number;
   metadataFor: 'image' | 'video' | 'eps' | 'png' | 'all';
   concurrency: number;
+  keywordStyle?: KeywordStyle;
   singleWordKeywords: boolean;
   silhouette: boolean;
   transparentBackground: boolean;

@@ -574,6 +574,99 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </button>
                   ))}
                 </div>
+
+                {/* KEYWORD STYLE & PHRASE STRUCTURE (Single vs Double vs Mixed) */}
+                <div className="pt-3 border-t border-emerald-500/20 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Tag size={13} className="text-emerald-400" />
+                      <span>Keyword Style & Structure (কীওয়ার্ড ধরন ও অপশন)</span>
+                    </span>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                      {settings.keywordStyle === 'double' ? 'Double (2-Words)' : (settings.keywordStyle === 'single' || settings.singleWordKeywords) ? 'Single Words' : 'Mixed (Recommended)'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Choose whether keywords are single words only, 2-word compound phrases (e.g. &quot;happy birthday&quot;), or a balanced SEO mix.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                    {/* Mixed */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettings(prev => ({ ...prev, keywordStyle: 'mixed', singleWordKeywords: false }));
+                        showNotification('Keyword Style set to Mixed (Single + 2-word phrases e.g. "happy birthday")', 'info');
+                      }}
+                      className={cn(
+                        "p-2.5 rounded-lg border text-left transition-all cursor-pointer relative",
+                        (!settings.keywordStyle || settings.keywordStyle === 'mixed') && !settings.singleWordKeywords
+                          ? "bg-emerald-950/80 border-emerald-400 text-white shadow-sm ring-1 ring-emerald-400/50"
+                          : "bg-[#061517] border-[#123e3c] text-slate-300 hover:text-white hover:border-emerald-500/40"
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-black text-emerald-300">Mixed (Default)</span>
+                        {((!settings.keywordStyle || settings.keywordStyle === 'mixed') && !settings.singleWordKeywords) && (
+                          <CheckCircle2 size={13} className="text-emerald-400" />
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        Single + 2-word phrases: <span className="text-emerald-300 font-semibold">&quot;happy birthday, celebration, party cake&quot;</span>
+                      </p>
+                    </button>
+
+                    {/* Single Keywords */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettings(prev => ({ ...prev, keywordStyle: 'single', singleWordKeywords: true }));
+                        showNotification('Keyword Style set to Single Keywords (1-word tags only, e.g. "happy", "birthday")', 'info');
+                      }}
+                      className={cn(
+                        "p-2.5 rounded-lg border text-left transition-all cursor-pointer relative",
+                        settings.keywordStyle === 'single' || settings.singleWordKeywords
+                          ? "bg-sky-950/80 border-sky-400 text-white shadow-sm ring-1 ring-sky-400/50"
+                          : "bg-[#061517] border-[#123e3c] text-slate-300 hover:text-white hover:border-sky-500/40"
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-black text-sky-300">Single Keywords</span>
+                        {(settings.keywordStyle === 'single' || settings.singleWordKeywords) && (
+                          <CheckCircle2 size={13} className="text-sky-400" />
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        Strictly 1-word tags: <span className="text-sky-300 font-semibold">&quot;happy, birthday, celebration, party, cake&quot;</span>
+                      </p>
+                    </button>
+
+                    {/* Double Keywords (2-Words) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettings(prev => ({ ...prev, keywordStyle: 'double', singleWordKeywords: false }));
+                        showNotification('Keyword Style set to Double Keywords (Strictly 2-word compound phrases e.g. "happy birthday", "birthday party")', 'success');
+                      }}
+                      className={cn(
+                        "p-2.5 rounded-lg border text-left transition-all cursor-pointer relative",
+                        settings.keywordStyle === 'double'
+                          ? "bg-amber-950/80 border-amber-400 text-white shadow-sm ring-1 ring-amber-400/50"
+                          : "bg-[#061517] border-[#123e3c] text-slate-300 hover:text-white hover:border-amber-500/40"
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-black text-amber-300">Double (2-Words)</span>
+                        {settings.keywordStyle === 'double' && (
+                          <CheckCircle2 size={13} className="text-amber-400" />
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        Strictly 2-word phrases: <span className="text-amber-300 font-semibold">&quot;happy birthday, birthday party, festive cake&quot;</span>
+                      </p>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* 3. DESCRIPTION WORD RANGE (FULL WIDTH WIDE ROW) */}

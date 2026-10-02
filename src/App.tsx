@@ -576,6 +576,7 @@ export default function App() {
       maxKeywords: 50,
       titleChoice: 1,
       metadataFor: 'all',
+      keywordStyle: 'mixed',
       singleWordKeywords: false,
       silhouette: false,
       transparentBackground: false,
@@ -588,6 +589,9 @@ export default function App() {
       filenameFormat: 'exact_title'
     };
     const loaded = initialSaved?.settings ? { ...defaultSettings, ...initialSaved.settings } : defaultSettings;
+    if (!loaded.keywordStyle) {
+      loaded.keywordStyle = loaded.singleWordKeywords ? 'single' : 'mixed';
+    }
     loaded.aiModel = 'gemini-2.5-flash';
     return loaded;
   });
@@ -601,6 +605,10 @@ export default function App() {
   const [redoSnapshots, setRedoSnapshots] = useState<BulkUndoSnapshot[]>([]);
   const lastSnapshotTimeRef = useRef<number>(0);
   const [isGenerating, setIsGenerating] = useState(false);
+  const isGeneratingRef = useRef(false);
+  useEffect(() => {
+    isGeneratingRef.current = isGenerating;
+  }, [isGenerating]);
   const [isPaused, setIsPaused] = useState(false);
   const [cooldownTimer, setCooldownTimer] = useState(0);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
@@ -641,6 +649,41 @@ export default function App() {
       }
     } catch {}
   }, [theme]);
+
+  // Global tactile button feedback: crisp micro-sound and instant response on every button click
+  useEffect(() => {
+    let audioCtx: AudioContext | null = null;
+    const playTactileFeedback = () => {
+      try {
+        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtxClass) return;
+        if (!audioCtx) audioCtx = new AudioCtxClass();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const now = audioCtx.currentTime;
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(750, now);
+        osc.frequency.exponentialRampToValueAtTime(320, now + 0.025);
+        gain.gain.setValueAtTime(0.03, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.025);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.025);
+      } catch {}
+    };
+
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const btn = target?.closest('button');
+      if (btn && !btn.disabled) {
+        playTactileFeedback();
+      }
+    };
+    window.addEventListener('click', handleGlobalClick, { capture: true, passive: true });
+    return () => window.removeEventListener('click', handleGlobalClick, { capture: true });
+  }, []);
 
   const filesRef = useRef(files);
   useEffect(() => {
@@ -2127,11 +2170,13 @@ export default function App() {
             const newFilename = sanitizeStockFilename(result.title, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg', settings.filenameFormat || 'exact_title');
             
             // Strictly enforce comma-separated tags and unpack any run-on sentences without commas
+            const activeKwStyle = settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed');
             const sanitizedKwObj = sanitizeStockKeywords(
               result.keywords || '',
               result.title,
               settings?.maxKeywords || 50,
-              settings?.singleWordKeywords
+              settings?.singleWordKeywords,
+              activeKwStyle
             );
             const cleanKw = sanitizedKwObj.keywords;
 
@@ -2740,83 +2785,88 @@ export default function App() {
     const totalCount = candidateFiles.length;
     setIsLoadingFiles(true);
 
-    const allAddedFileObjects: Record<string, File> = {};
-    const allChunkItems: StockMetadata[] = [];
+    // Yield to let browser render loading state and maintain 60fps responsiveness
+    setTimeout(() => {
+      const allAddedFileObjects: Record<string, File> = {};
+      const allChunkItems: StockMetadata[] = [];
 
-    for (let i = 0; i < totalCount; i++) {
-      const file = candidateFiles[i];
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      const id = Math.random().toString(36).substr(2, 9);
-      allAddedFileObjects[id] = file;
+      for (let i = 0; i < totalCount; i++) {
+        const file = candidateFiles[i];
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        const id = Math.random().toString(36).substr(2, 9);
+        allAddedFileObjects[id] = file;
 
-      const isImg = isImage(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
-      const isVid = isVideo(ext) || (Boolean(file.type) && file.type.startsWith('video/'));
-      const isVec = isVector(ext);
+        const isImg = isImage(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
+        const isVid = isVideo(ext) || (Boolean(file.type) && file.type.startsWith('video/'));
+        const isVec = isVector(ext);
 
-      // Generate preview URL for all images, videos, and SVGs
-      let initialPreviewUrl: string | undefined = undefined;
-      if (isImg || isVid || ext === 'svg') {
-        try {
-          initialPreviewUrl = URL.createObjectURL(file);
-        } catch {}
+        // Generate preview URL for all images, videos, and SVGs
+        let initialPreviewUrl: string | undefined = undefined;
+        if (isImg || isVid || ext === 'svg') {
+          try {
+            initialPreviewUrl = URL.createObjectURL(file);
+          } catch {}
+        }
+
+        allChunkItems.push({
+          id,
+          filename: file.name,
+          originalFilename: file.name,
+          initialDiskFilename: file.name,
+          currentDiskFilename: file.name,
+          title: '',
+          description: '',
+          keywords: '',
+          rating: 5,
+          status: 'pending',
+          fileType: ext,
+          previewUrl: initialPreviewUrl,
+          handle: handlesMap?.[file.name] || (file as any).handle || undefined
+        });
+
+        if (handlesMap?.[file.name] || (file as any).handle) {
+          fileHandlesRef.current[id] = handlesMap?.[file.name] || (file as any).handle;
+        }
       }
 
-      allChunkItems.push({
-        id,
-        filename: file.name,
-        originalFilename: file.name,
-        initialDiskFilename: file.name,
-        currentDiskFilename: file.name,
-        title: '',
-        description: '',
-        keywords: '',
-        rating: 5,
-        status: 'pending',
-        fileType: ext,
-        previewUrl: initialPreviewUrl,
-        handle: handlesMap?.[file.name] || (file as any).handle || undefined
+      // Single unified state update: 10,000+ files load in ~5ms without freezing the UI or hanging
+      Object.assign(fileObjectsRef.current, allAddedFileObjects);
+      filesRef.current = [...filesRef.current, ...allChunkItems];
+      setFiles(prev => [...prev, ...allChunkItems]);
+      setFileObjects(prev => ({ ...prev, ...allAddedFileObjects }));
+      setSelectedFileId(prev => prev || (allChunkItems[0] ? allChunkItems[0].id : null));
+      setIsLoadingFiles(false);
+      showNotification(`✓ ${totalCount.toLocaleString()}টি ফাইল সফলভাবে যুক্ত হয়েছে!`, 'success');
+
+      // Background thumbnail extraction for videos & EPS vectors:
+      // Single paced worker yielding 150ms between files so UI thread NEVER freezes or hangs
+      const addedIds = Object.keys(allAddedFileObjects);
+      const pendingMedia = addedIds.filter(id => {
+        const f = allAddedFileObjects[id];
+        if (!f) return false;
+        const e = f.name.split('.').pop()?.toLowerCase() || '';
+        return isVideo(e) || isVector(e);
       });
 
-      if (handlesMap?.[file.name] || (file as any).handle) {
-        fileHandlesRef.current[id] = handlesMap?.[file.name] || (file as any).handle;
-      }
-    }
+      if (pendingMedia.length > 0) {
+        const runExtraction = async () => {
+          let batchUpdates: Record<string, string> = {};
+          const flushBatch = () => {
+            const keys = Object.keys(batchUpdates);
+            if (keys.length === 0) return;
+            const updates = { ...batchUpdates };
+            batchUpdates = {};
+            setFiles(prev => prev.map(f => updates[f.id] ? { ...f, previewUrl: updates[f.id] } : f));
+          };
 
-    // Single unified state update: 10,000+ files load in ~5ms without freezing the UI or hanging when minimized
-    Object.assign(fileObjectsRef.current, allAddedFileObjects);
-    filesRef.current = [...filesRef.current, ...allChunkItems];
-    setFiles(prev => [...prev, ...allChunkItems]);
-    setFileObjects(prev => ({ ...prev, ...allAddedFileObjects }));
-    setSelectedFileId(prev => prev || (allChunkItems[0] ? allChunkItems[0].id : null));
-    setIsLoadingFiles(false);
-    showNotification(`✓ ${totalCount.toLocaleString()}টি ফাইল সফলভাবে যুক্ত হয়েছে!`, 'success');
+          const queue = [...pendingMedia];
 
-    // Background thumbnail extraction for videos & EPS vectors:
-    // Paced, concurrency-limited (2 workers), batched updates (every 6 files) to guarantee smooth 60fps scrolling
-    const addedIds = Object.keys(allAddedFileObjects);
-    const pendingMedia = addedIds.filter(id => {
-      const f = allAddedFileObjects[id];
-      if (!f) return false;
-      const e = f.name.split('.').pop()?.toLowerCase() || '';
-      return isVideo(e) || isVector(e);
-    });
-
-    if (pendingMedia.length > 0) {
-      const runExtraction = async () => {
-        let batchUpdates: Record<string, string> = {};
-        const flushBatch = () => {
-          const keys = Object.keys(batchUpdates);
-          if (keys.length === 0) return;
-          const updates = { ...batchUpdates };
-          batchUpdates = {};
-          setFiles(prev => prev.map(f => updates[f.id] ? { ...f, previewUrl: updates[f.id] } : f));
-        };
-
-        const queue = [...pendingMedia];
-        const CONCURRENCY = 2;
-
-        const pump = async (): Promise<void> => {
           while (queue.length > 0) {
+            // If active generation is running, yield priority to generation
+            if (isGeneratingRef.current) {
+              await new Promise(r => setTimeout(r, 1000));
+              continue;
+            }
             const id = queue.shift();
             if (!id) break;
             const file = allAddedFileObjects[id];
@@ -2833,33 +2883,32 @@ export default function App() {
               }
               if (thumb && thumb.startsWith('data:image/')) {
                 batchUpdates[id] = thumb;
-                if (Object.keys(batchUpdates).length >= 6) {
+                if (Object.keys(batchUpdates).length >= 4) {
                   flushBatch();
                 }
               }
             } catch (e) {
               console.warn("Background thumb extraction error:", e);
             }
+            // Yield breathing room so clicks, buttons, and scrolls remain instant
+            await new Promise(r => setTimeout(r, 150));
           }
+          flushBatch();
         };
 
-        const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => pump());
-        await Promise.all(workers);
-        flushBatch();
-      };
-
-      if (typeof document !== 'undefined' && document.hidden) {
-        const onVisible = () => {
-          if (document.visibilityState === 'visible') {
-            document.removeEventListener('visibilitychange', onVisible);
-            runExtraction();
-          }
-        };
-        document.addEventListener('visibilitychange', onVisible);
-      } else {
-        setTimeout(runExtraction, 80);
+        if (typeof document !== 'undefined' && document.hidden) {
+          const onVisible = () => {
+            if (document.visibilityState === 'visible') {
+              document.removeEventListener('visibilitychange', onVisible);
+              runExtraction();
+            }
+          };
+          document.addEventListener('visibilitychange', onVisible);
+        } else {
+          setTimeout(runExtraction, 200);
+        }
       }
-    }
+    }, 16);
   };
 
   const onDragOver = (e: React.DragEvent) => {
