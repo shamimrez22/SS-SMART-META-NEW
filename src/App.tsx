@@ -614,6 +614,23 @@ export default function App() {
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const stopRef = React.useRef(false);
   const isPausedRef = React.useRef(false);
+  const generationAbortControllerRef = useRef<AbortController | null>(null);
+  const pendingQueueRef = useRef<StockMetadata[]>([]);
+  const thumbnailAbortRef = useRef<boolean>(false);
+
+  const handleStopGeneration = useCallback(() => {
+    stopRef.current = true;
+    if (generationAbortControllerRef.current) {
+      try {
+        generationAbortControllerRef.current.abort();
+      } catch {}
+      generationAbortControllerRef.current = null;
+    }
+    pendingQueueRef.current = [];
+    setIsGenerating(false);
+    setIsPaused(false);
+    showNotification("Metadata generation stopped immediately.", "info");
+  }, []);
   
   useEffect(() => {
     isPausedRef.current = isPaused;
@@ -1277,7 +1294,7 @@ export default function App() {
                 rating: 5,
                 status: 'pending',
                 fileType: ext,
-                previewUrl: (isImage && newItems.length < 50) ? URL.createObjectURL(file) : undefined,
+                previewUrl: (isImage || isVideo || ext === 'svg') ? URL.createObjectURL(file) : undefined,
                 handle: entry
               });
               fileHandlesRef.current[id] = entry;
@@ -1311,6 +1328,30 @@ export default function App() {
         }
 
         showNotification(`✓ ফোল্ডার "${handle.name}" যুক্ত হয়েছে (${newItems.length} ফাইল)। মেটাডাটা সরাসরি এই ফোল্ডারের ফাইলে সেভ ও রিনেম হবে (কোনো ডাউনলোড হবে না)!`, 'success');
+
+        // Background thumbnail extraction for EPS vectors from folder
+        const pendingVectors = newItems.filter(item => {
+          const e = (item.fileType || item.filename.split('.').pop() || '').toLowerCase();
+          return ['eps', 'ai'].includes(e);
+        });
+        if (pendingVectors.length > 0) {
+          thumbnailAbortRef.current = false;
+          setTimeout(async () => {
+            for (const item of pendingVectors) {
+              if (thumbnailAbortRef.current) break;
+              if (!filesRef.current.some(f => f.id === item.id)) continue;
+              const fObj = newFileObjects[item.id];
+              if (!fObj) continue;
+              try {
+                const thumb = await extractEpsThumbnail(fObj);
+                if (thumb && thumb.startsWith('data:image/') && !thumbnailAbortRef.current) {
+                  setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
+                }
+              } catch {}
+              await new Promise(r => setTimeout(r, 120));
+            }
+          }, 200);
+        }
         return;
       } catch (err: any) {
         if (err.name === 'AbortError') return;
@@ -2028,12 +2069,14 @@ export default function App() {
 
     setIsGenerating(true);
     stopRef.current = false;
+    const abortCtrl = new AbortController();
+    generationAbortControllerRef.current = abortCtrl;
+    pendingQueueRef.current = [...pendingFiles];
     setProgress({ current: 0, total: pendingFiles.length });
 
     // High performance paced worker pipeline to reliably process many images without 429 rate limits
     const userConcurrency = settings.concurrency || 2;
     const concurrency = Math.min(Math.max(1, Math.min(userConcurrency, 2)), pendingFiles.length);
-    const pending = [...pendingFiles];
     
     const processNext = async (index: number) => {
       // Stagger workers by 300ms to avoid bursting the API simultaneously
@@ -2041,18 +2084,19 @@ export default function App() {
         await new Promise(resolve => setTimeout(resolve, index * 300));
       }
       
-      while (!stopRef.current && pending.length > 0) {
+      while (!stopRef.current && !abortCtrl.signal.aborted && pendingQueueRef.current.length > 0) {
         // If system is paused due to rate limit, wait
-        while (isPausedRef.current && !stopRef.current) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+        while (isPausedRef.current && !stopRef.current && !abortCtrl.signal.aborted) {
+          await new Promise(resolve => setTimeout(resolve, 400));
         }
 
-        if (stopRef.current) break;
+        if (stopRef.current || abortCtrl.signal.aborted) break;
 
-        const fileMetadata = pending.shift()!;
+        const fileMetadata = pendingQueueRef.current.shift();
+        if (!fileMetadata) break;
         
-        // Check if file still exists in the list (wasn't deleted)
-        if (!filesRef.current.some(f => f.id === fileMetadata.id) && !files.some(f => f.id === fileMetadata.id)) {
+        // Check if file still exists in the list (wasn't deleted/cleared)
+        if (!filesRef.current.some(f => f.id === fileMetadata.id)) {
           continue;
         }
 
@@ -2084,6 +2128,9 @@ export default function App() {
         }
 
         if (!actualFile || actualFile.size < 100) {
+          if (stopRef.current || abortCtrl.signal.aborted || !filesRef.current.some(f => f.id === fileMetadata.id)) {
+            break;
+          }
           setFiles(prev => prev.map(f => f.id === fileMetadata.id ? {
             ...f,
             status: 'error',
@@ -2099,8 +2146,12 @@ export default function App() {
         let retryCount = 0;
         const maxRetries = 1;
 
-        while (retryCount <= maxRetries && !stopRef.current) {
+        while (retryCount <= maxRetries && !stopRef.current && !abortCtrl.signal.aborted) {
           try {
+            if (stopRef.current || abortCtrl.signal.aborted || !filesRef.current.some(f => f.id === fileMetadata.id)) {
+              break;
+            }
+
             setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: 'generating', errorMessage: undefined } : f));
             // Tiny 20ms yield to allow browser to paint 'generating' state and keep UI 60fps responsive
             await new Promise(r => setTimeout(r, 20));
@@ -2109,11 +2160,15 @@ export default function App() {
               setTimeout(() => reject(new Error("Vision analysis timed out")), 38000)
             );
             
-            // Pass full apiConfig containing all 5 key slots for automatic multi-key failover
+            // Pass full apiConfig containing all 5 key slots and cancellation signal
             const result = await Promise.race([
-              generateMetadata(actualFile, settings, apiConfig, providerToUse, fileMetadata.previewUrl),
+              generateMetadata(actualFile, settings, apiConfig, providerToUse, fileMetadata.previewUrl, abortCtrl.signal),
               timeoutPromise
             ]) as any;
+
+            if (stopRef.current || abortCtrl.signal.aborted || !filesRef.current.some(f => f.id === fileMetadata.id)) {
+              break;
+            }
 
             if (!result || !result.title) {
               throw new Error("Invalid vision analysis result");
@@ -2180,9 +2235,12 @@ export default function App() {
             await new Promise(r => setTimeout(r, 300));
             break; // Success, exit retry loop
           } catch (error: any) {
+            if (stopRef.current || abortCtrl.signal.aborted || !filesRef.current.some(f => f.id === fileMetadata.id)) {
+              break;
+            }
             const errStr = String(error?.message || error || '');
             const isRateLimit = errStr.includes('429') || errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('rate');
-            if (retryCount < (isRateLimit ? 2 : maxRetries) && !stopRef.current) {
+            if (retryCount < (isRateLimit ? 2 : maxRetries) && !stopRef.current && !abortCtrl.signal.aborted) {
               retryCount++;
               setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: 'retrying', errorMessage: 'Rate limit hit, retrying in 3s...' } : f));
               await new Promise(r => setTimeout(r, isRateLimit ? 3000 : 1500));
@@ -2191,9 +2249,6 @@ export default function App() {
             console.warn(`Vision AI issue for ${fileMetadata.filename}:`, error?.message || error);
             
             // STRICT ZERO-DELETION & ZERO-WRONG-METADATA GUARANTEE:
-            // "jodi metda najenareate korrtey pare tahole erroer dekhabe abar amra regenareate kore thik kore nibo akta imager meta dataw vull dekha jabe na so correct thaktey hobe"
-            // If AI cannot generate metadata, leave title, keywords, and description clean and show ERROR!
-            // NEVER assign dummy fallback metadata or delete/alter the original file!
             setFiles(prev => prev.map(f => f.id === fileMetadata.id ? {
               ...f,
               status: 'error',
@@ -2213,13 +2268,20 @@ export default function App() {
     };
 
     try {
-      const initialBatch = Array.from({ length: Math.min(concurrency, pending.length) }, (_, i) => processNext(i));
+      const initialBatch = Array.from({ length: Math.min(concurrency, pendingFiles.length) }, (_, i) => processNext(i));
       await Promise.all(initialBatch);
     } catch (err) {
       console.error("Batch processing error:", err);
     } finally {
       setIsGenerating(false);
       setIsPaused(false);
+      generationAbortControllerRef.current = null;
+      pendingQueueRef.current = [];
+    }
+
+    if (stopRef.current || abortCtrl.signal.aborted) {
+      // Stopped or cleared by user - cleanly exit without success banner
+      return;
     }
 
     const finalFiles = filesRef.current;
@@ -2645,10 +2707,19 @@ export default function App() {
   }, [previewModalFileId, filteredFiles]);
 
   const clearAll = () => {
-    if (isGenerating) {
-      stopRef.current = true;
-      setIsGenerating(false);
+    // 1. Instantly abort any active vision AI requests and stop loops
+    stopRef.current = true;
+    if (generationAbortControllerRef.current) {
+      try {
+        generationAbortControllerRef.current.abort();
+      } catch {}
+      generationAbortControllerRef.current = null;
     }
+    pendingQueueRef.current = [];
+    thumbnailAbortRef.current = true;
+    setIsGenerating(false);
+    setIsPaused(false);
+
     pushUndoSnapshot(`Clear ${mode.toUpperCase()} Files`, filesRef.current, fileObjects);
     const isVector = (f: StockMetadata) => {
       const ext = (f.fileType || f.filename.split('.').pop() || '').toLowerCase();
@@ -2665,7 +2736,9 @@ export default function App() {
       return !isVector(f) && !isVideo(f);
     });
     const idsToRemove = targetModeFiles.map(f => f.id);
-    setFiles(prev => prev.filter(f => !idsToRemove.includes(f.id)));
+    const idSet = new Set(idsToRemove);
+    filesRef.current = filesRef.current.filter(f => !idSet.has(f.id));
+    setFiles(prev => prev.filter(f => !idSet.has(f.id)));
     setFileObjects(prev => {
       const newObjs = { ...prev };
       idsToRemove.forEach(id => delete newObjs[id]);
@@ -2814,6 +2887,7 @@ export default function App() {
       });
 
       if (pendingMedia.length > 0) {
+        thumbnailAbortRef.current = false;
         const runExtraction = async () => {
           let batchUpdates: Record<string, string> = {};
           const flushBatch = () => {
@@ -2827,13 +2901,17 @@ export default function App() {
           const queue = [...pendingMedia];
 
           while (queue.length > 0) {
+            if (thumbnailAbortRef.current) break;
             // If active generation is running, yield priority to generation
             if (isGeneratingRef.current) {
               await new Promise(r => setTimeout(r, 1000));
               continue;
             }
             const id = queue.shift();
-            if (!id) break;
+            if (!id || thumbnailAbortRef.current) break;
+            // Check if file still exists in workspace
+            if (!filesRef.current.some(f => f.id === id)) continue;
+
             const file = allAddedFileObjects[id];
             if (!file) continue;
             const ext = file.name.split('.').pop()?.toLowerCase() || '';
@@ -2846,7 +2924,7 @@ export default function App() {
               } else if (isVector(ext)) {
                 thumb = await extractEpsThumbnail(file);
               }
-              if (thumb && thumb.startsWith('data:image/')) {
+              if (thumb && thumb.startsWith('data:image/') && !thumbnailAbortRef.current) {
                 batchUpdates[id] = thumb;
                 if (Object.keys(batchUpdates).length >= 4) {
                   flushBatch();
@@ -2858,7 +2936,9 @@ export default function App() {
             // Yield breathing room so clicks, buttons, and scrolls remain instant
             await new Promise(r => setTimeout(r, 150));
           }
-          flushBatch();
+          if (!thumbnailAbortRef.current) {
+            flushBatch();
+          }
         };
 
         if (typeof document !== 'undefined' && document.hidden) {
@@ -2984,6 +3064,7 @@ export default function App() {
         handleFileSelectDirect={handleFileSelectDirect}
         handleDirectorySelect={handleDirectorySelect}
         startGeneration={startGeneration}
+        handleStopGeneration={handleStopGeneration}
         isGenerating={isGenerating}
         isPaused={isPaused}
         setIsPaused={setIsPaused}

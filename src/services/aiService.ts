@@ -369,7 +369,8 @@ export async function callServerGemini(
   file: File,
   settings: any,
   apiKey?: string | string[],
-  previewUrl?: string
+  previewUrl?: string,
+  signal?: AbortSignal
 ) {
   let base64 = '';
   const ext = file?.name?.split('.').pop()?.toLowerCase() || '';
@@ -464,6 +465,16 @@ export async function callServerGemini(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 20000);
 
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(timeoutId);
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    signal.addEventListener('abort', () => {
+      try { controller.abort(); } catch {}
+    }, { once: true });
+  }
+
   const keyList = Array.isArray(apiKey) ? apiKey : (apiKey ? [apiKey] : []);
 
   const res = await fetch("/api/generate-metadata", {
@@ -555,8 +566,12 @@ export async function generateMetadata(
   settings: any, 
   apiConfig: any,
   activeProvider?: string,
-  previewUrl?: string
+  previewUrl?: string,
+  signal?: AbortSignal
 ) {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
   const allGeminiKeys: string[] = [];
   if (typeof apiConfig?.gemini === 'string' && apiConfig.gemini.trim()) {
     allGeminiKeys.push(apiConfig.gemini.trim());
@@ -618,7 +633,7 @@ export async function generateMetadata(
       // Call /api/generate-metadata with ALL configured Gemini keys for seamless automatic failover
       const activeGeminiKeys = allGeminiKeys.length > 0 ? allGeminiKeys : (provider.key ? [provider.key] : []);
       try {
-        return await callServerGemini(file, settings, activeGeminiKeys, previewUrl);
+        return await callServerGemini(file, settings, activeGeminiKeys, previewUrl, signal);
       } catch (serverErr: any) {
         console.warn("Server route /api/generate-metadata failed:", serverErr?.message || serverErr);
       }

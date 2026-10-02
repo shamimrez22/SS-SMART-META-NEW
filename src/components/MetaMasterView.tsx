@@ -31,7 +31,8 @@ import {
   Trash2,
   Image as ImageIcon,
   Film,
-  Tag
+  Tag,
+  Square
 } from 'lucide-react';
 import { checkCurrentLicenseStatus, validateAndActivateKey, validateAndActivateKeyAsync, getAdminConfig, LicenseStatusResult } from '../services/licenseService';
 import { buildLocalSmartMetadata } from '../services/aiService';
@@ -74,6 +75,7 @@ interface MetaMasterViewProps {
   handleFileSelectDirect: () => void;
   handleDirectorySelect: () => void;
   startGeneration: () => void;
+  handleStopGeneration?: () => void;
   isGenerating: boolean;
   isPaused: boolean;
   setIsPaused: (paused: boolean) => void;
@@ -388,6 +390,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   handleFileSelectDirect,
   handleDirectorySelect,
   startGeneration,
+  handleStopGeneration,
   isGenerating,
   isPaused,
   setIsPaused,
@@ -1065,16 +1068,28 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           {/* Processing Group */}
           <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
             <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Processing</legend>
-            <button 
-              type="button"
-              onClick={() => startGeneration()}
-              disabled={isGenerating || files.length === 0}
-              title={isGenerating ? "AI Metadata generation in progress..." : `Generate metadata for ${currentModeFiles.length > 0 ? currentModeFiles.length : files.length} files in workspace`}
-              className="px-2.5 py-1 h-7 bg-[#22c55e] hover:bg-[#16a34a] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all disabled:opacity-50 shadow-2xs whitespace-nowrap flex items-center gap-1"
-            >
-              <Play size={11} fill="currentColor" />
-              <span>{isGenerating ? 'Generating...' : 'Start'}</span>
-            </button>
+            {isGenerating ? (
+              <button 
+                type="button"
+                onClick={handleStopGeneration}
+                title="Stop metadata generation immediately"
+                className="px-2.5 py-1 h-7 bg-[#dc2626] hover:bg-[#b91c1c] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all shadow-2xs whitespace-nowrap flex items-center gap-1 animate-pulse"
+              >
+                <Square size={11} fill="currentColor" />
+                <span>Stop</span>
+              </button>
+            ) : (
+              <button 
+                type="button"
+                onClick={() => startGeneration()}
+                disabled={files.length === 0}
+                title={`Generate metadata for ${currentModeFiles.length > 0 ? currentModeFiles.length : files.length} files in workspace`}
+                className="px-2.5 py-1 h-7 bg-[#22c55e] hover:bg-[#16a34a] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all disabled:opacity-50 shadow-2xs whitespace-nowrap flex items-center gap-1"
+              >
+                <Play size={11} fill="currentColor" />
+                <span>Start</span>
+              </button>
+            )}
             <button 
               type="button"
               onClick={() => setIsPaused(!isPaused)}
@@ -1099,12 +1114,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             </button>
             <button 
               type="button"
-              onClick={() => {
-                const targetIds = new Set(currentModeFiles.map(f => f.id));
-                setFiles(prev => prev.filter(f => !targetIds.has(f.id)));
-                setSelectedFileId(null);
-                showNotification(`Cleared ${mode.toUpperCase()} files from workspace (local files remain 100% safe)`, "info");
-              }}
+              onClick={clearAll}
+              title={`Clear ${mode.toUpperCase()} files from workspace`}
               className="px-2.5 py-1 h-7 bg-[#ef4444] hover:bg-[#dc2626] text-white font-bold text-[11px] rounded cursor-pointer active:scale-95 transition-all shadow-2xs whitespace-nowrap flex items-center gap-1"
             >
               <Trash2 size={11} />
@@ -1404,28 +1415,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <span className={cn("font-mono font-bold text-[10.5px]", isBlue ? "text-cyan-300" : (isDark ? "text-slate-200" : "text-slate-800"))}>
               {currentModeFiles.length.toLocaleString()} {mode.toUpperCase()} Files (Single Page View)
             </span>
-            <span className="opacity-30">|</span>
-            {/* Interactive Keyword Style Status Badge */}
-            <button
-              type="button"
-              onClick={() => {
-                const nextStyle = settings.keywordStyle === 'double' ? 'mixed' : settings.keywordStyle === 'single' ? 'double' : 'single';
-                setSettings(prev => ({ ...prev, keywordStyle: nextStyle, singleWordKeywords: nextStyle === 'single' }));
-                showNotification(`Keyword Style switched to: ${nextStyle === 'double' ? 'Double Keywords (2-Words, e.g. "happy birthday")' : nextStyle === 'single' ? 'Single Keywords (1-Word Only)' : 'Mixed Keywords'}`, 'info');
-              }}
-              title="Click to cycle Keyword Style: Mixed -> Single -> Double (2-Words)"
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 active:scale-95 shadow-2xs",
-                settings.keywordStyle === 'double' 
-                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/60 shadow-[0_0_6px_rgba(245,158,11,0.25)]" 
-                  : (settings.keywordStyle === 'single' || settings.singleWordKeywords
-                    ? "bg-sky-500/20 text-sky-300 border border-sky-500/60" 
-                    : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/60")
-              )}
-            >
-              <Tag size={10} className={settings.keywordStyle === 'double' ? "text-amber-400" : "text-cyan-400"} />
-              <span>KW: <strong>{settings.keywordStyle === 'double' ? 'Double (2-Words) ✨' : (settings.keywordStyle === 'single' || settings.singleWordKeywords) ? 'Single Words' : 'Mixed'}</strong></span>
-            </button>
             {selectedFile && (
               <div 
                 onClick={() => openPreviewModal(selectedFile)}
