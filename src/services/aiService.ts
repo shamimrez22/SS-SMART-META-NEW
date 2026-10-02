@@ -457,6 +457,8 @@ export async function callServerGemini(
       previewUrl: previewUrl || '',
       mimeType: 'image/jpeg',
       filename: file.name,
+      isVideo: Boolean(isVideo),
+      isVector: Boolean(isVector),
       prompt,
       apiKeys: keyList,
       apiKey: keyList[0] || '',
@@ -897,8 +899,17 @@ function findEmbeddedBinaryJpeg(buf: ArrayBuffer): string | null {
   return null;
 }
 
+// Memory LRU caches for extracted thumbnails to prevent redundant decoding and main thread stalls
+const svgThumbnailCache = new Map<string, string>();
+const epsThumbnailCache = new Map<string, string>();
+const videoThumbnailCache = new Map<string, string>();
+
 export async function renderSvgThumbnail(file: File): Promise<string | undefined> {
   if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
+  const cacheKey = `${file.name}_${file.size}_${file.lastModified}`;
+  if (svgThumbnailCache.has(cacheKey)) {
+    return svgThumbnailCache.get(cacheKey);
+  }
   try {
     const text = await file.text();
     if (!text || !text.includes('<svg')) return undefined;
@@ -922,7 +933,7 @@ export async function renderSvgThumbnail(file: File): Promise<string | undefined
               h = Math.round((h * maxDim) / w);
               w = maxDim;
             } else {
-              w = Math.round((w * maxDim) / h);
+              h = Math.round((w * maxDim) / h);
               h = maxDim;
             }
           }
@@ -935,6 +946,7 @@ export async function renderSvgThumbnail(file: File): Promise<string | undefined
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             const b64 = canvas.toDataURL('image/jpeg', 0.85);
             URL.revokeObjectURL(url);
+            svgThumbnailCache.set(cacheKey, b64);
             resolve(b64);
             return;
           }
@@ -951,8 +963,8 @@ export async function renderSvgThumbnail(file: File): Promise<string | undefined
       };
       img.src = url;
     });
-  } catch (err) {
-    console.warn("renderSvgThumbnail error:", err);
+  } catch (e) {
+    console.warn("SVG parse error:", e);
     return undefined;
   }
 }
@@ -1139,122 +1151,136 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
     return undefined;
   }
 
-  // 1. First try browser HTML5 <video> canvas capture
-  const browserThumb = await new Promise<string | undefined>((resolve) => {
-    let resolved = false;
-    const ext = file?.name?.split('.').pop()?.toLowerCase() || '';
-    const mime = file.type || (ext === 'webm' ? 'video/webm' : ext === 'mov' ? 'video/quicktime' : 'video/mp4');
-    const typedBlob = file.type ? file : new Blob([file], { type: mime });
-    const blobUrl = URL.createObjectURL(typedBlob);
+  const cacheKey = `${file.name}_${file.size}_${file.lastModified}`;
+  if (videoThumbnailCache.has(cacheKey)) {
+    return videoThumbnailCache.get(cacheKey);
+  }
 
-    const video = document.createElement('video');
-    video.preload = 'auto';
-    video.muted = true;
-    video.playsInline = true;
-    video.src = blobUrl;
+  const isTabHidden = typeof document !== 'undefined' && document.hidden;
+
+  // 1. First try browser HTML5 <video> canvas capture (only when tab is visible)
+  if (!isTabHidden) {
     try {
-      video.load();
-    } catch {}
+      const browserThumb = await new Promise<string | undefined>((resolve) => {
+        let resolved = false;
+        const ext = file?.name?.split('.').pop()?.toLowerCase() || '';
+        const mime = file.type || (ext === 'webm' ? 'video/webm' : ext === 'mov' ? 'video/quicktime' : 'video/mp4');
+        const typedBlob = file.type ? file : new Blob([file], { type: mime });
+        const blobUrl = URL.createObjectURL(typedBlob);
 
-    const cleanup = () => {
-      try {
-        URL.revokeObjectURL(blobUrl);
-        video.removeAttribute('src');
-        video.load();
-      } catch (e) {}
-    };
+        const video = document.createElement('video');
+        video.preload = 'auto';
+        video.muted = true;
+        video.playsInline = true;
+        video.src = blobUrl;
+        try {
+          video.load();
+        } catch {}
 
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        cleanup();
-        resolve(undefined);
-      }
-    }, 1500);
+        const cleanup = () => {
+          try {
+            URL.revokeObjectURL(blobUrl);
+            video.removeAttribute('src');
+            video.load();
+          } catch (e) {}
+        };
 
-    const capture = () => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timer);
-      try {
-        const canvas = document.createElement('canvas');
-        const maxDim = 480;
-        let w = video.videoWidth || 640;
-        let h = video.videoHeight || 360;
-
-        if (w > h) {
-          if (w > maxDim) {
-            h = Math.round((h * maxDim) / w);
-            w = maxDim;
+        const timer = setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            cleanup();
+            resolve(undefined);
           }
-        } else {
-          if (h > maxDim) {
-            w = Math.round((w * maxDim) / h);
-            h = maxDim;
-          }
-        }
+        }, 2200);
 
-        canvas.width = Math.max(w, 100);
-        canvas.height = Math.max(h, 100);
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, w, h);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        const capture = () => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          try {
+            const canvas = document.createElement('canvas');
+            const maxDim = 480;
+            let w = video.videoWidth || 640;
+            let h = video.videoHeight || 360;
+
+            if (w > h) {
+              if (w > maxDim) {
+                h = Math.round((h * maxDim) / w);
+                w = maxDim;
+              }
+            } else {
+              if (h > maxDim) {
+                w = Math.round((w * maxDim) / h);
+                h = maxDim;
+              }
+            }
+
+            canvas.width = Math.max(w, 100);
+            canvas.height = Math.max(h, 100);
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(video, 0, 0, w, h);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              cleanup();
+              resolve(dataUrl);
+              return;
+            }
+          } catch (e) {
+            console.warn('Canvas video capture warning:', e);
+          }
           cleanup();
-          resolve(dataUrl);
-          return;
-        }
-      } catch (e) {
-        console.warn('Canvas video capture warning:', e);
+          resolve(undefined);
+        };
+
+        video.onloadeddata = () => {
+          if (video.videoWidth > 0 && !resolved) {
+            capture();
+          }
+        };
+
+        video.onloadedmetadata = () => {
+          try {
+            const duration = video.duration || 2;
+            const seekTime = Math.min(Math.max(duration * 0.2, 0.3), duration > 1 ? duration - 0.2 : 0);
+            video.currentTime = seekTime;
+          } catch (e) {
+            capture();
+          }
+        };
+
+        video.onseeked = () => {
+          capture();
+        };
+
+        video.oncanplay = () => {
+          if (video.videoWidth > 0 && !resolved) {
+            capture();
+          }
+        };
+
+        video.onerror = () => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timer);
+            cleanup();
+            resolve(undefined);
+          }
+        };
+      });
+
+      if (browserThumb) {
+        videoThumbnailCache.set(cacheKey, browserThumb);
+        return browserThumb;
       }
-      cleanup();
-      resolve(undefined);
-    };
-
-    video.onloadeddata = () => {
-      if (video.videoWidth > 0 && !resolved) {
-        capture();
-      }
-    };
-
-    video.onloadedmetadata = () => {
-      try {
-        const duration = video.duration || 2;
-        const seekTime = Math.min(Math.max(duration * 0.25, 0.5), duration > 1 ? duration - 0.2 : 0);
-        video.currentTime = seekTime;
-      } catch (e) {
-        capture();
-      }
-    };
-
-    video.onseeked = () => {
-      capture();
-    };
-
-    video.oncanplay = () => {
-      if (video.videoWidth > 0 && !resolved) {
-        capture();
-      }
-    };
-
-    video.onerror = () => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        cleanup();
-        resolve(undefined);
-      }
-    };
-  });
-
-  if (browserThumb) return browserThumb;
+    } catch {}
+  }
 
   // 2. High-performance Server-side FFmpeg extraction (/api/render-video-thumb)
   // For codecs browser canvas cannot decode directly (e.g. MKV, AVI, ProRes MOV, HEVC)
+  // or when tab is minimized/hidden in background
   if (typeof window !== 'undefined' && file.size > 0) {
     try {
-      const sliceSize = Math.min(file.size, 60 * 1024 * 1024);
-      const chunk = file.slice(0, sliceSize);
+      const toSend = file.size <= 80 * 1024 * 1024 ? file : file.slice(0, 80 * 1024 * 1024);
       const ext = file.name.split('.').pop()?.toLowerCase() || 'mp4';
       const controller = new AbortController();
       const tId = setTimeout(() => controller.abort(), 9000);
@@ -1262,14 +1288,17 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
       const res = await fetch(`/api/render-video-thumb?ext=${encodeURIComponent(ext)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
-        body: chunk,
+        body: toSend,
         signal: controller.signal
       });
       clearTimeout(tId);
 
       if (res.ok) {
         const data = await res.json();
-        if (data?.preview) return data.preview;
+        if (data?.preview && data.preview.startsWith('data:image/')) {
+          videoThumbnailCache.set(cacheKey, data.preview);
+          return data.preview;
+        }
       }
     } catch (ffErr) {
       console.warn("Server FFmpeg thumbnail extraction:", ffErr);

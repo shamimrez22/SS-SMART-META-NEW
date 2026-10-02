@@ -182,43 +182,26 @@ const TableRow = React.memo<TableRowProps>(({
         {file.previewUrl ? (
           <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer relative">
             {fIsVid && !file.previewUrl.startsWith('data:image/') ? (
-              <video 
-                src={file.previewUrl} 
-                className="w-full h-full object-cover pointer-events-none" 
-                muted 
-                playsInline 
-                preload="metadata"
-                onLoadedData={(e) => {
-                  try {
-                    const v = e.currentTarget;
-                    if (v.videoWidth > 0 && onUpdatePreview) {
-                      const c = document.createElement('canvas');
-                      c.width = 120;
-                      c.height = 120;
-                      const ctx = c.getContext('2d');
-                      if (ctx) {
-                        ctx.drawImage(v, 0, 0, 120, 120);
-                        const thumb = c.toDataURL('image/jpeg', 0.85);
-                        if (thumb && thumb.length > 100) {
-                          onUpdatePreview(file.id, thumb);
-                        }
-                      }
-                    }
-                  } catch {}
-                }}
-              />
+              <div className="w-full h-full bg-gradient-to-br from-indigo-950 to-purple-950 flex items-center justify-center text-purple-300 font-bold relative">
+                <span className="text-[11px]">🎬</span>
+                <span className="absolute bottom-0 right-0 text-[7px] bg-black/80 text-purple-200 px-0.5 rounded-tl font-bold leading-none">VID</span>
+              </div>
             ) : (
-              <img 
-                src={file.previewUrl} 
-                alt={file.filename} 
-                className="w-full h-full object-cover"
-                loading="lazy"
-                decoding="async"
-                onError={(e) => {
-                  // Hide broken image icon if image fails
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
-              />
+              <div className="w-full h-full relative">
+                <img 
+                  src={file.previewUrl} 
+                  alt={file.filename} 
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                />
+                {fIsVid && (
+                  <span className="absolute bottom-0 right-0 text-[7px] bg-black/80 text-purple-300 px-0.5 rounded-tl font-bold leading-none">▶</span>
+                )}
+              </div>
             )}
           </div>
         ) : (
@@ -503,6 +486,47 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
 
   // Single Page rendering for all uploaded files with smooth 60fps scrolling
   const visibleFiles = currentModeFiles;
+
+  // Virtualized smooth 60fps windowing for high file counts
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = React.useState(0);
+  const [containerHeight, setContainerHeight] = React.useState(600);
+
+  React.useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const updateHeight = () => {
+      if (el) setContainerHeight(el.clientHeight || 600);
+    };
+    updateHeight();
+    const ro = new ResizeObserver(updateHeight);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const handleTableScroll = React.useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
+
+  const ROW_HEIGHT = 34;
+  const totalRows = visibleFiles.length;
+  const isVirtualized = totalRows > 40;
+  const BUFFER = 16;
+  const startIndex = isVirtualized ? Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER) : 0;
+  const visibleCount = isVirtualized ? Math.ceil(containerHeight / ROW_HEIGHT) + (BUFFER * 2) : totalRows;
+  const endIndex = isVirtualized ? Math.min(totalRows, startIndex + visibleCount) : totalRows;
+  const topOffset = isVirtualized ? startIndex * ROW_HEIGHT : 0;
+  const totalVirtualHeight = isVirtualized ? totalRows * ROW_HEIGHT : undefined;
+
+  const renderedRows = React.useMemo(() => {
+    if (!isVirtualized) {
+      return visibleFiles.map((file, idx) => ({ file, idx }));
+    }
+    return visibleFiles.slice(startIndex, endIndex).map((file, sliceIdx) => ({
+      file,
+      idx: startIndex + sliceIdx,
+    }));
+  }, [visibleFiles, isVirtualized, startIndex, endIndex]);
 
   const allFilesCount = files.length;
 
@@ -1220,10 +1244,12 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
 
           {/* Table Rows Body - Single continuous list with 60fps native smooth scrolling */}
           <div 
-            className="flex-1 overflow-y-auto custom-scrollbar relative overscroll-contain scroll-smooth"
+            ref={scrollContainerRef}
+            onScroll={handleTableScroll}
+            className="flex-1 overflow-y-auto custom-scrollbar relative overscroll-contain"
             style={{ transform: 'translateZ(0)', WebkitOverflowScrolling: 'touch' }}
           >
-            {currentModeFiles.length === 0 ? (
+            {totalRows === 0 ? (
               /* Clean empty table canvas matching image.png */
               <div className="w-full h-full min-h-[260px] flex flex-col items-center justify-center pointer-events-none select-none p-4 text-center">
                 <span className="text-2xl mb-1 opacity-40">
@@ -1236,8 +1262,32 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   Click "SELECT FILE" or "SELECT FOLDER" to add {mode === 'all' ? 'EPS, Video or Image' : mode} assets
                 </span>
               </div>
+            ) : isVirtualized ? (
+              <div style={{ height: totalVirtualHeight, position: 'relative', width: '100%' }}>
+                <div style={{ transform: `translateY(${topOffset}px)`, willChange: 'transform' }}>
+                  {renderedRows.map(({ file, idx }) => (
+                    <TableRow
+                      key={file.id || idx}
+                      file={file}
+                      idx={idx}
+                      isSelected={selectedFileId === file.id}
+                      isBlue={isBlue}
+                      isDark={isDark}
+                      copiedCell={copiedCell}
+                      onSelect={setSelectedFileId}
+                      onOpenPreview={openPreviewModal}
+                      onCopy={copyText}
+                      onRetry={(id) => {
+                        setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'pending', errorMessage: undefined } : f));
+                        setTimeout(startGeneration, 60);
+                      }}
+                      onEmbed={(id) => handleEmbed('all', id)}
+                    />
+                  ))}
+                </div>
+              </div>
             ) : (
-              visibleFiles.map((file, idx) => (
+              renderedRows.map(({ file, idx }) => (
                 <TableRow
                   key={file.id || idx}
                   file={file}
@@ -1254,9 +1304,6 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                     setTimeout(startGeneration, 60);
                   }}
                   onEmbed={(id) => handleEmbed('all', id)}
-                  onUpdatePreview={(id, previewUrl) => {
-                    setFiles(prev => prev.map(f => f.id === id ? { ...f, previewUrl } : f));
-                  }}
                 />
               ))
             )}
@@ -1286,7 +1333,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               >
                 {selectedFile.previewUrl && (
                   ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((selectedFile.fileType || '').toLowerCase()) && !selectedFile.previewUrl.startsWith('data:image/') ? (
-                    <video src={selectedFile.previewUrl} className="w-4 h-4 rounded object-cover border border-cyan-400/40 pointer-events-none" muted playsInline preload="metadata" />
+                    <span className="w-4 h-4 rounded bg-purple-900 border border-cyan-400/40 flex items-center justify-center text-[9px]">🎬</span>
                   ) : (
                     <img src={selectedFile.previewUrl} alt="" className="w-4 h-4 rounded object-cover border border-cyan-400/40" />
                   )

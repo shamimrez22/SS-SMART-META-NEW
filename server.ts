@@ -16,8 +16,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.raw({ type: ['application/postscript', 'application/octet-stream', 'image/x-eps', 'image/eps', 'video/*'], limit: '80mb' }));
-  app.use(express.json({ limit: '80mb' }));
+  app.use(express.raw({ type: ['application/postscript', 'application/octet-stream', 'image/x-eps', 'image/eps', 'video/*'], limit: '150mb' }));
+  app.use(express.json({ limit: '150mb' }));
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
@@ -166,6 +166,8 @@ async function startServer() {
           "-i", tempVideoPath,
           "-vf", "scale='min(640,iw)':-1",
           "-vframes", "1",
+          "-an",
+          "-sn",
           "-q:v", "3",
           "-y",
           tempJpgPath
@@ -182,6 +184,8 @@ async function startServer() {
             "-i", tempVideoPath,
             "-vf", "scale='min(640,iw)':-1",
             "-vframes", "1",
+            "-an",
+            "-sn",
             "-q:v", "3",
             "-y",
             tempJpgPath
@@ -755,18 +759,29 @@ function generateSmartFallbackMetadata(
         }
       });
 
+      const ext = ((filename || '').split('.').pop() || '').toLowerCase();
+      const isVideoAsset = Boolean(req.body.isVideo) || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
+      const isVectorAsset = Boolean(req.body.isVector) || ['eps', 'ai', 'svg'].includes(ext);
+
       const promptText = `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist.
-Carefully examine the VISUAL CONTENT of this image.
-Identify what is actually depicted visually (e.g. character, stickman, cartoon, action, objects, colors, background, setting, emotions, concept).
+${isVideoAsset ? `CRITICAL VIDEO FOOTAGE DIRECTIVES:
+- This visual frame is a keyframe extracted from high-quality commercial stock video footage (filename: "${filename || 'stock_video'}").
+- Examine the visual scene, subject, movement, atmosphere, camera perspective, lighting, and action shown in this frame.
+- Title: Formulate an engaging, commercial stock footage title (strictly ${minTitleWords}-${maxTitleWords} words) describing the scene, motion, and visual subjects.
+- Keywords: Must include high-demand stock footage keywords (footage, video, motion, 4k, clip, cinematic, b-roll, camera movement, scene, real-time, plus all visible objects, people, colors, and setting). NEVER include vector, illustration, or static photo words!
+- Category: Choose from Footage, Nature, Business, Technology, People, Architecture, Travel, Lifestyle.` : isVectorAsset ? `CRITICAL VECTOR ILLUSTRATION DIRECTIVES:
+- This asset is a vector illustration/design (filename: "${filename || 'stock_vector'}").
+- Keywords MUST include high-demand vector tags (vector, illustration, graphic, design, template, artwork, icon, symbol, editable). Never include camera or photography terms!` : `Carefully examine the VISUAL CONTENT of this asset.
+Identify what is actually depicted visually (e.g. character, stickman, cartoon, action, objects, colors, background, setting, emotions, concept).`}
 CRITICAL DIRECTIVES:
-- Base your metadata 100% on what is VISUALLY SHOWN in the image!
+- Base your metadata 100% on what is VISUALLY SHOWN in the asset!
 - Do NOT base metadata on random numbers, dates, or timestamps from the filename!
 - Never invent typography, dates, or timestamps unless written text is clearly visible in the image itself.
 Return ONLY valid JSON with keys:
-- title: Commercial stock title (strictly ${minTitleWords}-${maxTitleWords} words) describing what is visually shown in the image.
+- title: Commercial stock title (strictly ${minTitleWords}-${maxTitleWords} words) describing what is visually shown.
 - description: Natural commercial description (${minDescriptionWords}-${maxDescriptionWords} words) describing the visual scene, subject, elements, and commercial utility.
 - keywords: (${Math.min(45, maxKeywords)}-${maxKeywords} comma-separated keywords) describing the visual elements, character, actions, colors, and concept.
-- category: A relevant stock category (e.g. Illustrations, Cartoons, Business, Concepts, Technology, Nature, People).
+- category: A relevant stock category (e.g. ${isVideoAsset ? 'Footage, ' : ''}Illustrations, Cartoons, Business, Concepts, Technology, Nature, People).
 - rating: 5.`;
       parts.push({ text: promptText });
 
