@@ -84,40 +84,25 @@ export function enforceStockTitleWordLimits(
     return sliced.join(' ');
   }
 
-  // When words.length < minWords: expand constructively
-  const ext = (context.filename || '').split('.').pop()?.toLowerCase() || '';
-  const isVec = context.isVector ?? ['eps', 'ai', 'svg'].includes(ext);
-  const isVid = context.isVideo ?? ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
+  // When words.length < minWords:
+  // If title already has at least 4 descriptive words, keep it natural without injecting canned boilerplate!
+  // If fewer than 4 words, constructively enhance using the asset's actual keywords context.
+  if (words.length < minWords && words.length < 4 && context.keywords) {
+    const existingWords = new Set(words.map(w => w.toLowerCase()));
+    const kwCandidates = context.keywords
+      .split(/[,;\n]+/)
+      .map(k => k.trim())
+      .filter(k => k && k.length > 2 && !existingWords.has(k.toLowerCase()) && !['commercial', 'stock', 'photo', 'image', 'asset', 'high quality', 'vector', 'illustration'].includes(k.toLowerCase()));
 
-  const stockAdditions = isVec
-    ? [
-        'Modern Scalable Vector Graphic Design Template',
-        'for Creative Commercial Branding and Digital Print Media',
-        'in Contemporary Clean Minimalist Graphic Style',
-        'High Quality Editable Illustration Artwork Element'
-      ]
-    : isVid
-    ? [
-        'Cinematic 4K Motion Footage Clip for Video Production',
-        'with Authentic Camera Movement and Lighting Atmosphere',
-        'for Commercial Broadcast and Creative Digital Storytelling',
-        'High Definition Scene Capturing Dynamic Real Time Action'
-      ]
-    : [
-        'in High Resolution Composition with Natural Lighting',
-        'for Commercial Creative Design and Editorial Publication',
-        'Highlighting Fine Visual Details and Balanced Perspective',
-        'Professional Stock Photography for Marketing and Advertising Media',
-        'in Scenic Perspective with Authentic Texture and Depth'
-      ];
-
-  for (const phrase of stockAdditions) {
-    if (words.length >= minWords) break;
-    const phraseWords = phrase.split(/\s+/).filter(Boolean);
-    for (const pw of phraseWords) {
+    for (const kw of kwCandidates) {
       if (words.length >= minWords) break;
-      if (words[words.length - 1]?.toLowerCase() !== pw.toLowerCase()) {
-        words.push(pw);
+      const kwTokens = kw.split(/\s+/).filter(Boolean);
+      for (const token of kwTokens) {
+        if (words.length >= minWords) break;
+        if (!existingWords.has(token.toLowerCase())) {
+          existingWords.add(token.toLowerCase());
+          words.push(token.charAt(0).toUpperCase() + token.slice(1).toLowerCase());
+        }
       }
     }
   }
@@ -271,19 +256,19 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
   let category = 'Objects';
 
   if (isVector) {
-    rawTitle = words.length >= 5 
-      ? `${capitalized} Vector Illustration Design` 
-      : `${capitalized} Modern Scalable Vector Illustration Graphic`;
+    rawTitle = words.length >= 4 
+      ? `${capitalized} Vector Illustration` 
+      : `${capitalized} Vector Graphic Design`;
     category = 'Graphics';
   } else if (isVideo) {
-    rawTitle = words.length >= 5 
-      ? `${capitalized} Stock Video Footage Clip` 
-      : `Cinematic 4K Stock Video Footage of ${capitalized} in Motion`;
+    rawTitle = words.length >= 4 
+      ? `${capitalized} Stock Footage Clip` 
+      : `${capitalized} Video Footage Motion Clip`;
     category = 'Movement';
   } else {
-    rawTitle = words.length >= 5 
+    rawTitle = words.length >= 4 
       ? capitalized 
-      : `${capitalized} Detailed Composition`;
+      : `${capitalized} Stock Photography`;
     category = 'Objects';
   }
 
@@ -328,9 +313,7 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
     ];
   } else {
     formatTags = [
-      'photography', 'composition', 'texture', 'detail', 'color', 'lighting', 'horizontal', 
-      'perspective', 'element', 'surface', 'pattern', 'still life', 'angle', 'visual', 
-      'clarity', 'focus', 'presentation', 'palette', 'tone', 'scene'
+      'backdrop', 'isolated', 'clean', 'view', 'modern', 'style', 'surface', 'background', 'subject', 'composition'
     ];
   }
 
@@ -392,12 +375,12 @@ export async function callServerGemini(
       base64 = await fileToBase64(file);
     }
   } else if (ext === 'svg') {
-    const cacheKey = `${file.name}_${file.size}_${file.lastModified}`;
+    const cacheKey = `svg_${file.name}_${file.size}_${file.lastModified}`;
     if (svgThumbnailCache.has(cacheKey)) {
       base64 = svgThumbnailCache.get(cacheKey)!;
     } else {
       try {
-        const svgThumb = await renderSvgThumbnail(file);
+        const svgThumb = await renderSvgToDataUrl(file);
         if (svgThumb) base64 = svgThumb;
       } catch (e) {
         console.warn("SVG thumbnail extraction:", e);
@@ -444,8 +427,15 @@ export async function callServerGemini(
     }
   }
 
-  if (!base64 || base64.length < 50) {
-    throw new Error(isVideo ? "Could not extract video visual frame for AI analysis. Please click RETRY." : "Could not extract image visual data for AI analysis. Please re-select the file.");
+  // For photos and videos, require visual data. For vector assets (EPS/AI), allow text-context fallback if raster thumbnail is unavailable.
+  if ((!base64 || base64.length < 50) && !isVector) {
+    try {
+      base64 = await fileToBase64(file);
+    } catch {}
+  }
+
+  if ((!base64 || base64.length < 50) && !isVector && isVideo) {
+    throw new Error("Could not extract video visual frame for AI analysis. Please click RETRY.");
   }
 
   let epsInfo = '';
@@ -463,7 +453,7 @@ export async function callServerGemini(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
 
   if (signal) {
     if (signal.aborted) {
@@ -491,7 +481,7 @@ export async function callServerGemini(
       prompt,
       apiKeys: keyList,
       apiKey: keyList[0] || '',
-      model: settings.aiModel || 'gemini-2.5-flash-lite',
+      model: settings.aiModel || 'gemini-2.5-flash',
       keywordStyle: settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed'),
       singleWordKeywords: Boolean(settings?.singleWordKeywords),
       minTitleWords: settings?.minTitleWords || 7,
@@ -668,7 +658,8 @@ export async function generateMetadata(
       return await callServerGemini(file, settings, allGeminiKeys, previewUrl);
     }
   } catch (error) {
-    throw error;
+    console.warn("AI metadata generation network or quota fallback:", error);
+    return buildLocalSmartMetadata(file.name, settings);
   }
 }
 
@@ -691,7 +682,7 @@ function cleanBase64(str: string): string {
 }
 
 // Fallback visual generator: Creates a crisp artboard thumbnail for EPS vectors
-function generateVectorArtboardThumbnail(filename: string, headerText: string): string | undefined {
+export function generateVectorArtboardThumbnail(filename: string, headerText: string): string | undefined {
   if (typeof document === 'undefined') return undefined;
   try {
     const canvas = document.createElement('canvas');
@@ -858,44 +849,47 @@ function isBarcodeOrCorrupted(rgba: Uint8ClampedArray | Uint8Array, width: numbe
 
 /**
  * Searches for high-res true-color JPEG/PNG thumbnails embedded in Adobe Illustrator XMP blocks
- * Uses ultra-fast indexOf slice scanning without catastrophic regex backtracking
+ * Robustly matches <xmpGImg:image>, <image>, and all Adobe XMP preview schemas
  */
 function findXmpJpegThumbnail(text: string): { dataUrl: string; mime: string } | null {
   if (!text || text.length < 50) return null;
 
-  // 1. Check for <image> tag directly
-  let searchPos = 0;
-  while (searchPos < text.length) {
-    const imgStart = text.indexOf('<image', searchPos);
-    if (imgStart === -1) break;
+  // 1. Check for XML tags ending with :image> or <image>
+  const imageTagPatterns = [':image>', '<image>'];
+  for (const tagPattern of imageTagPatterns) {
+    let searchPos = 0;
+    while (searchPos < text.length) {
+      const tagIdx = text.indexOf(tagPattern, searchPos);
+      if (tagIdx === -1) break;
 
-    const tagClose = text.indexOf('>', imgStart);
-    if (tagClose === -1) break;
+      const tagClose = tagIdx + tagPattern.length;
+      const endTag = text.indexOf('</', tagClose);
 
-    const endTag = text.indexOf('</image>', tagClose);
-    const altEndTag = text.indexOf('</xmpGImg:image>', tagClose);
-    const endPos = (endTag !== -1 && altEndTag !== -1) ? Math.min(endTag, altEndTag) : (endTag !== -1 ? endTag : altEndTag);
-
-    if (endPos > tagClose) {
-      const rawPayload = text.slice(tagClose + 1, endPos);
-      const b64 = cleanBase64(rawPayload);
-      if (b64.length > 80) {
-        const mime = b64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
-        return { dataUrl: `data:${mime};base64,${b64}`, mime };
+      if (endTag > tagClose && endTag - tagClose < 8 * 1024 * 1024) {
+        const rawPayload = text.slice(tagClose, endTag);
+        const b64 = cleanBase64(rawPayload);
+        if (b64.length > 80) {
+          const mime = b64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg';
+          return { dataUrl: `data:${mime};base64,${b64}`, mime };
+        }
       }
+      searchPos = tagClose + 1;
     }
-    searchPos = tagClose + 1;
   }
 
-  // 2. Direct base64 JPEG marker (/9j/)
-  const jfifPos = text.indexOf('/9j/');
-  if (jfifPos !== -1) {
-    // Read up to 500KB of base64 data
-    const chunk = text.slice(jfifPos, jfifPos + 512000);
+  // 2. Direct base64 JPEG SOI marker (/9j/)
+  let jfifPos = text.indexOf('/9j/');
+  while (jfifPos !== -1) {
+    let endPos = text.indexOf('<', jfifPos);
+    if (endPos === -1 || endPos - jfifPos > 5 * 1024 * 1024) {
+      endPos = Math.min(text.length, jfifPos + 1024 * 1024);
+    }
+    const chunk = text.slice(jfifPos, endPos);
     const cleaned = chunk.replace(/[^A-Za-z0-9+/=]/g, '');
     if (cleaned.length > 100) {
       return { dataUrl: `data:image/jpeg;base64,${cleaned}`, mime: 'image/jpeg' };
     }
+    jfifPos = text.indexOf('/9j/', jfifPos + 4);
   }
 
   return null;
@@ -940,10 +934,69 @@ const epsThumbnailCache = new Map<string, string>();
 const videoThumbnailCache = new Map<string, string>();
 
 export async function renderSvgThumbnail(file: File): Promise<string | undefined> {
-  // SVG files can be rendered instantly natively using an Object URL
+  // Try fast dataUrl first for preview
+  try {
+    const dataUrl = await renderSvgToDataUrl(file);
+    if (dataUrl) return dataUrl;
+  } catch {}
   try {
     return URL.createObjectURL(file);
   } catch {
+    return undefined;
+  }
+}
+
+export async function renderSvgToDataUrl(file: File): Promise<string | undefined> {
+  const cacheKey = `svg_${file.name}_${file.size}_${file.lastModified}`;
+  if (svgThumbnailCache.has(cacheKey)) {
+    return svgThumbnailCache.get(cacheKey);
+  }
+  try {
+    const text = await file.text();
+    const svgBlob = new Blob([text], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const maxDim = 512;
+          let w = img.width || 512;
+          let h = img.height || 512;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          canvas.width = Math.max(64, w);
+          canvas.height = Math.max(64, h);
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+            svgThumbnailCache.set(cacheKey, dataUrl);
+            URL.revokeObjectURL(url);
+            resolve(dataUrl);
+            return;
+          }
+        } catch {}
+        URL.revokeObjectURL(url);
+        resolve(undefined);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(undefined);
+      };
+      img.src = url;
+    });
+  } catch (e) {
     return undefined;
   }
 }
@@ -956,9 +1009,9 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
 
   let headText = '';
   try {
-    // 1. Fast High-Resolution True-Color XMP JPEG/PNG Thumbnail (Scan first 1.5MB max)
+    // 1. Fast High-Resolution True-Color XMP JPEG/PNG Thumbnail (Scan head 2MB)
     try {
-      const headSlice = await file.slice(0, Math.min(1572864, file.size)).arrayBuffer();
+      const headSlice = await file.slice(0, Math.min(2097152, file.size)).arrayBuffer();
       headText = new TextDecoder('latin1').decode(headSlice);
 
       const xmpResult = findXmpJpegThumbnail(headText);
@@ -970,24 +1023,24 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
       console.warn("XMP thumbnail extraction attempt:", xmpErr);
     }
 
-    // 2. Embedded Binary JFIF/JPEG Stream in EPS File (Fast 1.5MB scan)
-    try {
-      const scanLen = Math.min(1572864, file.size);
-      const scanBuf = await file.slice(0, scanLen).arrayBuffer();
-      const jpegDataUrl = findEmbeddedBinaryJpeg(scanBuf);
-      if (jpegDataUrl) {
-        epsThumbnailCache.set(cacheKey, jpegDataUrl);
-        return jpegDataUrl;
-      }
-    } catch (binErr) {
-      console.warn("Binary JPEG scan attempt:", binErr);
+    // 1b. Check Trailer / Tail 2MB for XMP (Illustrator often writes XMP at the end of large EPS files)
+    if (file.size > 2097152) {
+      try {
+        const tailSlice = await file.slice(Math.max(0, file.size - 2097152), file.size).arrayBuffer();
+        const tailText = new TextDecoder('latin1').decode(tailSlice);
+        const tailXmp = findXmpJpegThumbnail(tailText);
+        if (tailXmp && tailXmp.dataUrl) {
+          epsThumbnailCache.set(cacheKey, tailXmp.dataUrl);
+          return tailXmp.dataUrl;
+        }
+      } catch {}
     }
 
-    // 3. Server-Side Ghostscript Vector Rendering (/api/render-eps) - ONLY when needed for AI or when forAi is true
-    if (forAi && typeof window !== 'undefined' && file.size <= 40 * 1024 * 1024) {
+    // 2. Server-Side Ghostscript Vector Rendering (/api/render-eps) - Renders real EPS/AI vector illustrations
+    if (typeof window !== 'undefined' && file.size <= 100 * 1024 * 1024) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
 
         const res = await fetch('/api/render-eps', {
           method: 'POST',
@@ -1007,6 +1060,19 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
       } catch (apiErr) {
         // Handled silently
       }
+    }
+
+    // 3. Embedded Binary JFIF/JPEG Stream in EPS File (Scan first 3MB)
+    try {
+      const scanLen = Math.min(3145728, file.size);
+      const scanBuf = await file.slice(0, scanLen).arrayBuffer();
+      const jpegDataUrl = findEmbeddedBinaryJpeg(scanBuf);
+      if (jpegDataUrl) {
+        epsThumbnailCache.set(cacheKey, jpegDataUrl);
+        return jpegDataUrl;
+      }
+    } catch (binErr) {
+      console.warn("Binary JPEG scan attempt:", binErr);
     }
 
     // 4. Safe DOS EPS Header TIFF Preview (with Barcode/Glitch Detection)
@@ -1342,22 +1408,28 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
     try {
       // 480x480 gives blazing fast canvas processing (<25ms) and tiny payload (~35KB) with pristine visual fidelity for AI tagging
       const resizedBase64 = await resizeImage(file, 480, 480, 0.72);
-      parts.push({
-        inlineData: {
-          data: resizedBase64.split(',')[1],
-          mimeType: 'image/jpeg'
-        }
-      });
+      const cleanData = (resizedBase64 || '').replace(/^data:[^;]+;base64,/, '').trim();
+      if (cleanData && cleanData.length > 50 && !cleanData.startsWith('blob:')) {
+        parts.push({
+          inlineData: {
+            data: cleanData,
+            mimeType: 'image/jpeg'
+          }
+        });
+      }
     } catch (e) {
       console.error("Error resizing image:", e);
       try {
         const base64Data = await fileToBase64(file);
-        parts.push({
-          inlineData: {
-            data: base64Data.split(',')[1],
-            mimeType: file.type || 'image/jpeg'
-          }
-        });
+        const cleanData = (base64Data || '').replace(/^data:[^;]+;base64,/, '').trim();
+        if (cleanData && cleanData.length > 50 && !cleanData.startsWith('blob:')) {
+          parts.push({
+            inlineData: {
+              data: cleanData,
+              mimeType: file.type || 'image/jpeg'
+            }
+          });
+        }
       } catch (err) {
         console.error("Error converting file to base64:", err);
       }
@@ -1367,8 +1439,8 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
     const thumbnail = await extractEpsThumbnail(file, true);
     if (thumbnail && thumbnail.startsWith('data:')) {
       const mime = thumbnail.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
-      const cleanB64 = cleanBase64(thumbnail.split(',')[1] || '');
-      if (cleanB64 && cleanB64.length > 80) {
+      const cleanB64 = cleanBase64(thumbnail.replace(/^data:[^;]+;base64,/, '').trim());
+      if (cleanB64 && cleanB64.length > 80 && !cleanB64.startsWith('blob:')) {
         parts.push({
           inlineData: {
             data: cleanB64,
@@ -1381,13 +1453,16 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
     // Extract actual visual keyframe from video so Gemini can analyze real subject matter
     try {
       const videoThumb = await extractVideoThumbnail(file);
-      if (videoThumb) {
-        parts.push({
-          inlineData: {
-            data: videoThumb.split(',')[1],
-            mimeType: 'image/jpeg'
-          }
-        });
+      if (videoThumb && videoThumb.startsWith('data:')) {
+        const cleanB64 = cleanBase64(videoThumb.replace(/^data:[^;]+;base64,/, '').trim());
+        if (cleanB64 && cleanB64.length > 80 && !cleanB64.startsWith('blob:')) {
+          parts.push({
+            inlineData: {
+              data: cleanB64,
+              mimeType: 'image/jpeg'
+            }
+          });
+        }
       }
     } catch (vErr) {
       console.warn("Could not extract video keyframe:", vErr);
@@ -1414,10 +1489,10 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
   
   // Base list of fast valid models
   const baseModels = [
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
-    "gemini-flash-latest"
+    "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.8-flash"
   ];
 
   // If user selected a specific AI model in settings, try it first
@@ -1433,7 +1508,7 @@ async function generateWithGemini(file: File, settings: any, apiKey: string) {
     try {
       response = await ai.models.generateContent({
         model,
-        contents: { parts },
+        contents: parts,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -1858,28 +1933,6 @@ function ensure100PercentKeywords(
       if (!unique.includes(w) && unique.length < targetCount) {
         unique.push(w);
       }
-    }
-  }
-
-  // Thematic stock keywords tightly tailored to category & subject
-  const thematicFillers: Record<string, string[]> = {
-    'landscapes': ['scenic view', 'outdoor nature', 'wilderness landscape', 'natural environment', 'travel destination', 'panoramic scenery', 'scenic landscape', 'peaceful nature', 'earth beauty', 'serene atmosphere', 'open horizon', 'ecotourism', 'wanderlust', 'natural beauty', 'wild landscape'],
-    'nature': ['biodiversity nature', 'natural habitat', 'green ecology', 'organic environment', 'pure nature', 'flora fauna', 'conservation scenery', 'fresh outdoor', 'tranquil scenery', 'earth science', 'climate weather', 'botanical landscape', 'vibrant greenery', 'natural wonder'],
-    'business': ['corporate strategy', 'professional enterprise', 'commercial success', 'economic growth', 'modern workplace', 'business leadership', 'strategic vision', 'industry benchmark', 'corporate management', 'financial progress', 'innovation concept', 'teamwork excellence', 'executive planning'],
-    'technology': ['digital transformation', 'modern innovation', 'futuristic concept', 'cutting edge', 'smart connectivity', 'high tech', 'advanced computing', 'cyber infrastructure', 'automation technology', 'data intelligence', 'digital era', 'next generation', 'technological progress'],
-    'travel': ['adventure journey', 'tourism experience', 'explore world', 'scenic trip', 'travel destination', 'discovery path', 'vacation getaway', 'global exploration', 'sightseeing adventure', 'wanderer spirit', 'tourist attraction', 'voyage concept', 'traveler guide', 'wayfarer journey'],
-    'transportation': ['transport vehicle', 'highway travel', 'asphalt roadway', 'transit journey', 'mobility concept', 'commute route', 'road trip adventure', 'navigation route', 'vehicle mobility', 'logistics highway', 'expressway transit', 'paved road', 'motorway travel', 'scenic driving'],
-    'architecture': ['urban architecture', 'modern structure', 'architectural design', 'building exterior', 'structural perspective', 'contemporary construction', 'urban landmark', 'cityscape view', 'architectural engineering', 'built environment']
-  };
-
-  const catKey = (category || '').toLowerCase();
-  const matchedTheme = Object.keys(thematicFillers).find(k => catKey.includes(k)) || 'landscapes';
-  const fillers = thematicFillers[matchedTheme] || thematicFillers['landscapes'];
-
-  for (const f of fillers) {
-    const term = isSingleOnly ? f.split(/\s+/)[0] : f;
-    if (!unique.includes(term) && unique.length < targetCount) {
-      unique.push(term);
     }
   }
 

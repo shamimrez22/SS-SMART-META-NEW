@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Copy, 
   Check, 
@@ -17,10 +17,12 @@ import {
   FileImage,
   CheckCircle2,
   AlertCircle,
-  FolderCheck
+  FolderCheck,
+  Loader2
 } from 'lucide-react';
 import { StockMetadata } from '../types';
 import { cn } from '../lib/utils';
+import { extractEpsThumbnail, extractVideoThumbnail, renderSvgThumbnail, generateVectorArtboardThumbnail } from '../services/aiService';
 
 interface AssetInspectorProps {
   file: StockMetadata | null;
@@ -76,6 +78,49 @@ export const AssetInspector: React.FC<AssetInspectorProps> = ({
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [newTagInput, setNewTagInput] = useState('');
   const [isRawKeywords, setIsRawKeywords] = useState(false);
+  const [isExtractingPreview, setIsExtractingPreview] = useState(false);
+
+  const ext = (file?.fileType || file?.filename.split('.').pop() || '').toLowerCase();
+  const isVideo = ['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext);
+  const isVector = ['eps', 'ai', 'svg'].includes(ext);
+
+  // Dynamic preview extraction when viewing an asset that has not yet rendered its thumbnail
+  useEffect(() => {
+    if (!file || file.previewUrl || !actualFile) return;
+    let isCancelled = false;
+
+    const runExtract = async () => {
+      setIsExtractingPreview(true);
+      try {
+        if (isVector) {
+          const thumb = await extractEpsThumbnail(actualFile, false);
+          if (thumb && !isCancelled) {
+            updateFile(file.id, { previewUrl: thumb });
+          } else if (!isCancelled) {
+            const art = generateVectorArtboardThumbnail(file.filename, '') || '';
+            if (art) updateFile(file.id, { previewUrl: art });
+          }
+        } else if (isVideo) {
+          const thumb = await extractVideoThumbnail(actualFile);
+          if (thumb && !isCancelled) {
+            updateFile(file.id, { previewUrl: thumb });
+          }
+        } else if (ext === 'svg') {
+          const thumb = await renderSvgThumbnail(actualFile);
+          if (thumb && !isCancelled) {
+            updateFile(file.id, { previewUrl: thumb });
+          }
+        }
+      } catch (err) {
+        console.warn("AssetInspector preview error:", err);
+      } finally {
+        if (!isCancelled) setIsExtractingPreview(false);
+      }
+    };
+
+    runExtract();
+    return () => { isCancelled = true; };
+  }, [file?.id, file?.previewUrl, actualFile, isVector, isVideo, ext]);
 
   const copyToClipboard = (text: string, fieldName: string) => {
     if (!text) return;
@@ -125,10 +170,6 @@ export const AssetInspector: React.FC<AssetInspectorProps> = ({
     setNewTagInput('');
   };
 
-  const ext = (file.fileType || file.filename.split('.').pop() || '').toLowerCase();
-  const isVideo = ['mp4', 'mov', 'avi', 'm4v', 'webm'].includes(ext);
-  const isVector = ['eps', 'ai', 'svg'].includes(ext);
-
   const wordCount = (file.title || '').trim().split(/\s+/).filter(Boolean).length;
 
   return (
@@ -176,7 +217,9 @@ export const AssetInspector: React.FC<AssetInspectorProps> = ({
             isVideo ? (
               <video 
                 src={actualFile ? URL.createObjectURL(actualFile) : file.previewUrl} 
+                poster={file.previewUrl.startsWith('data:image/') ? file.previewUrl : undefined}
                 controls 
+                playsInline
                 className="max-h-[145px] max-w-full rounded object-contain"
               />
             ) : (
@@ -188,13 +231,20 @@ export const AssetInspector: React.FC<AssetInspectorProps> = ({
                 referrerPolicy="no-referrer"
               />
             )
+          ) : isExtractingPreview ? (
+            <div className="flex flex-col items-center justify-center text-cyan-400 gap-2 p-4">
+              <Loader2 size={26} className="animate-spin text-cyan-400" />
+              <span className="text-[10px] tracking-wider uppercase font-bold text-cyan-300">
+                Rendering {isVector ? 'Vector' : isVideo ? 'Video' : 'Asset'} Preview...
+              </span>
+            </div>
           ) : (
             <div className="flex flex-col items-center justify-center text-slate-400 gap-1.5 p-4">
               {isVector ? <Layers size={30} className="opacity-60 text-amber-400" /> :
                isVideo ? <Video size={30} className="opacity-60 text-purple-400" /> :
                <FileImage size={30} className="opacity-60 text-blue-400" />}
               <span className="text-[10px] tracking-wider uppercase font-bold text-slate-300">
-                {file.status === 'generating' ? 'Extracting Preview...' : 'Vector Artboard Preview'}
+                {file.status === 'generating' ? 'Analyzing Asset...' : `${ext.toUpperCase()} Preview`}
               </span>
             </div>
           )}

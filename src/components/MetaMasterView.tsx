@@ -158,6 +158,7 @@ const TableRow = React.memo<TableRowProps>(({
     <div 
       onClick={() => onSelect(file.id)}
       onDoubleClick={() => onOpenPreview(file)}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '34px' }}
       className={cn(
         "flex items-center text-xs h-[34px] px-3 border-b cursor-pointer transition-colors font-sans select-none group shrink-0",
         isBlue
@@ -514,22 +515,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   // Single Page rendering for all uploaded files with smooth 60fps scrolling
   const visibleFiles = currentModeFiles;
 
-  // Virtualized smooth 60fps windowing for high file counts
+  // High-performance container ref for smooth 120fps scrolling
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = React.useState(0);
-  const [containerHeight, setContainerHeight] = React.useState(600);
-
-  React.useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const updateHeight = () => {
-      if (el) setContainerHeight(el.clientHeight || 600);
-    };
-    updateHeight();
-    const ro = new ResizeObserver(updateHeight);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   const handleRowRetry = React.useCallback((id: string) => {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'pending', errorMessage: undefined } : f));
@@ -540,29 +527,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     handleEmbed('all', id);
   }, [handleEmbed]);
 
-  const handleTableScroll = React.useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    setScrollTop(e.currentTarget.scrollTop);
-  }, []);
-
-  const ROW_HEIGHT = 34;
   const totalRows = visibleFiles.length;
-  const isVirtualized = totalRows > 40;
-  const BUFFER = 16;
-  const startIndex = isVirtualized ? Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER) : 0;
-  const visibleCount = isVirtualized ? Math.ceil(containerHeight / ROW_HEIGHT) + (BUFFER * 2) : totalRows;
-  const endIndex = isVirtualized ? Math.min(totalRows, startIndex + visibleCount) : totalRows;
-  const topOffset = isVirtualized ? startIndex * ROW_HEIGHT : 0;
-  const totalVirtualHeight = isVirtualized ? totalRows * ROW_HEIGHT : undefined;
-
-  const renderedRows = React.useMemo(() => {
-    if (!isVirtualized) {
-      return visibleFiles.map((file, idx) => ({ file, idx }));
-    }
-    return visibleFiles.slice(startIndex, endIndex).map((file, sliceIdx) => ({
-      file,
-      idx: startIndex + sliceIdx,
-    }));
-  }, [visibleFiles, isVirtualized, startIndex, endIndex]);
 
   const allFilesCount = files.length;
 
@@ -1343,12 +1308,11 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <div className="w-[5%] text-center whitespace-nowrap">Rating</div>
           </div>
 
-          {/* Table Rows Body - Single continuous list with 60fps native smooth scrolling */}
+          {/* Table Rows Body - 120fps native GPU scrolling with content-visibility */}
           <div 
             ref={scrollContainerRef}
-            onScroll={handleTableScroll}
             className="flex-1 overflow-y-auto custom-scrollbar relative overscroll-contain"
-            style={{ transform: 'translateZ(0)', WebkitOverflowScrolling: 'touch' }}
+            style={{ WebkitOverflowScrolling: 'touch' }}
           >
             {totalRows === 0 ? (
               /* Clean empty table canvas matching image.png */
@@ -1363,33 +1327,12 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   Click "SELECT FILE" or "SELECT FOLDER" to add {mode === 'all' ? 'EPS, Video or Image' : mode} assets
                 </span>
               </div>
-            ) : isVirtualized ? (
-              <div style={{ height: totalVirtualHeight, position: 'relative', width: '100%' }}>
-                <div style={{ transform: `translateY(${topOffset}px)`, willChange: 'transform' }}>
-                  {renderedRows.map(({ file, idx }) => (
-                    <TableRow
-                      key={file.id || idx}
-                      file={file}
-                      idx={idx}
-                      isSelected={selectedFileId === file.id}
-                      isBlue={isBlue}
-                      isDark={isDark}
-                      copiedCell={copiedCell}
-                      onSelect={setSelectedFileId}
-                      onOpenPreview={openPreviewModal}
-                      onCopy={copyText}
-                      onRetry={handleRowRetry}
-                      onEmbed={handleRowEmbed}
-                    />
-                  ))}
-                </div>
-              </div>
             ) : (
-              renderedRows.map(({ file, idx }) => (
+              visibleFiles.map((file, idx) => (
                 <TableRow
                   key={file.id || idx}
                   file={file}
-                  idx={idx}
+                  idx={idx + 1}
                   isSelected={selectedFileId === file.id}
                   isBlue={isBlue}
                   isDark={isDark}

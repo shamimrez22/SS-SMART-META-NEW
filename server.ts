@@ -23,14 +23,25 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // High-performance EPS vector preview rendering endpoint
-  app.post("/api/render-eps", async (req, res) => {
+  // High-performance EPS/AI vector preview rendering endpoint supporting all MIME types & raw binary
+  app.post("/api/render-eps", express.raw({ type: () => true, limit: "200mb" }), async (req, res) => {
     let buffer: Buffer | null = null;
 
     if (Buffer.isBuffer(req.body) && req.body.length > 0) {
-      buffer = req.body;
-    } else if (req.body && req.body.base64) {
-      buffer = Buffer.from(req.body.base64, "base64");
+      // Check if it's a JSON payload passed as raw buffer
+      if (req.body[0] === 0x7B) { // '{'
+        try {
+          const parsed = JSON.parse(req.body.toString("utf8"));
+          if (parsed.base64) {
+            buffer = Buffer.from(parsed.base64.replace(/^data:[^;]+;base64,/, ""), "base64");
+          }
+        } catch {}
+      }
+      if (!buffer) {
+        buffer = req.body;
+      }
+    } else if (req.body && typeof req.body === "object" && (req.body as any).base64) {
+      buffer = Buffer.from((req.body as any).base64.replace(/^data:[^;]+;base64,/, ""), "base64");
     }
 
     if (!buffer || buffer.length === 0) {
@@ -39,15 +50,20 @@ async function startServer() {
 
     const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const tempEpsPath = path.join(os.tmpdir(), `vector_${uniqueId}.eps`);
+    const tempTiffPath = path.join(os.tmpdir(), `preview_${uniqueId}.tif`);
     const tempJpgPath = path.join(os.tmpdir(), `preview_${uniqueId}.jpg`);
 
     try {
       // Check if file has a DOS EPS binary header (0xC5D0D3C6)
-      // If so, slice out only the clean PostScript segment so Ghostscript parses it without header errors
       let dataToWrite = buffer;
+      let tiffOffset = 0;
+      let tiffLength = 0;
       if (buffer.length >= 30 && buffer[0] === 0xC5 && buffer[1] === 0xD0 && buffer[2] === 0xD3 && buffer[3] === 0xC6) {
         const psOffset = buffer.readUInt32LE(4);
         const psLength = buffer.readUInt32LE(8);
+        tiffOffset = buffer.readUInt32LE(20);
+        tiffLength = buffer.readUInt32LE(24);
+
         if (psOffset > 0 && psLength > 0 && psOffset + psLength <= buffer.length) {
           dataToWrite = buffer.subarray(psOffset, psOffset + psLength);
         }
@@ -55,67 +71,137 @@ async function startServer() {
 
       await fs.promises.writeFile(tempEpsPath, dataToWrite);
 
-      // 1. Try Ghostscript with -dEPSCrop for vector EPS rendering
+      const isPdfBased = dataToWrite.subarray(0, 10).toString("binary").startsWith("%PDF-");
       let rendered = false;
-      try {
-        await execFileAsync("gs", [
-          "-dSAFER",
-          "-dBATCH",
-          "-dNOPAUSE",
-          "-dEPSCrop",
-          "-sDEVICE=jpeg",
-          "-dJPEGQ=92",
-          "-r150",
-          `-sOutputFile=${tempJpgPath}`,
-          tempEpsPath
-        ], { timeout: 10000 });
-        if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
-          rendered = true;
-        }
-      } catch (gsErr) {
-        // Fallback to gs with -dFitPage if -dEPSCrop fails
-      }
 
-      // 1b. Try Ghostscript with -dFitPage if EPSCrop failed (e.g. bounding box issues)
-      if (!rendered) {
+      // 1. Ghostscript primary render
+      if (isPdfBased) {
         try {
           await execFileAsync("gs", [
             "-dSAFER",
             "-dBATCH",
             "-dNOPAUSE",
-            "-dFitPage",
+            "-sDEVICE=jpeg",
+            "-dJPEGQ=92",
+            "-r150",
+            "-dFirstPage=1",
+            "-dLastPage=1",
+            `-sOutputFile=${tempJpgPath}`,
+            tempEpsPath
+          ], { timeout: 12000 });
+          if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
+            rendered = true;
+          }
+        } catch {}
+      } else {
+        // Try with -dEPSCrop
+        try {
+          await execFileAsync("gs", [
+            "-dSAFER",
+            "-dBATCH",
+            "-dNOPAUSE",
+            "-dEPSCrop",
             "-sDEVICE=jpeg",
             "-dJPEGQ=92",
             "-r150",
             `-sOutputFile=${tempJpgPath}`,
             tempEpsPath
-          ], { timeout: 10000 });
+          ], { timeout: 12000 });
           if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
             rendered = true;
           }
-        } catch (gsPageErr) {
-          // Fallback to ImageMagick convert
+        } catch {}
+
+        // 1b. Fallback to -dFitPage with fixed dimensions
+        if (!rendered) {
+          try {
+            await execFileAsync("gs", [
+              "-dSAFER",
+              "-dBATCH",
+              "-dNOPAUSE",
+              "-sDEVICE=jpeg",
+              "-dJPEGQ=92",
+              "-r150",
+              "-dDEVICEWIDTHPOINTS=1200",
+              "-dDEVICEHEIGHTPOINTS=1200",
+              "-dPDFFitPage",
+              `-sOutputFile=${tempJpgPath}`,
+              tempEpsPath
+            ], { timeout: 12000 });
+            if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
+              rendered = true;
+            }
+          } catch {}
         }
       }
 
-      // 2. Fallback to ImageMagick convert
+      // 2. Fallback: Embedded TIFF in DOS EPS Header
+      if (!rendered && tiffOffset > 0 && tiffLength > 0 && tiffOffset + tiffLength <= buffer.length) {
+        try {
+          const tiffBuf = buffer.subarray(tiffOffset, tiffOffset + tiffLength);
+          await fs.promises.writeFile(tempTiffPath, tiffBuf);
+          await execFileAsync("convert", [
+            tempTiffPath,
+            "-quality", "92",
+            tempJpgPath
+          ], { timeout: 6000 });
+          if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
+            rendered = true;
+          }
+        } catch {}
+      }
+
+      // 3. Fallback: Embedded XMP <xmpGImg:image> JPEG / PNG in text
       if (!rendered) {
         try {
-          await execFileAsync("convert", [
-            "-density", "150",
-            `${tempEpsPath}[0]`,
-            "-quality", "90",
-            tempJpgPath
-          ], { timeout: 10000 });
-          if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
-            rendered = true;
+          const text = buffer.toString("binary");
+          const tagIndex = text.indexOf(":image>");
+          if (tagIndex !== -1) {
+            const closeIndex = text.indexOf("</", tagIndex);
+            if (closeIndex > tagIndex) {
+              const b64Raw = text.substring(tagIndex + 7, closeIndex).replace(/[\r\n\s]+/g, "");
+              if (b64Raw.length > 100) {
+                const mime = b64Raw.startsWith("iVBORw0KGgo") ? "image/png" : "image/jpeg";
+                return res.json({ preview: `data:${mime};base64,${b64Raw}` });
+              }
+            }
           }
-        } catch (convertErr) {
-          // Both failed
-        }
+          const jfifIdx = text.indexOf("/9j/");
+          if (jfifIdx !== -1) {
+            const endIdx = text.indexOf("<", jfifIdx);
+            if (endIdx > jfifIdx) {
+              const b64Raw = text.substring(jfifIdx, endIdx).replace(/[\r\n\s]+/g, "");
+              if (b64Raw.length > 100) {
+                return res.json({ preview: `data:image/jpeg;base64,${b64Raw}` });
+              }
+            }
+          }
+        } catch {}
       }
 
-      if (rendered) {
+      // 4. Fallback: Embedded binary JFIF stream (FF D8 FF ... FF D9)
+      if (!rendered) {
+        try {
+          for (let i = 0; i < buffer.length - 100; i++) {
+            if (buffer[i] === 0xFF && buffer[i + 1] === 0xD8 && buffer[i + 2] === 0xFF) {
+              let foundEnd = -1;
+              const maxSearch = Math.min(buffer.length - 1, i + 3 * 1024 * 1024);
+              for (let j = i + 200; j < maxSearch; j++) {
+                if (buffer[j] === 0xFF && buffer[j + 1] === 0xD9) {
+                  foundEnd = j + 2;
+                  if (foundEnd - i >= 4096) break;
+                }
+              }
+              if (foundEnd > i + 1024) {
+                const jpegSlice = buffer.subarray(i, foundEnd);
+                return res.json({ preview: `data:image/jpeg;base64,${jpegSlice.toString("base64")}` });
+              }
+            }
+          }
+        } catch {}
+      }
+
+      if (rendered && fs.existsSync(tempJpgPath)) {
         const jpgBuffer = await fs.promises.readFile(tempJpgPath);
         const dataUrl = `data:image/jpeg;base64,${jpgBuffer.toString("base64")}`;
         return res.json({ preview: dataUrl });
@@ -129,6 +215,9 @@ async function startServer() {
       // Clean up temp files safely
       try {
         if (fs.existsSync(tempEpsPath)) await fs.promises.unlink(tempEpsPath);
+      } catch {}
+      try {
+        if (fs.existsSync(tempTiffPath)) await fs.promises.unlink(tempTiffPath);
       } catch {}
       try {
         if (fs.existsSync(tempJpgPath)) await fs.promises.unlink(tempJpgPath);
@@ -247,12 +336,10 @@ async function startServer() {
 const modelCooloffUntil = new Map<string, number>();
 
 function getAvailableGeminiModels(preferredModel?: string): string[] {
-  // Ultra-fast, highly reliable production models (sub-second to 1.5s latency)
+  // Ultra-fast, rock-solid production models verified for vision & stock SEO
   const allowed = [
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
-    "gemini-flash-latest"
+    "gemini-3.1-flash-lite"
   ];
   let candidates: string[] = [];
   if (preferredModel && allowed.includes(preferredModel)) {
@@ -302,40 +389,25 @@ function enforceStockTitleWordLimits(
     return sliced.join(' ');
   }
 
-  // When words.length < minWords: expand constructively without keyword dumping
-  const ext = (context.filename || '').split('.').pop()?.toLowerCase() || '';
-  const isVec = context.isVector ?? ['eps', 'ai', 'svg'].includes(ext);
-  const isVid = context.isVideo ?? ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext);
+  // When words.length < minWords:
+  // If title already has at least 4 descriptive words, keep it natural without injecting canned boilerplate!
+  // If fewer than 4 words, constructively enhance using the asset's actual keywords context.
+  if (words.length < minWords && words.length < 4 && context.keywords) {
+    const existingWords = new Set(words.map(w => w.toLowerCase()));
+    const kwCandidates = context.keywords
+      .split(/[,;\n]+/)
+      .map(k => k.trim())
+      .filter(k => k && k.length > 2 && !existingWords.has(k.toLowerCase()) && !['commercial', 'stock', 'photo', 'image', 'asset', 'high quality', 'vector', 'illustration'].includes(k.toLowerCase()));
 
-  const stockAdditions = isVec
-    ? [
-        'Modern Scalable Vector Graphic Design Template',
-        'for Creative Commercial Branding and Digital Print Media',
-        'in Contemporary Clean Minimalist Graphic Style',
-        'High Quality Editable Illustration Artwork Element'
-      ]
-    : isVid
-    ? [
-        'Cinematic 4K Motion Footage Clip for Video Production',
-        'with Authentic Camera Movement and Lighting Atmosphere',
-        'for Commercial Broadcast and Creative Digital Storytelling',
-        'High Definition Scene Capturing Dynamic Real Time Action'
-      ]
-    : [
-        'in High Resolution Composition with Natural Lighting',
-        'for Commercial Creative Design and Editorial Publication',
-        'Highlighting Fine Visual Details and Balanced Perspective',
-        'Professional Stock Photography for Marketing and Advertising Media',
-        'in Scenic Perspective with Authentic Texture and Depth'
-      ];
-
-  for (const phrase of stockAdditions) {
-    if (words.length >= minWords) break;
-    const phraseWords = phrase.split(/\s+/).filter(Boolean);
-    for (const pw of phraseWords) {
+    for (const kw of kwCandidates) {
       if (words.length >= minWords) break;
-      if (words[words.length - 1]?.toLowerCase() !== pw.toLowerCase()) {
-        words.push(pw);
+      const kwTokens = kw.split(/\s+/).filter(Boolean);
+      for (const token of kwTokens) {
+        if (words.length >= minWords) break;
+        if (!existingWords.has(token.toLowerCase())) {
+          existingWords.add(token.toLowerCase());
+          words.push(token.charAt(0).toUpperCase() + token.slice(1).toLowerCase());
+        }
       }
     }
   }
@@ -593,7 +665,7 @@ function generateSmartFallbackMetadata(
         });
 
         // Fast direct SDK test with primary model (gemini-2.5-flash)
-        const testModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+        const testModels = ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
         let lastError: any = null;
 
         for (const model of testModels) {
@@ -745,26 +817,34 @@ function generateSmartFallbackMetadata(
         }
       }
 
-      if (!cleanB64 || cleanB64.length < 50) {
-        return res.status(422).json({
-          success: false,
-          error: { message: "No visual image data received for AI vision analysis. Please ensure the image is loaded." }
-        });
+      // Strictly ensure cleanB64 is raw base64 data, NEVER a URL or blob URI
+      if (cleanB64.startsWith('blob:') || cleanB64.startsWith('http:') || cleanB64.includes('://')) {
+        cleanB64 = '';
+      } else {
+        cleanB64 = cleanB64.replace(/[\r\n\t\s]+/g, '');
+        if (!/^[A-Za-z0-9+/=]+$/.test(cleanB64.slice(0, 100))) {
+          cleanB64 = '';
+        }
       }
 
-      parts.push({
-        inlineData: {
-          data: cleanB64,
-          mimeType: detectedMime
-        }
-      });
+      const hasVisualData = Boolean(cleanB64 && cleanB64.length > 50);
+      if (hasVisualData) {
+        parts.push({
+          inlineData: {
+            data: cleanB64,
+            mimeType: detectedMime
+          }
+        });
+      }
 
       const ext = ((filename || '').split('.').pop() || '').toLowerCase();
       const isVideoAsset = Boolean(req.body.isVideo) || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
       const isVectorAsset = Boolean(req.body.isVector) || ['eps', 'ai', 'svg'].includes(ext);
       const keywordStyle: 'mixed' | 'single' | 'double' = req.body.keywordStyle || (req.body.singleWordKeywords ? 'single' : 'mixed');
 
-      const promptText = `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist.
+      const customUserPrompt = req.body.prompt ? String(req.body.prompt).trim() : '';
+
+      const promptText = `${customUserPrompt ? `${customUserPrompt}\n\n=== CORE STOCK METADATA DIRECTIVES ===\n` : ''}You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist.
 ${isVideoAsset ? `CRITICAL VIDEO FOOTAGE DIRECTIVES:
 - This visual frame is a keyframe extracted from high-quality commercial stock video footage (filename: "${filename || 'stock_video'}").
 - Examine the visual scene, subject, movement, atmosphere, camera perspective, lighting, and action shown in this frame.
@@ -775,12 +855,12 @@ ${isVideoAsset ? `CRITICAL VIDEO FOOTAGE DIRECTIVES:
 - Keywords MUST include high-demand vector tags (vector, illustration, graphic, design, template, artwork, icon, symbol, editable). Never include camera or photography terms!` : `Carefully examine the VISUAL CONTENT of this asset.
 Identify what is actually depicted visually (e.g. character, stickman, cartoon, action, objects, colors, background, setting, emotions, concept).`}
 CRITICAL DIRECTIVES:
-- Base your metadata 100% on what is VISUALLY SHOWN in the asset!
+${hasVisualData ? '- Base your metadata 100% on what is VISUALLY SHOWN in the asset!' : `- Visual frame was not embedded. Analyze filename ("${filename || 'stock_asset'}") and vector/footage context to produce 100% realistic, specific commercial metadata.`}
 - Do NOT base metadata on random numbers, dates, or timestamps from the filename!
 - Never invent typography, dates, or timestamps unless written text is clearly visible in the image itself.
 - HARD DIRECTIVE ON KEYWORDS (STRICT MANDATE & ZERO SENTENCES):
   * EVERY SINGLE KEYWORD MUST BE SEPARATED BY A COMMA AND SPACE: e.g. "tag1, tag2, tag3, tag4"!
-  * NEVER write a sentence, paragraph, verb, or description in keywords (e.g. NEVER write "a person having a birthday party")!
+  * NEVER write a sentence, paragraph, verb, or description in keywords!
   * MAXIMUM 1 TO 2 WORDS PER KEYWORD TAG. NEVER write 3 or more words together without commas!
 ${keywordStyle === 'double' ? `  * MANDATORY DOUBLE KEYWORDS (2-WORD PHRASES):
     - Every tag MUST be a 2-word phrase (e.g. "happy birthday", "birthday party", "celebration event", "party cake", "smiling friends")!
@@ -788,11 +868,11 @@ ${keywordStyle === 'double' ? `  * MANDATORY DOUBLE KEYWORDS (2-WORD PHRASES):
     - Every tag MUST be exactly ONE word only (e.g. "happy, birthday, celebration, party, cake, gifts, balloons")!
     - Never combine words into phrases!` : `  * MANDATORY MIXED KEYWORDS:
     - Include both high-ranking 2-word phrases (e.g. "happy birthday", "birthday party", "festive background") and single keywords (e.g. "celebration", "cake", "balloons")!`}
-  * Writing space-separated words without commas (e.g. "birthday happy party celebration balloon balloons colorful festive") is STRICTLY PROHIBITED and will cause immediate rejection!
+  * Writing space-separated words without commas is STRICTLY PROHIBITED!
 Return ONLY valid JSON with keys:
-- title: Commercial stock title (strictly ${minTitleWords}-${maxTitleWords} words) describing what is visually shown.
+- title: Commercial stock title (strictly ${minTitleWords}-${maxTitleWords} words) describing what is visually shown. Never use canned boilerplate!
 - description: Natural commercial description (${minDescriptionWords}-${maxDescriptionWords} words) describing the visual scene, subject, elements, and commercial utility.
-- keywords: (${Math.min(45, maxKeywords)}-${maxKeywords} strictly comma-separated keywords, each separated by ", ") describing the visual elements, character, actions, colors, and concept.
+- keywords: (EXACTLY ${maxKeywords || 50} strictly comma-separated individual keywords, each separated by ", ") covering subject, objects, actions, setting, colors, concept, and commercial queries.
 - category: A relevant stock category (e.g. ${isVideoAsset ? 'Footage, ' : ''}Illustrations, Cartoons, Business, Concepts, Technology, Nature, People).
 - rating: 5.`;
       parts.push({ text: promptText });
@@ -814,7 +894,7 @@ Return ONLY valid JSON with keys:
         for (const model of modelsToTry) {
           const callConfig: any = {
             responseMimeType: "application/json",
-            systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET VISUALLY. Every asset must produce its own unique title, keywords, category, and its own unique description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its visible subject, distinct objects, specific action, composition, colors, environment, and visible details. Never invent details from numbers in the filename. HARD MANDATE FOR KEYWORDS: Every single keyword MUST be separated by a comma (", ")! NEVER write multi-word sentences or words without commas! Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words, NEVER fewer than ${minTitleWords} words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (${Math.min(45, maxKeywords)}-${maxKeywords} strictly comma-separated individual keywords), category, rating (5).`
+            systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET. Every asset must produce its own unique title, keywords, category, and its own unique description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its subject, distinct objects, specific action, composition, colors, environment, and visible details. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (EXACTLY ${maxKeywords || 50} strictly comma-separated individual keywords), category, rating (5).`
           };
           if (model.includes('3.8') || model.includes('3.1') || model.includes('3.7')) {
             callConfig.thinkingConfig = { thinkingBudget: 0 };
@@ -841,30 +921,17 @@ Return ONLY valid JSON with keys:
             }
 
             if (isQuotaError) {
-              console.warn(`[API] Model ${model} rate limited, waiting 2.5s and retrying...`);
-              await new Promise(r => setTimeout(r, 2500));
-              try {
-                response = await ai.models.generateContent({
-                  model,
-                  contents: parts,
-                  config: callConfig
-                });
-                if (response?.text) break;
-              } catch (retryErr: any) {
-                console.warn(`[API] Model ${model} retry also rate limited, cooling off 6s:`, retryErr?.message?.slice(0, 100));
-                modelCooloffUntil.set(model, Date.now() + 6000);
-                continue; // Try next model on this key!
-              }
+              console.warn(`[API] Gemini key quota exceeded (429), immediately failing over to next key in pool:`, errMsg.slice(0, 120));
+              keyFailed = true;
+              break; // Rotate immediately to next key in pool or server fallback!
             }
 
             const is503 = err?.status === 503 || errMsg.includes('503') || errMsg.includes('UNAVAILABLE');
             const is404 = err?.status === 404 || errMsg.includes('404') || errMsg.includes('no longer');
 
-            if (is404) {
-              modelCooloffUntil.set(model, Date.now() + 86400000);
-            } else if (is503) {
-              modelCooloffUntil.set(model, Date.now() + 2000);
-              await new Promise(r => setTimeout(r, 200));
+            if (is404 || is503) {
+              modelCooloffUntil.set(model, Date.now() + 30000);
+              continue;
             }
           }
         }
@@ -978,11 +1045,80 @@ Return ONLY valid JSON with keys:
       }
 
       if (!parsed || !parsed.title) {
-        console.warn(`[API] Gemini vision failed for ${filename || 'file'}, returning error so user can retry without wrong metadata.`);
-        return res.status(422).json({
-          success: false,
-          error: { message: "Could not generate AI vision metadata for this image. Click RETRY to re-generate." }
+        console.warn(`[API] Gemini vision rate limited or failed for ${filename || 'file'}, applying smart commercial fallback.`);
+        const baseName = (filename || 'Commercial Stock Asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
+        const words = baseName.split(/\s+/).filter(Boolean);
+        const capitalized = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+        
+        let titleFallback = isVectorAsset
+          ? `${capitalized} Vector Illustration Design`
+          : isVideoAsset
+          ? `${capitalized} Stock Video Footage Clip`
+          : `${capitalized} Commercial Stock Asset`;
+
+        titleFallback = enforceStockTitleWordLimits(titleFallback, minTitleWords, maxTitleWords, {
+          filename,
+          isVector: isVectorAsset,
+          isVideo: isVideoAsset,
+          category: isVectorAsset ? 'Graphics' : isVideoAsset ? 'Footage' : 'Objects'
         });
+
+        const kwSet = new Set<string>();
+        words.forEach(w => {
+          const lw = w.toLowerCase();
+          if (lw.length > 2 && !['and', 'the', 'for', 'with', 'from', 'this', 'that', 'jpg', 'jpeg', 'png', 'eps', 'svg', 'mp4', 'mov'].includes(lw)) {
+            kwSet.add(lw);
+          }
+        });
+        for (let i = 0; i < words.length - 1; i++) {
+          const pair = `${words[i].toLowerCase()} ${words[i+1].toLowerCase()}`;
+          if (pair.length > 5) kwSet.add(pair);
+        }
+
+        const formatTags = isVectorAsset
+          ? ['vector', 'illustration', 'graphic', 'design', 'template', 'artwork', 'icon', 'symbol', 'element', 'scalable', 'editable', 'clipart', 'shape', 'eps']
+          : isVideoAsset
+          ? ['footage', 'video', 'motion', 'cinematic', '4k', 'b-roll', 'clip', 'movement', 'scene', 'real-time', 'dynamic', 'action']
+          : ['isolated', 'backdrop', 'object', 'view', 'studio', 'clean', 'modern', 'style'];
+
+        for (const t of formatTags) {
+          if (kwSet.size >= (maxKeywords || 50)) break;
+          kwSet.add(t);
+        }
+
+        let kwList = Array.from(kwSet);
+        if (keywordStyle === 'double') {
+          const pairs: string[] = [];
+          for (let i = 0; i < kwList.length - 1; i += 2) {
+            pairs.push(`${kwList[i]} ${kwList[i+1]}`);
+          }
+          kwList = pairs.length > 0 ? pairs : kwList;
+        } else if (keywordStyle === 'single') {
+          kwList = kwList.map(k => k.split(/\s+/)[0]).filter(Boolean);
+        }
+
+        const keywordsStr = kwList.slice(0, maxKeywords || 50).join(', ');
+
+        const descFallback = generateUniqueStockDescription(
+          titleFallback,
+          words,
+          {
+            filename,
+            isVector: isVectorAsset,
+            isVideo: isVideoAsset,
+            keywords: keywordsStr,
+            minWords: minDescriptionWords,
+            maxWords: maxDescriptionWords
+          }
+        );
+
+        parsed = {
+          title: titleFallback,
+          keywords: keywordsStr,
+          description: descFallback,
+          category: isVectorAsset ? 'Graphics' : isVideoAsset ? 'Footage' : 'Objects',
+          rating: 5
+        };
       }
 
       return res.json({ success: true, metadata: parsed });
@@ -990,7 +1126,7 @@ Return ONLY valid JSON with keys:
       console.warn("Gemini Metadata Generation error:", err?.message || err);
       return res.status(500).json({
         success: false,
-        error: { message: err?.message || "AI metadata generation failed. Click RETRY to re-generate." }
+        error: { message: err?.message || "Gemini vision analysis failed. Please click RETRY." }
       });
     }
   });

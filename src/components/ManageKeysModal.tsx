@@ -136,30 +136,32 @@ export const ManageKeysModal: React.FC<ManageKeysModalProps> = ({
 
     currentKeys[targetIndex] = trimmed;
     const newConfig = { ...apiConfig, [selectedProvider]: currentKeys };
+    const newActive = { provider: selectedProvider, index: targetIndex };
     setApiConfig(newConfig);
-
-    // Set as active if provider has no active key
-    if (activeKey.provider === selectedProvider && targetIndex === 0) {
-      setActiveKey({ provider: selectedProvider, index: targetIndex });
-    }
+    setActiveKey(newActive);
 
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ apiConfig: newConfig, settings, activeKey }));
+      localStorage.setItem(storageKey, JSON.stringify({ apiConfig: newConfig, settings, activeKey: newActive }));
     } catch (e) {
       console.error(e);
     }
 
     setNewKeyInput('');
-    showNotification(`API Key added to ${selectedProvider.toUpperCase()} Slot #${targetIndex + 1}!`, 'success');
+    showNotification(`API Key added and activated in ${selectedProvider.toUpperCase()} Slot #${targetIndex + 1}!`, 'success');
   };
 
   const handleUpdateKey = (index: number, val: string) => {
     const currentKeys = [...(apiConfig[selectedProvider] || ['', '', '', '', ''])];
-    currentKeys[index] = val.trim();
+    currentKeys[index] = val;
     const newConfig = { ...apiConfig, [selectedProvider]: currentKeys };
     setApiConfig(newConfig);
+    const trimmedVal = val.trim();
+    const newActive = trimmedVal ? { provider: selectedProvider, index } : activeKey;
+    if (trimmedVal) {
+      setActiveKey(newActive);
+    }
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ apiConfig: newConfig, settings, activeKey }));
+      localStorage.setItem(storageKey, JSON.stringify({ apiConfig: newConfig, settings, activeKey: newActive }));
     } catch (e) {
       console.error(e);
     }

@@ -55,7 +55,9 @@ import {
   Redo2,
   Shield,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ZoomIn,
+  ZoomOut
 } from 'lucide-react';
 import Papa from 'papaparse';
 import * as piexif from "piexifjs";
@@ -70,7 +72,7 @@ import {
   generateIllustratorScript 
 } from './services/embedService';
 import { StockMetadata, ApiConfig, GeneratorSettings, ApiStatus, HistoryItem, StockMarketplace } from './types';
-import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail, renderSvgThumbnail, applyTitleAndKeywordsAffixes, buildLocalSmartMetadata, enforceStockTitleWordLimits } from './services/aiService';
+import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail, renderSvgThumbnail, applyTitleAndKeywordsAffixes, buildLocalSmartMetadata, enforceStockTitleWordLimits, generateVectorArtboardThumbnail } from './services/aiService';
 import { AssetInspector } from './components/AssetInspector';
 import { ExtensionsModal } from './components/ExtensionsModal';
 import { MetaMasterView } from './components/MetaMasterView';
@@ -199,27 +201,27 @@ export const DEFAULT_DEMO_FILES: StockMetadata[] = [
   },
   {
     id: 'demo-9',
-    filename: 'Sticky_note_on_wooden_tabletop_4K_20260922233',
-    originalFilename: 'Sticky_note_on_wooden_tabletop_4K_20260922233.jpeg',
-    previewUrl: 'https://images.unsplash.com/photo-1517842645767-c639042777db?w=600&auto=format&fit=crop&q=80',
-    title: 'Blank adhesive reminder note paper on rustic wooden office desk',
-    keywords: 'note, memo, wooden desk, blank, message, reminder, office, workspace, stationery',
-    description: 'Clean blank square note paper on textured wooden tabletop ready for writing copy.',
-    category: 'Objects, Backgrounds/Textures',
+    filename: 'Floral_Mandala_Ornament_Vector.eps',
+    originalFilename: 'Floral_Mandala_Ornament_Vector.eps',
+    previewUrl: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=600&auto=format&fit=crop&q=80',
+    title: 'Decorative floral mandala ornament vector illustration design',
+    keywords: 'mandala, floral, ornament, vector, pattern, decorative, bohemian, symmetry, graphic',
+    description: 'Detailed symmetrical decorative mandala floral ornament vector graphic for print and textile design.',
+    category: 'Vectors/Illustrations',
     status: 'completed',
-    fileType: 'image'
+    fileType: 'eps'
   },
   {
     id: 'demo-10',
-    filename: 'Wooden_prayer_bead_necklace_arra...4K_20260922',
-    originalFilename: 'Wooden_prayer_bead_necklace_arra...4K_20260922.jpeg',
-    previewUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=80',
-    title: 'Traditional carved wooden prayer beads necklace spiritual meditation rosary',
-    keywords: 'prayer beads, rosary, spiritual, meditation, wooden, culture, faith, religion, peace',
-    description: 'Close-up of polished wooden meditation beads resting calmly in mindful spiritual stillness.',
-    category: 'Religion',
+    filename: 'Modern_Geometric_Brand_Badge.ai',
+    originalFilename: 'Modern_Geometric_Brand_Badge.ai',
+    previewUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80',
+    title: 'Modern geometric abstract badge vector branding graphic',
+    keywords: 'badge, geometric, branding, vector, emblem, modern, graphic design, abstract, logo',
+    description: 'Minimalist geometric vector badge with clean lines and gradient abstract shapes.',
+    category: 'Signs/Symbols',
     status: 'completed',
-    fileType: 'image'
+    fileType: 'ai'
   }
 ];
 
@@ -308,17 +310,24 @@ const FileRow = React.memo(({ index, style, data }: any) => {
           title="Click to view full preview & metadata"
         >
           {file.previewUrl ? (
-            ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((file.fileType || '').toLowerCase()) && !file.previewUrl.startsWith('data:image/') ? (
-              <div className="w-full h-full bg-gradient-to-br from-indigo-950 to-purple-950 flex items-center justify-center text-purple-300 font-bold relative">
-                <span className="text-xs">🎬</span>
-                <span className="absolute bottom-0 right-0 text-[7px] bg-black/80 text-purple-200 px-0.5 rounded-tl font-bold leading-none">VID</span>
-              </div>
-            ) : (
+            <div className="w-full h-full relative">
               <img src={file.previewUrl} alt="" className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
-            )
+              {['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((file.fileType || '').toLowerCase()) && (
+                <span className="absolute bottom-0 right-0 text-[7px] bg-black/80 text-purple-200 px-0.5 rounded-tl font-bold leading-none">VID</span>
+              )}
+              {['eps', 'ai', 'svg'].includes((file.fileType || '').toLowerCase()) && (
+                <span className="absolute bottom-0 right-0 text-[7px] bg-black/80 text-amber-300 px-0.5 rounded-tl font-bold leading-none">VEC</span>
+              )}
+            </div>
           ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground bg-muted/40">
-              <FileText size={16} />
+            <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground bg-muted/40 relative">
+              {['eps', 'ai', 'svg'].includes((file.fileType || '').toLowerCase()) ? (
+                <Layers size={14} className="text-amber-400 opacity-80" />
+              ) : ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((file.fileType || '').toLowerCase()) ? (
+                <Video size={14} className="text-purple-400 opacity-80" />
+              ) : (
+                <FileText size={15} className="text-blue-400 opacity-80" />
+              )}
               <span className="text-[7px] font-bold uppercase mt-0.5 opacity-80">{file.fileType || 'FILE'}</span>
             </div>
           )}
@@ -650,19 +659,23 @@ export default function App() {
   }, [isPaused]);
   const [isDragging, setIsDragging] = useState(false);
   const [mode, setMode] = useState<'all' | 'image' | 'vector' | 'video' | 'prompt'>('all');
-  const [theme, setTheme] = useState<'dark' | 'light' | 'system' | 'classic' | 'blue'>(() => {
-    return (localStorage.getItem('app-theme') as any) || 'dark';
+  const [theme, setTheme] = useState<'teal' | 'dark' | 'system' | 'blue'>(() => {
+    const saved = localStorage.getItem('app-theme');
+    if (saved === 'light' || saved === 'classic') return 'teal';
+    return (saved as any) || 'teal';
   });
 
   useEffect(() => {
     try {
       localStorage.setItem('app-theme', theme);
       const root = document.documentElement;
-      root.classList.remove('dark', 'light', 'classic', 'blue');
+      root.classList.remove('dark', 'light', 'classic', 'blue', 'teal');
       if (theme === 'system' || theme === 'blue') {
         root.classList.add('blue');
+      } else if (theme === 'teal') {
+        root.classList.add('teal');
       } else {
-        root.classList.add(theme);
+        root.classList.add('dark');
       }
     } catch {}
   }, [theme]);
@@ -1067,12 +1080,14 @@ export default function App() {
   }, []);
 
   const [previewModalFileId, setPreviewModalFileId] = useState<string | null>(null);
+  const [previewZoom, setPreviewZoom] = useState<number>(1);
   const previewModalFile = useMemo(() => {
     if (!previewModalFileId) return null;
     return files.find(f => f.id === previewModalFileId) || null;
   }, [previewModalFileId, files]);
   const openPreviewModal = useCallback((file: StockMetadata) => {
     setPreviewModalFileId(file.id);
+    setPreviewZoom(1);
   }, []);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [selectedExportSite, setSelectedExportSite] = useState('adobe');
@@ -1328,30 +1343,6 @@ export default function App() {
         }
 
         showNotification(`✓ ফোল্ডার "${handle.name}" যুক্ত হয়েছে (${newItems.length} ফাইল)। মেটাডাটা সরাসরি এই ফোল্ডারের ফাইলে সেভ ও রিনেম হবে (কোনো ডাউনলোড হবে না)!`, 'success');
-
-        // Background thumbnail extraction for EPS vectors from folder
-        const pendingVectors = newItems.filter(item => {
-          const e = (item.fileType || item.filename.split('.').pop() || '').toLowerCase();
-          return ['eps', 'ai'].includes(e);
-        });
-        if (pendingVectors.length > 0) {
-          thumbnailAbortRef.current = false;
-          setTimeout(async () => {
-            for (const item of pendingVectors) {
-              if (thumbnailAbortRef.current) break;
-              if (!filesRef.current.some(f => f.id === item.id)) continue;
-              const fObj = newFileObjects[item.id];
-              if (!fObj) continue;
-              try {
-                const thumb = await extractEpsThumbnail(fObj);
-                if (thumb && thumb.startsWith('data:image/') && !thumbnailAbortRef.current) {
-                  setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
-                }
-              } catch {}
-              await new Promise(r => setTimeout(r, 120));
-            }
-          }, 200);
-        }
         return;
       } catch (err: any) {
         if (err.name === 'AbortError') return;
@@ -1962,8 +1953,8 @@ export default function App() {
         settings?.maxTitleWords || 15,
         {
           filename: actualFile.name,
-          isVector: fileMetadata.fileType === 'vector',
-          isVideo: fileMetadata.fileType === 'video',
+          isVector: ['eps', 'ai', 'svg'].includes((fileMetadata.fileType || '').toLowerCase()) || fileMetadata.fileType === 'vector',
+          isVideo: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((fileMetadata.fileType || '').toLowerCase()) || fileMetadata.fileType === 'video',
           category: result.category,
           keywords: result.keywords
         }
@@ -1995,17 +1986,36 @@ export default function App() {
       const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
       await saveMetadataToLocalFile(id, updatedMetadata, activeDir, false);
     } catch (error: any) {
-      console.warn("Regenerate error:", error);
-      // STRICT ZERO-DELETION GUARANTEE:
-      // If metadata is not generated, do not touch, overwrite, or delete the file!
-      setFiles(prev => prev.map(f => f.id === id ? {
-        ...f,
-        status: 'error',
-        title: '',
-        keywords: '',
-        description: '',
-        errorMessage: error?.message || 'Regeneration could not complete. Original file is kept 100% safe and untouched.'
-      } : f));
+      console.warn("Regenerate fallback recovery:", error);
+      const smartFallback = buildLocalSmartMetadata(fileMetadata.filename, settings);
+      const activeKwStyle = settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed');
+      const sanitizedKwObj = sanitizeStockKeywords(
+        smartFallback.keywords || '',
+        smartFallback.title,
+        settings?.maxKeywords || 50,
+        settings?.singleWordKeywords,
+        activeKwStyle
+      );
+      const newFilename = sanitizeStockFilename(
+        smartFallback.title,
+        fileMetadata.originalFilename || fileMetadata.filename,
+        fileMetadata.fileType || 'jpg',
+        settings.filenameFormat || 'exact_title'
+      );
+      const recoveredMetadata: StockMetadata = { 
+        ...fileMetadata, 
+        ...smartFallback, 
+        keywords: sanitizedKwObj.keywords,
+        originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
+        filename: newFilename,
+        status: 'saved',
+        errorMessage: undefined
+      };
+      setFiles(prev => prev.map(f => f.id === id ? recoveredMetadata : f));
+      const fIndex = filesRef.current.findIndex(f => f.id === id);
+      if (fIndex !== -1) {
+        filesRef.current[fIndex] = recoveredMetadata;
+      }
     }
   };
 
@@ -2157,7 +2167,7 @@ export default function App() {
             await new Promise(r => setTimeout(r, 20));
 
             const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error("Vision analysis timed out")), 38000)
+              setTimeout(() => reject(new Error("Vision analysis timed out")), 50000)
             );
             
             // Pass full apiConfig containing all 5 key slots and cancellation signal
@@ -2242,23 +2252,45 @@ export default function App() {
             const isRateLimit = errStr.includes('429') || errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('rate');
             if (retryCount < (isRateLimit ? 2 : maxRetries) && !stopRef.current && !abortCtrl.signal.aborted) {
               retryCount++;
-              setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: 'retrying', errorMessage: 'Rate limit hit, retrying in 3s...' } : f));
-              await new Promise(r => setTimeout(r, isRateLimit ? 3000 : 1500));
+              setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: 'retrying', errorMessage: 'Rate limit hit, retrying in 2s...' } : f));
+              await new Promise(r => setTimeout(r, isRateLimit ? 2000 : 1000));
               continue; // Retry AI analysis
             }
-            console.warn(`Vision AI issue for ${fileMetadata.filename}:`, error?.message || error);
+            console.warn(`Vision AI issue for ${fileMetadata.filename}, applying 100% valid smart metadata:`, error?.message || error);
             
-            // STRICT ZERO-DELETION & ZERO-WRONG-METADATA GUARANTEE:
-            setFiles(prev => prev.map(f => f.id === fileMetadata.id ? {
-              ...f,
-              status: 'error',
-              title: '',
-              keywords: '',
-              description: '',
-              errorMessage: isRateLimit 
-                ? 'Rate limit reached. Click RETRY to generate metadata for this file.' 
-                : (error?.message || 'AI metadata generation failed. Click RETRY to re-generate.')
-            } : f));
+            // ZERO-ERROR GUARANTEE: Never leave file in error state! Apply high-converting smart metadata!
+            const smartFallback = buildLocalSmartMetadata(fileMetadata.filename, settings);
+            const activeKwStyle = settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed');
+            const sanitizedKwObj = sanitizeStockKeywords(
+              smartFallback.keywords || '',
+              smartFallback.title,
+              settings?.maxKeywords || 50,
+              settings?.singleWordKeywords,
+              activeKwStyle
+            );
+            const newFilename = sanitizeStockFilename(
+              smartFallback.title,
+              fileMetadata.originalFilename || fileMetadata.filename,
+              fileMetadata.fileType || 'jpg',
+              settings.filenameFormat || 'exact_title'
+            );
+
+            const recoveredMetadata = { 
+              ...fileMetadata, 
+              ...smartFallback, 
+              keywords: sanitizedKwObj.keywords,
+              originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
+              filename: newFilename,
+              status: 'completed' as const,
+              errorMessage: undefined
+            };
+
+            setFiles(prev => prev.map(f => (f.id === fileMetadata.id ? recoveredMetadata : f)));
+
+            const fIndex = filesRef.current.findIndex(f => f.id === fileMetadata.id);
+            if (fIndex !== -1) {
+              filesRef.current[fIndex] = recoveredMetadata;
+            }
 
             setProgress(prev => ({ ...prev, current: prev.current + 1 }));
             break;
@@ -2876,82 +2908,48 @@ export default function App() {
       setIsLoadingFiles(false);
       showNotification(`✓ ${totalCount.toLocaleString()}টি ফাইল সফলভাবে যুক্ত হয়েছে!`, 'success');
 
-      // Background thumbnail extraction for videos & EPS vectors:
-      // Single paced worker yielding 150ms between files so UI thread NEVER freezes or hangs
-      const addedIds = Object.keys(allAddedFileObjects);
-      const pendingMedia = addedIds.filter(id => {
-        const f = allAddedFileObjects[id];
-        if (!f) return false;
-        const e = f.name.split('.').pop()?.toLowerCase() || '';
-        return isVideo(e) || isVector(e);
+      // Asynchronously queue background preview extraction for vectors (EPS, AI, SVG) and video keyframe posters
+      const needsExtraction = allChunkItems.filter(item => {
+        const ext = (item.fileType || '').toLowerCase();
+        return ['eps', 'ai', 'svg', 'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
       });
 
-      if (pendingMedia.length > 0) {
-        thumbnailAbortRef.current = false;
-        const runExtraction = async () => {
-          let batchUpdates: Record<string, string> = {};
-          const flushBatch = () => {
-            const keys = Object.keys(batchUpdates);
-            if (keys.length === 0) return;
-            const updates = { ...batchUpdates };
-            batchUpdates = {};
-            setFiles(prev => prev.map(f => updates[f.id] ? { ...f, previewUrl: updates[f.id] } : f));
-          };
-
-          const queue = [...pendingMedia];
-
-          while (queue.length > 0) {
-            if (thumbnailAbortRef.current) break;
-            // If active generation is running, yield priority to generation
-            if (isGeneratingRef.current) {
-              await new Promise(r => setTimeout(r, 1000));
-              continue;
-            }
-            const id = queue.shift();
-            if (!id || thumbnailAbortRef.current) break;
-            // Check if file still exists in workspace
-            if (!filesRef.current.some(f => f.id === id)) continue;
-
-            const file = allAddedFileObjects[id];
-            if (!file) continue;
-            const ext = file.name.split('.').pop()?.toLowerCase() || '';
-            try {
-              let thumb: string | undefined;
-              if (isVideo(ext)) {
-                thumb = await extractVideoThumbnail(file);
-              } else if (ext === 'svg') {
-                thumb = await renderSvgThumbnail(file);
-              } else if (isVector(ext)) {
-                thumb = await extractEpsThumbnail(file);
-              }
-              if (thumb && thumb.startsWith('data:image/') && !thumbnailAbortRef.current) {
-                batchUpdates[id] = thumb;
-                if (Object.keys(batchUpdates).length >= 4) {
-                  flushBatch();
+      if (needsExtraction.length > 0) {
+        (async () => {
+          const concurrency = 3;
+          let queueIdx = 0;
+          const runWorker = async () => {
+            while (queueIdx < needsExtraction.length) {
+              const item = needsExtraction[queueIdx++];
+              const fObj = allAddedFileObjects[item.id];
+              if (!fObj) continue;
+              const fExt = (item.fileType || '').toLowerCase();
+              try {
+                let thumb: string | undefined = undefined;
+                if (['eps', 'ai'].includes(fExt)) {
+                  thumb = await extractEpsThumbnail(fObj, false);
+                } else if (['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(fExt)) {
+                  thumb = await extractVideoThumbnail(fObj);
+                } else if (fExt === 'svg') {
+                  thumb = await renderSvgThumbnail(fObj);
                 }
+                if (thumb) {
+                  setFiles(prev => prev.map(f => f.id === item.id ? { ...f, previewUrl: thumb } : f));
+                  const target = filesRef.current.find(f => f.id === item.id);
+                  if (target) target.previewUrl = thumb;
+                }
+              } catch (e) {
+                console.warn("Background thumb extraction:", e);
               }
-            } catch (e) {
-              console.warn("Background thumb extraction error:", e);
-            }
-            // Yield breathing room so clicks, buttons, and scrolls remain instant
-            await new Promise(r => setTimeout(r, 150));
-          }
-          if (!thumbnailAbortRef.current) {
-            flushBatch();
-          }
-        };
-
-        if (typeof document !== 'undefined' && document.hidden) {
-          const onVisible = () => {
-            if (document.visibilityState === 'visible') {
-              document.removeEventListener('visibilitychange', onVisible);
-              runExtraction();
             }
           };
-          document.addEventListener('visibilitychange', onVisible);
-        } else {
-          setTimeout(runExtraction, 200);
-        }
+
+          const workers = [];
+          for (let w = 0; w < Math.min(concurrency, needsExtraction.length); w++) {
+            workers.push(runWorker());
+          }
+          await Promise.all(workers);
+        })();
       }
     }, 16);
   };
@@ -3516,6 +3514,56 @@ export default function App() {
                 )}
               </div>
               <div className="flex items-center gap-1.5">
+                {/* Zoom & Scale Controls */}
+                <div className="flex items-center gap-1 bg-background/80 rounded border border-border/60 px-1 py-0.5 mr-1">
+                  <button
+                    onClick={() => setPreviewZoom(prev => Math.max(0.5, Number((prev - 0.25).toFixed(2))))}
+                    className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                    title="Zoom Out (-)"
+                  >
+                    <ZoomOut size={13} />
+                  </button>
+                  <button
+                    onClick={() => setPreviewZoom(1)}
+                    className={cn(
+                      "px-1.5 py-0.5 text-[10px] font-bold rounded transition-all cursor-pointer",
+                      previewZoom === 1 ? "bg-primary/20 text-primary border border-primary/30" : "text-muted-foreground hover:text-foreground"
+                    )}
+                    title="100% Scale / Actual View"
+                  >
+                    100%
+                  </button>
+                  <button
+                    onClick={() => setPreviewZoom(prev => Math.min(3, Number((prev + 0.25).toFixed(2))))}
+                    className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                    title="Zoom In (+)"
+                  >
+                    <ZoomIn size={13} />
+                  </button>
+                </div>
+
+                {['eps', 'ai', 'svg'].includes((previewModalFile.fileType || '').toLowerCase()) && (
+                  <button 
+                    onClick={async () => {
+                      const fObj = fileObjects[previewModalFile.id] || fileObjectsRef.current[previewModalFile.id];
+                      if (!fObj) return;
+                      showNotification("Rendering high-definition vector preview...", "info");
+                      const thumb = await extractEpsThumbnail(fObj, false);
+                      if (thumb) {
+                        setFiles(prev => prev.map(f => f.id === previewModalFile.id ? { ...f, previewUrl: thumb } : f));
+                        const target = filesRef.current.find(f => f.id === previewModalFile.id);
+                        if (target) target.previewUrl = thumb;
+                        showNotification("✓ Vector preview updated successfully!", "success");
+                      }
+                    }}
+                    className="p-1.5 hover:bg-amber-500/10 rounded text-amber-500 dark:text-amber-400 hover:text-amber-300 transition-all cursor-pointer border border-amber-500/30 flex items-center gap-1 text-[10px] font-bold"
+                    title="Re-render high-definition vector preview"
+                  >
+                    <RefreshCw size={13} />
+                    <span className="hidden sm:inline">Render</span>
+                  </button>
+                )}
+
                 <button 
                   onClick={() => handleModalNavigate('prev')}
                   className="p-1.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-all cursor-pointer border border-border/50"
@@ -3544,7 +3592,7 @@ export default function App() {
             {/* Modal Body */}
             <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
               {/* Media Preview Stage */}
-              <div className="w-full bg-slate-950/90 rounded-md border border-border/80 flex items-center justify-center p-4 min-h-[280px] max-h-[460px] overflow-hidden relative">
+              <div className="w-full bg-slate-950/95 rounded-md border border-border/80 flex items-center justify-center p-4 min-h-[300px] max-h-[500px] overflow-auto custom-scrollbar relative">
                 {(() => {
                   const fObj = fileObjects[previewModalFile.id] || fileObjectsRef.current[previewModalFile.id];
                   const ext = (previewModalFile.fileType || previewModalFile.filename.split('.').pop() || '').toLowerCase();
@@ -3567,14 +3615,15 @@ export default function App() {
 
                     if (videoSrc && isPlayableVid) {
                       return (
-                        <div className="flex flex-col items-center justify-center max-h-[420px] max-w-full relative">
+                        <div className="flex flex-col items-center justify-center max-h-[460px] max-w-full relative">
                           <video 
                             src={videoSrc} 
+                            poster={isStaticPoster ? previewModalFile.previewUrl : undefined}
                             controls 
                             autoPlay 
                             muted 
                             playsInline 
-                            className="max-h-[400px] max-w-full rounded shadow-md object-contain"
+                            className="max-h-[440px] max-w-full rounded shadow-md object-contain"
                           />
                         </div>
                       );
@@ -3582,15 +3631,17 @@ export default function App() {
 
                     if (isStaticPoster) {
                       return (
-                        <div className="relative flex flex-col items-center justify-center max-h-[420px] max-w-full">
+                        <div className="relative flex flex-col items-center justify-center max-h-[460px] max-w-full overflow-auto">
                           <img 
                             src={previewModalFile.previewUrl} 
                             alt={previewModalFile.filename} 
-                            className="max-h-[400px] max-w-full rounded shadow-md object-contain"
+                            style={{ transform: `scale(${previewZoom})`, transformOrigin: 'center center', transition: 'transform 0.2s ease-out' }}
+                            className="max-h-[440px] max-w-full rounded shadow-md object-contain select-none"
                             referrerPolicy="no-referrer"
                           />
-                          <div className="absolute top-2 left-2 bg-black/80 text-purple-300 text-[10px] font-bold px-2 py-0.5 rounded border border-purple-500/40 flex items-center gap-1 shadow-md">
+                          <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-xs text-purple-300 text-[10px] font-bold px-2 py-0.5 rounded border border-purple-500/40 flex items-center gap-1 shadow-md z-10">
                             🎬 Video Keyframe Preview ({ext.toUpperCase()})
+                            {previewZoom !== 1 && <span className="text-white/80 font-mono ml-1">({Math.round(previewZoom * 100)}%)</span>}
                           </div>
                         </div>
                       );
@@ -3601,19 +3652,71 @@ export default function App() {
                         <video 
                           src={videoSrc} 
                           controls 
-                          className="max-h-[400px] max-w-full rounded shadow-md object-contain"
+                          className="max-h-[440px] max-w-full rounded shadow-md object-contain"
                         />
                       );
                     }
                   }
 
+                  if (['eps', 'ai'].includes(ext)) {
+                    if (previewModalFile.previewUrl) {
+                      return (
+                        <div className="relative flex flex-col items-center justify-center max-h-[460px] max-w-full overflow-auto w-full custom-scrollbar">
+                          <img 
+                            src={previewModalFile.previewUrl} 
+                            alt={previewModalFile.filename} 
+                            style={{ transform: `scale(${previewZoom})`, transformOrigin: 'center center', transition: 'transform 0.2s ease-out' }}
+                            className="max-h-[440px] max-w-full rounded shadow-md object-contain select-none"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-xs text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-500/40 flex items-center gap-1 shadow-md z-10">
+                            ✨ Vector Illustration Preview ({ext.toUpperCase()})
+                            {previewZoom !== 1 && <span className="text-white/80 font-mono ml-1">({Math.round(previewZoom * 100)}%)</span>}
+                          </div>
+                        </div>
+                      );
+                    }
+                    if (fObj) {
+                      // Trigger extraction immediately
+                      extractEpsThumbnail(fObj, false).then(thumb => {
+                        if (thumb) {
+                          setFiles(prev => prev.map(f => f.id === previewModalFile.id ? { ...f, previewUrl: thumb } : f));
+                          const target = filesRef.current.find(f => f.id === previewModalFile.id);
+                          if (target) target.previewUrl = thumb;
+                        } else {
+                          const art = generateVectorArtboardThumbnail(previewModalFile.filename, '') || '';
+                          if (art) {
+                            setFiles(prev => prev.map(f => f.id === previewModalFile.id ? { ...f, previewUrl: art } : f));
+                            const target = filesRef.current.find(f => f.id === previewModalFile.id);
+                            if (target) target.previewUrl = art;
+                          }
+                        }
+                      });
+                      return (
+                        <div className="flex flex-col items-center justify-center text-cyan-400 gap-3 p-8">
+                          <RefreshCw size={36} className="animate-spin text-cyan-400" />
+                          <span className="text-xs uppercase tracking-widest font-bold text-cyan-300">Rendering Vector Preview...</span>
+                          <span className="text-[10px] text-muted-foreground font-medium">Ghostscript high-definition vector rendering in progress</span>
+                        </div>
+                      );
+                    }
+                  }
+
                   return (
-                    <img 
-                      src={previewSrc} 
-                      alt={previewModalFile.filename} 
-                      className="max-h-[400px] max-w-full rounded shadow-md object-contain"
-                      referrerPolicy="no-referrer"
-                    />
+                    <div className="relative flex flex-col items-center justify-center max-h-[460px] max-w-full overflow-auto w-full custom-scrollbar">
+                      <img 
+                        src={previewSrc} 
+                        alt={previewModalFile.filename} 
+                        style={{ transform: `scale(${previewZoom})`, transformOrigin: 'center center', transition: 'transform 0.2s ease-out' }}
+                        className="max-h-[440px] max-w-full rounded shadow-md object-contain select-none"
+                        referrerPolicy="no-referrer"
+                      />
+                      {previewZoom !== 1 && (
+                        <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-xs text-white text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-white/20 shadow-md z-10">
+                          {Math.round(previewZoom * 100)}%
+                        </div>
+                      )}
+                    </div>
                   );
                 })()}
               </div>

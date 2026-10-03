@@ -345,33 +345,7 @@ export function sanitizeStockKeywords(
     }
   }
 
-  // Supplement with high-converting commercial stock tags if count is below targetCount
-  if (validKeywords.length < targetCount) {
-    const contextualBackfill = isDoubleOnly ? [
-      'modern design', 'visual texture', 'creative element', 'artistic composition', 
-      'scenic background', 'color palette', 'clean detail', 'horizontal view', 
-      'close perspective', 'commercial utility', 'elegance style', 'vibrant atmosphere', 
-      'graphic element', 'contemporary style', 'decorative pattern', 'minimalist aesthetic', 
-      'balanced composition', 'natural lighting', 'studio presentation', 'artistic arrangement',
-      'high resolution', 'commercial project', 'digital design', 'concept visual'
-    ] : [
-      'photography', 'composition', 'texture', 'element', 'detail', 'visual', 
-      'perspective', 'lighting', 'backdrop', 'creative', 'modern', 'style', 
-      'color palette', 'clarity', 'focus', 'design', 'presentation', 'pattern', 
-      'surface', 'angle', 'scene', 'contemporary', 'graphic', 'artistic', 
-      'arrangement', 'atmosphere', 'shade', 'contrast', 'balance', 'horizontal',
-      'vertical', 'panoramic', 'closeup', 'tone', 'ambiance', 'elegance'
-    ];
-    for (const tag of contextualBackfill) {
-      if (validKeywords.length >= targetCount) break;
-      const cleanTag = isSingleOnly && tag.includes(' ') ? tag.split(' ')[0] : tag;
-      if (!seen.has(cleanTag) && !STOCK_STOP_WORDS.has(cleanTag)) {
-        seen.add(cleanTag);
-        validKeywords.push(cleanTag);
-      }
-    }
-  }
-
+  // Keep valid keywords natural without injecting generic filler buzzwords (photography, texture, etc.)
   let processedKeywords = validKeywords;
   if (isDoubleOnly) {
     const doubleOnlyList: string[] = [];
@@ -392,13 +366,12 @@ export function sanitizeStockKeywords(
     }
     if (orphanSingles.length % 2 === 1) {
       const last = orphanSingles[orphanSingles.length - 1];
-      const paired = `${last} concept`;
-      if (!seen.has(paired)) {
-        doubleOnlyList.push(paired);
-        seen.add(paired);
+      if (!seen.has(last)) {
+        doubleOnlyList.push(last);
+        seen.add(last);
       }
     }
-    processedKeywords = doubleOnlyList;
+    processedKeywords = doubleOnlyList.length > 0 ? doubleOnlyList : validKeywords;
   }
 
   const finalKeywords = processedKeywords.slice(0, targetCount).join(', ');

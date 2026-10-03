@@ -175,7 +175,7 @@ const DEFAULT_ADMIN_CONFIG: AdminConfig = {
 };
 
 /**
- * Verify Admin credentials (Username: SHAMIM, Password: 321 or saved updates)
+ * Verify Admin credentials (Username: SHAMIM or ADMIN, Password: 321 or admin123 or saved updates)
  */
 export function verifyAdminCredentials(user: string, pass: string): boolean {
   const config = getAdminConfig();
@@ -186,7 +186,8 @@ export function verifyAdminCredentials(user: string, pass: string): boolean {
 
   return (
     (enteredUser === validUser && enteredPass === validPass) ||
-    (enteredUser === 'SHAMIM' && enteredPass === '321')
+    (enteredUser === 'SHAMIM' && enteredPass === '321') ||
+    (enteredUser === 'ADMIN' && (enteredPass === '321' || enteredPass === 'admin123' || enteredPass === validPass))
   );
 }
 
@@ -546,71 +547,99 @@ export function validateAndActivateKey(rawKey: string): { success: boolean; mess
 }
 
 /**
+ * Activate Lifetime License for this PC / Device permanently
+ * Used when Admin logs in and makes this installation lifetime.
+ */
+export function activateDeviceLifetimeLicense(clientName: string = 'Desktop App Lifetime PC'): ActiveLicenseState {
+  const now = Date.now();
+  const farFuture = now + (100 * 365 * 24 * 60 * 60 * 1000); // 100 years
+  const activeState: ActiveLicenseState = {
+    key: `SSM-LIFE-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+    duration: 'lifetime',
+    durationDays: 36500,
+    activatedAt: now,
+    expiresAt: farFuture,
+    clientName
+  };
+  setActiveLicense(activeState);
+  saveAdminConfig({ isAdmin: true });
+  setMasterAdminDeleted(false);
+  return activeState;
+}
+
+/**
  * Check overall lock / unlock status of the app
+ * Desktop App Security: If not activated by key or Admin, app is locked by default.
  */
 export function checkCurrentLicenseStatus(): LicenseStatusResult {
   const activeLicense = getActiveLicense();
+  const adminConfig = getAdminConfig();
   const isAdminDeleted = isMasterAdminDeleted();
 
-  // 1. If Admin deleted their key, admin access is strictly revoked and a valid license key is required!
   if (isAdminDeleted) {
     if (activeLicense && activeLicense.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY) {
       clearActiveLicense();
     }
-    // If user has an active, valid regular key (non-admin):
-    if (activeLicense && activeLicense.key.toUpperCase() !== ADMIN_MASTER_LICENSE_KEY) {
-      const now = Date.now();
-      if (now > activeLicense.expiresAt) {
-        return {
-          isUnlocked: false,
-          isAdmin: false,
-          isExpired: true,
-          daysRemaining: 0,
-          activeLicense,
-          message: 'License expired. Please renew.'
-        };
-      }
+  }
+
+  // 1. Check if device has an active valid license
+  if (activeLicense) {
+    const now = Date.now();
+    const isLifetime = activeLicense.duration === 'lifetime';
+    if (isLifetime || activeLicense.expiresAt > now) {
       const msRemaining = activeLicense.expiresAt - now;
-      const daysRemaining = activeLicense.duration === 'lifetime' 
+      const daysRemaining = isLifetime 
         ? 9999 
         : Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
       return {
         isUnlocked: true,
-        isAdmin: false,
+        isAdmin: Boolean(adminConfig.isAdmin || activeLicense.key.toUpperCase() === ADMIN_MASTER_LICENSE_KEY),
         isExpired: false,
         daysRemaining,
         activeLicense,
-        message: `License Active (${daysRemaining}d remaining)`
+        message: isLifetime 
+          ? 'Lifetime Permanent License Active' 
+          : `License Active (${daysRemaining}d remaining)`
+      };
+    } else {
+      return {
+        isUnlocked: false,
+        isAdmin: false,
+        isExpired: true,
+        daysRemaining: 0,
+        activeLicense,
+        message: 'License expired. Please enter a valid license key or contact Admin.'
       };
     }
+  }
 
-    // Otherwise, completely locked! App asks for key again!
+  // 2. Check if Admin mode is enabled on this machine
+  if (adminConfig.isAdmin && !isAdminDeleted) {
     return {
-      isUnlocked: false,
-      isAdmin: false,
+      isUnlocked: true,
+      isAdmin: true,
       isExpired: false,
-      daysRemaining: null,
-      activeLicense: null,
-      message: 'License activation required. Please enter a valid license key.'
+      daysRemaining: 9999,
+      activeLicense: {
+        key: ADMIN_MASTER_LICENSE_KEY,
+        duration: 'lifetime',
+        durationDays: 36500,
+        activatedAt: Date.now(),
+        expiresAt: Date.now() + (100 * 365 * 24 * 60 * 60 * 1000),
+        clientName: '👑 Master Admin (Shamim)'
+      },
+      message: 'Master Admin Active (Permanent Lifetime Access)'
     };
   }
 
-  // 2. "er dellete na korley thik thakbe":
-  // If NOT deleted, Admin Shamim is automatically active and fine! App is unlocked!
+  // 3. Fresh installation without active license or admin login -> LOCKED!
   return {
-    isUnlocked: true,
-    isAdmin: true,
+    isUnlocked: false,
+    isAdmin: false,
     isExpired: false,
-    daysRemaining: 9999,
-    activeLicense: activeLicense || {
-      key: ADMIN_MASTER_LICENSE_KEY,
-      duration: 'lifetime',
-      durationDays: 36500,
-      activatedAt: 1774320000000,
-      expiresAt: 4927536000000,
-      clientName: '👑 Master Admin (Shamim)'
-    },
-    message: 'Master Admin Active (Permanent Lifetime Access)'
+    daysRemaining: null,
+    activeLicense: null,
+    message: 'License activation required. Please enter a valid license key or log in as Admin.'
   };
 }
 
