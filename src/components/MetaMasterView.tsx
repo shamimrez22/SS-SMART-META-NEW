@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { FixedSizeList, ListChildComponentProps } from 'react-window';
 import { StockMetadata, ApiConfig, GeneratorSettings } from '../types';
 import { 
   Globe, 
@@ -158,20 +159,21 @@ const TableRow = React.memo<TableRowProps>(({
     <div 
       onClick={() => onSelect(file.id)}
       onDoubleClick={() => onOpenPreview(file)}
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '34px' }}
       className={cn(
         "flex items-center text-xs h-[34px] px-3 border-b cursor-pointer transition-colors font-sans select-none group shrink-0",
-        isBlue
-          ? (isSelected 
-            ? "bg-[#163a70] text-white border-y border-cyan-400 shadow-[inset_0_0_0_1px_#22d3ee]" 
-            : "border-[#0c203e] hover:bg-[#0e274c] text-slate-100")
-          : (isDark 
+        isGeneratingThis
+          ? "bg-[#31AAA9]/20 border-y border-[#31AAA9] shadow-[inset_0_0_0_1px_#31AAA9] text-white"
+          : (isBlue
             ? (isSelected 
-              ? "bg-[#1c2e43] text-white border-y border-[#2d4666]/60 shadow-[inset_0_0_0_1px_#0284c7]" 
-              : "border-[#213347] hover:bg-[#1b2b3e] text-slate-100")
-            : (isSelected 
-              ? "bg-sky-100 text-slate-900 border-y border-sky-300 font-medium shadow-[inset_0_0_0_1px_#38bdf8]" 
-              : "border-slate-200 hover:bg-slate-50 text-slate-800"))
+              ? "bg-[#163a70] text-white border-y border-cyan-400 shadow-[inset_0_0_0_1px_#22d3ee]" 
+              : "border-[#0c203e] hover:bg-[#0e274c] text-slate-100")
+            : (isDark 
+              ? (isSelected 
+                ? "bg-[#1c2e43] text-white border-y border-[#2d4666]/60 shadow-[inset_0_0_0_1px_#0284c7]" 
+                : "border-[#213347] hover:bg-[#1b2b3e] text-slate-100")
+              : (isSelected 
+                ? "bg-sky-100 text-slate-900 border-y border-sky-300 font-medium shadow-[inset_0_0_0_1px_#38bdf8]" 
+                : "border-slate-200 hover:bg-slate-50 text-slate-800")))
       )}
     >
       {/* Preview Thumbnail */}
@@ -184,26 +186,28 @@ const TableRow = React.memo<TableRowProps>(({
         title="Click to view full preview"
       >
         {file.previewUrl ? (
-          <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer relative">
+          <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer relative shrink-0">
             {fIsVid && !file.previewUrl.startsWith('data:image/') ? (
               <div className="w-full h-full relative bg-purple-950 flex flex-col items-center justify-center text-purple-200">
                 <span className="text-[11px] leading-none">🎬</span>
                 <span className="text-[6.5px] font-bold text-purple-300 font-mono tracking-tighter">VID</span>
               </div>
             ) : (
-              <div className="w-full h-full relative">
+              <div className="w-full h-full relative bg-slate-900 flex items-center justify-center">
+                <span className="absolute text-[8px] font-bold text-slate-500 select-none">
+                  {fIsVec ? 'EPS' : fIsVid ? 'VID' : 'IMG'}
+                </span>
                 <img 
                   src={file.previewUrl} 
                   alt={file.filename} 
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                  decoding="async"
+                  className="w-full h-full object-cover block relative z-1"
+                  loading="eager"
                   onError={(e) => {
                     (e.target as HTMLElement).style.display = 'none';
                   }}
                 />
                 {fIsVid && (
-                  <span className="absolute bottom-0 right-0 text-[7px] bg-black/80 text-purple-300 px-0.5 rounded-tl font-bold leading-none">▶</span>
+                  <span className="absolute bottom-0 right-0 text-[7px] bg-black/80 text-purple-300 px-0.5 rounded-tl font-bold leading-none z-2">▶</span>
                 )}
               </div>
             )}
@@ -249,7 +253,14 @@ const TableRow = React.memo<TableRowProps>(({
           onCopy(e, file.title || displayTitle, `title-${file.id}`);
         }}
       >
-        {copiedCell === `title-${file.id}` ? '✓ Copied' : displayTitle}
+        {isGeneratingThis ? (
+          <span className="inline-flex items-center gap-1 text-[#31AAA9] font-bold animate-pulse">
+            <RefreshCw size={11} className="animate-spin text-[#31AAA9]" />
+            <span>AI Processing...</span>
+          </span>
+        ) : (
+          copiedCell === `title-${file.id}` ? '✓ Copied' : displayTitle
+        )}
       </div>
 
       {/* Keywords */}
@@ -311,12 +322,54 @@ const TableRow = React.memo<TableRowProps>(({
     </div>
   );
 }, (prev, next) => {
+  if (prev.isSelected !== next.isSelected) return false;
+  if (prev.isBlue !== next.isBlue || prev.isDark !== next.isDark) return false;
+  if (prev.copiedCell !== next.copiedCell && (prev.copiedCell?.includes(prev.file.id) || next.copiedCell?.includes(next.file.id))) return false;
+  if (prev.file === next.file) return true;
   return (
-    prev.file === next.file &&
-    prev.isSelected === next.isSelected &&
-    prev.isBlue === next.isBlue &&
-    prev.isDark === next.isDark &&
-    prev.copiedCell === next.copiedCell
+    prev.file.id === next.file.id &&
+    prev.file.status === next.file.status &&
+    prev.file.title === next.file.title &&
+    prev.file.keywords === next.file.keywords &&
+    prev.file.description === next.file.description &&
+    prev.file.category === next.file.category &&
+    prev.file.rating === next.file.rating &&
+    prev.file.previewUrl === next.file.previewUrl
+  );
+});
+
+interface VirtualItemData {
+  files: StockMetadata[];
+  selectedFileId: string | null;
+  isBlue: boolean;
+  isDark: boolean;
+  copiedCell: string | null;
+  onSelect: (id: string) => void;
+  onOpenPreview: (file: StockMetadata) => void;
+  onCopy: (e: React.MouseEvent, text: string, cellId: string) => void;
+  onRetry: (id: string) => void;
+  onEmbed: (fileId: string) => void;
+}
+
+const VirtualRow = React.memo<ListChildComponentProps<VirtualItemData>>(({ index, style, data }) => {
+  const file = data.files[index];
+  if (!file) return null;
+  return (
+    <div style={style}>
+      <TableRow
+        file={file}
+        idx={index + 1}
+        isSelected={data.selectedFileId === file.id}
+        isBlue={data.isBlue}
+        isDark={data.isDark}
+        copiedCell={data.copiedCell}
+        onSelect={data.onSelect}
+        onOpenPreview={data.onOpenPreview}
+        onCopy={data.onCopy}
+        onRetry={data.onRetry}
+        onEmbed={data.onEmbed}
+      />
+    </div>
   );
 });
 
@@ -436,8 +489,9 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   }, []);
 
   const isBlue = theme === 'system' || theme === 'blue';
-  const isLight = theme === 'light';
-  const isDark = theme === 'dark' || (!isLight && !isBlue);
+  const isDark = theme === 'dark';
+  const isLight = false;
+  const isTeal = theme === 'teal' || (!isBlue && !isDark);
 
   // Real-time live license status sync & day countdown
   useEffect(() => {
@@ -456,14 +510,14 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     };
   }, []);
 
-  const copyText = (e: React.MouseEvent, text: string, cellId: string) => {
+  const copyText = React.useCallback((e: React.MouseEvent, text: string, cellId: string) => {
     e.stopPropagation();
     if (!text) return;
     navigator.clipboard.writeText(text);
     setCopiedCell(cellId);
     setTimeout(() => setCopiedCell(null), 1500);
     showNotification("Copied to clipboard", "success");
-  };
+  }, [showNotification]);
 
   // Separate files by active mode so Vector, Image, and Video operate completely independently
   const isVectorFile = (f: StockMetadata) => {
@@ -515,8 +569,23 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   // Single Page rendering for all uploaded files with smooth 60fps scrolling
   const visibleFiles = currentModeFiles;
 
-  // High-performance container ref for smooth 120fps scrolling
-  const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+  // High-performance virtualized table container measuring
+  const tableContainerRef = React.useRef<HTMLDivElement>(null);
+  const [tableDimensions, setTableDimensions] = React.useState({ width: 1000, height: 500 });
+
+  React.useEffect(() => {
+    const el = tableContainerRef.current;
+    if (!el) return;
+    const updateSize = () => {
+      if (el.clientWidth > 0 && el.clientHeight > 0) {
+        setTableDimensions({ width: el.clientWidth, height: el.clientHeight });
+      }
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const handleRowRetry = React.useCallback((id: string) => {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'pending', errorMessage: undefined } : f));
@@ -527,7 +596,18 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     handleEmbed('all', id);
   }, [handleEmbed]);
 
-  const totalRows = visibleFiles.length;
+  const itemData = React.useMemo<VirtualItemData>(() => ({
+    files: visibleFiles,
+    selectedFileId,
+    isBlue,
+    isDark,
+    copiedCell,
+    onSelect: setSelectedFileId,
+    onOpenPreview: openPreviewModal,
+    onCopy: copyText,
+    onRetry: handleRowRetry,
+    onEmbed: handleRowEmbed,
+  }), [visibleFiles, selectedFileId, isBlue, isDark, copiedCell, setSelectedFileId, openPreviewModal, copyText, handleRowRetry, handleRowEmbed]);
 
   const allFilesCount = files.length;
 
@@ -789,51 +869,43 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             </button>
           </fieldset>
 
-          {/* Theme Group (Dark, Light, System / Blue) */}
-          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-0.5 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Theme</legend>
+          {/* Theme Group (Teal #31AAA9, Dark, System / Blue) */}
+          <fieldset className={cn("border rounded-none px-1.5 py-0.5 flex items-center gap-0.5 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#31AAA9]/60 bg-[#071d22]/90"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#31AAA9]"))}>Theme</legend>
+            <button 
+              type="button"
+              onClick={() => setTheme('teal')}
+              className={cn(
+                "px-2 py-0.5 rounded-none text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
+                theme === 'teal' || (!isBlue && theme !== 'dark')
+                  ? "bg-[#31AAA9] text-black shadow-md font-extrabold" 
+                  : "bg-[#0b1c22] text-[#31AAA9] border border-[#31AAA9]/40 hover:bg-[#122e37]"
+              )}
+            >
+              Teal (#31AAA9)
+            </button>
             <button 
               type="button"
               onClick={() => setTheme('dark')}
               className={cn(
-                "px-1.5 py-0.5 rounded text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
+                "px-1.5 py-0.5 rounded-none text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
                 theme === 'dark' 
                   ? "bg-[#1b2737] text-white border border-[#38bdf8] shadow-[0_0_8px_rgba(56,189,248,0.35)]" 
                   : (isBlue 
                     ? "bg-[#091b38] text-blue-300 border border-[#1d4ed8] hover:bg-[#102b54]" 
-                    : (isDark 
-                      ? "bg-[#162332] text-slate-300 border border-[#30445a] hover:bg-slate-800 hover:text-white" 
-                      : "bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"))
+                    : "bg-[#162332] text-slate-300 border border-[#30445a] hover:bg-slate-800 hover:text-white")
               )}
             >
               Dark
             </button>
             <button 
               type="button"
-              onClick={() => setTheme('light')}
-              className={cn(
-                "px-1.5 py-0.5 rounded text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
-                theme === 'light' 
-                  ? "bg-white text-sky-900 border-2 border-sky-600 shadow-xs" 
-                  : (isBlue 
-                    ? "bg-[#091b38] text-blue-300 border border-[#1d4ed8] hover:bg-[#102b54]" 
-                    : (isDark 
-                      ? "bg-[#162332] text-slate-300 border border-[#30445a] hover:bg-slate-800 hover:text-white" 
-                      : "bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"))
-              )}
-            >
-              Light
-            </button>
-            <button 
-              type="button"
               onClick={() => setTheme('system')}
               className={cn(
-                "px-1.5 py-0.5 rounded text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
+                "px-1.5 py-0.5 rounded-none text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
                 isBlue 
                   ? "bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 text-white border border-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.65)]" 
-                  : (isDark 
-                    ? "bg-[#162332] text-slate-300 border border-[#30445a] hover:bg-slate-800 hover:text-white" 
-                    : "bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200")
+                  : "bg-[#162332] text-slate-300 border border-[#30445a] hover:bg-slate-800 hover:text-white"
               )}
             >
               System (Blue)
@@ -1308,19 +1380,18 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <div className="w-[5%] text-center whitespace-nowrap">Rating</div>
           </div>
 
-          {/* Table Rows Body - 120fps native GPU scrolling with content-visibility */}
+          {/* Table Rows Body - react-window 120fps hardware-accelerated list */}
           <div 
-            ref={scrollContainerRef}
-            className="flex-1 overflow-y-auto custom-scrollbar relative overscroll-contain"
-            style={{ WebkitOverflowScrolling: 'touch' }}
+            ref={tableContainerRef}
+            className="flex-1 w-full min-h-0 overflow-hidden relative select-none"
           >
-            {totalRows === 0 ? (
+            {visibleFiles.length === 0 ? (
               /* Clean empty table canvas matching image.png */
               <div className="w-full h-full min-h-[260px] flex flex-col items-center justify-center pointer-events-none select-none p-4 text-center">
                 <span className="text-2xl mb-1 opacity-40">
                   {mode === 'vector' ? '📐' : mode === 'video' ? '🎬' : mode === 'all' ? '⚡' : '🖼️'}
                 </span>
-                <span className={cn("text-xs font-semibold uppercase tracking-wider", isBlue ? "text-cyan-300/80" : (isDark ? "text-slate-400" : "text-slate-500"))}>
+                <span className={cn("text-xs font-semibold uppercase tracking-wider", isBlue ? "text-cyan-300/80" : (isDark ? "text-slate-400" : "text-[#31AAA9]"))}>
                   {mode === 'all' ? 'No files in workspace' : `No ${mode.toUpperCase()} files in workspace`}
                 </span>
                 <span className={cn("text-[11px] mt-0.5", isBlue ? "text-blue-300/60" : (isDark ? "text-slate-500" : "text-slate-400"))}>
@@ -1328,22 +1399,17 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 </span>
               </div>
             ) : (
-              visibleFiles.map((file, idx) => (
-                <TableRow
-                  key={file.id || idx}
-                  file={file}
-                  idx={idx + 1}
-                  isSelected={selectedFileId === file.id}
-                  isBlue={isBlue}
-                  isDark={isDark}
-                  copiedCell={copiedCell}
-                  onSelect={setSelectedFileId}
-                  onOpenPreview={openPreviewModal}
-                  onCopy={copyText}
-                  onRetry={handleRowRetry}
-                  onEmbed={handleRowEmbed}
-                />
-              ))
+              <FixedSizeList
+                height={tableDimensions.height}
+                width={tableDimensions.width}
+                itemCount={visibleFiles.length}
+                itemSize={34}
+                overscanCount={20}
+                itemData={itemData}
+                className="custom-scrollbar"
+              >
+                {VirtualRow}
+              </FixedSizeList>
             )}
           </div>
         </div>

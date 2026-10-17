@@ -46,7 +46,8 @@ import {
   ADMIN_MASTER_LICENSE_KEY,
   isMasterAdminDeleted,
   deleteLicenseKey,
-  validateAndActivateKey
+  validateAndActivateKey,
+  activateDeviceLifetimeLicense
 } from '../services/licenseService';
 import { cn } from '../lib/utils';
 
@@ -317,11 +318,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           {/* TAB 1: ADMIN MODE TICKBOX & STATUS */}
           {activeTab === 'admin-mode' && (
             <div className="space-y-5 animate-in fade-in duration-150">
-              {/* Big Admin Mode Card with interactive tickbox */}
-              <div className="p-5 rounded-xl bg-[#0b1828] border-2 border-amber-500/40 space-y-4 shadow-lg">
+              {/* Big Admin Mode Card with interactive tickbox & 1-Click Lifetime Activator */}
+              <div className="p-5 rounded-none bg-[#0b1828] border-2 border-amber-500/40 space-y-4 shadow-lg">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex items-start gap-3.5">
-                    <div className="w-12 h-12 rounded-xl bg-amber-500/20 border-2 border-amber-400/50 flex items-center justify-center text-amber-300 shrink-0">
+                    <div className="w-12 h-12 rounded-none bg-amber-500/20 border-2 border-amber-400/50 flex items-center justify-center text-amber-300 shrink-0">
                       <Shield size={26} />
                     </div>
                     <div>
@@ -329,30 +330,48 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         Admin Mode Authorization (অ্যাডমিন মোড টিক বক্স)
                       </h4>
                       <p className="text-xs text-slate-300 mt-0.5 leading-relaxed">
-                        নিচের টিক বক্সে টিক মার্ক দেওয়া থাকলে এই সফটওয়্যারটি বুঝবে <strong>আপনি স্বয়ং অ্যাডমিন</strong>।
-                        আপনার জন্য <strong>কোনো লাইসেন্স কী লাগবে না</strong>, অ্যাপ সরাসরি ওপেন হবে।
+                        নিচের টিক বক্সে টিক মার্ক দেওয়া থাকলে অথবা লাইফটাইম বাটনে ক্লিক করলে <strong>আপনার জন্য কোনো লাইসেন্স কী লাগবে না</strong>, অ্যাপ সবসময় আনলক থাকবে।
                       </p>
                     </div>
                   </div>
 
-                  {/* The Critical Tick Box as requested */}
-                  <label className="flex items-center gap-3 p-3 rounded-xl bg-[#07111d] border-2 border-amber-400/50 hover:border-amber-400 cursor-pointer transition-all self-start sm:self-auto shrink-0 shadow-md">
-                    <input 
-                      type="checkbox"
-                      checked={config.isAdmin}
-                      onChange={(e) => handleToggleAdminMode(e.target.checked)}
-                      className="w-5 h-5 rounded text-amber-500 bg-slate-900 border-slate-700 focus:ring-amber-500 focus:ring-offset-0 cursor-pointer accent-amber-500"
-                    />
-                    <div className="flex flex-col">
-                      <span className="text-xs font-black uppercase tracking-wider text-amber-300">
-                        ADMIN (আই এম অ্যাডমিন)
-                      </span>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          activateDeviceLifetimeLicense('Admin Desktop Lifetime Installation');
+                          handleToggleAdminMode(true);
+                          showNotification("✓ এই কম্পিউটারটিতে লাইফটাইম অ্যাক্টিভেশন সফল হয়েছে!", "success");
+                        } catch (err: any) {
+                          showNotification("Failed to activate lifetime: " + err?.message, "error");
+                        }
+                      }}
+                      className="px-3.5 py-2.5 bg-[#31AAA9] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider rounded-none flex items-center justify-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+                    >
+                      <Sparkles size={14} />
+                      <span>Make Lifetime Active (লাইফটাইম করুন)</span>
+                    </button>
+
+                    {/* The Critical Tick Box as requested */}
+                    <label className="flex items-center gap-3 p-2.5 rounded-none bg-[#07111d] border-2 border-amber-400/50 hover:border-amber-400 cursor-pointer transition-all shrink-0 shadow-md">
+                      <input 
+                        type="checkbox"
+                        checked={config.isAdmin}
+                        onChange={(e) => handleToggleAdminMode(e.target.checked)}
+                        className="w-5 h-5 rounded-none text-amber-500 bg-slate-900 border-slate-700 focus:ring-amber-500 focus:ring-offset-0 cursor-pointer accent-amber-500"
+                      />
+                      <div className="flex flex-col">
+                        <span className="text-xs font-black uppercase tracking-wider text-amber-300">
+                          ADMIN (আই এম অ্যাডমিন)
+                        </span>
                       <span className="text-[10px] text-slate-400">
                         {config.isAdmin ? "✓ আনলিমিটেড লাইসেন্স বাইপাস চালু" : "টিক দিয়ে অ্যাডমিন মোড চালু করুন"}
                       </span>
                     </div>
                   </label>
                 </div>
+              </div>
 
                 {/* Status Notice Banner */}
                 <div className={cn(

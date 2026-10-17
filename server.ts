@@ -301,6 +301,34 @@ async function startServer() {
     }
   });
 
+  // Disk-backed Permanent Settings Persistence (never lost on browser reload or desktop restart)
+  const USER_SETTINGS_FILE = path.join(process.cwd(), "user-settings.json");
+
+  app.get("/api/user-settings", async (_req, res) => {
+    try {
+      if (fs.existsSync(USER_SETTINGS_FILE)) {
+        const raw = await fs.promises.readFile(USER_SETTINGS_FILE, "utf-8");
+        return res.json({ success: true, settings: JSON.parse(raw) });
+      }
+      return res.json({ success: true, settings: null });
+    } catch (e: any) {
+      return res.json({ success: false, error: e.message });
+    }
+  });
+
+  app.post("/api/user-settings", async (req, res) => {
+    try {
+      const data = req.body;
+      if (data && typeof data === 'object') {
+        await fs.promises.writeFile(USER_SETTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
+        return res.json({ success: true, message: "Settings saved to disk permanently" });
+      }
+      return res.status(400).json({ success: false, error: "Invalid settings payload" });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // API Proxy for Groq and Mistral to avoid CORS issues
   app.post("/api/ai-proxy", async (req, res) => {
     const { url, apiKey, body } = req.body;

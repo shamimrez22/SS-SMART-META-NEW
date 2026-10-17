@@ -123,10 +123,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         const parsed = JSON.parse(current);
         localStorage.setItem('ai-metadata-pro-config', JSON.stringify({ ...parsed, settings }));
       }
+      fetch('/api/user-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      }).catch(() => {});
     } catch (e) {
       console.error("Auto-save settings error:", e);
     }
   }, [settings]);
+
+  const handleSaveAllSettings = () => {
+    try {
+      localStorage.setItem('ai-metadata-pro-user-settings', JSON.stringify(settings));
+      const current = localStorage.getItem('ai-metadata-pro-config');
+      const parsed = current ? JSON.parse(current) : {};
+      localStorage.setItem('ai-metadata-pro-config', JSON.stringify({ ...parsed, settings }));
+      fetch('/api/user-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      }).catch(() => {});
+    } catch (e) {
+      console.error(e);
+    }
+    showNotification("✓ সেটিংস স্থায়ীভাবে সেভ করা হয়েছে! (Settings Saved Permanently to Disk & Storage)", "success");
+    onClose();
+  };
 
   if (!isOpen) return null;
 
@@ -136,7 +159,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Top Header */}
         <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted shrink-0 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+            <div className="w-9 h-9 rounded-none bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
               <Settings size={20} />
             </div>
             <div>
@@ -151,16 +174,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={handleSaveAllSettings}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-none bg-[#31AAA9] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-95"
+            >
+              <Check size={14} />
+              <span>Save Settings (সেভ করুন)</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setIsManageKeysOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-95"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-none bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-95"
             >
               <Key size={13} />
               <span>Manage Keys</span>
             </button>
             <button 
-              onClick={onClose} 
-              className="p-2 hover:bg-destructive hover:text-destructive-foreground rounded-md text-muted-foreground transition-all flex items-center gap-1 text-xs font-bold uppercase tracking-wider cursor-pointer"
-              title="Close settings"
+              onClick={handleSaveAllSettings} 
+              className="p-2 hover:bg-destructive hover:text-destructive-foreground rounded-none text-muted-foreground transition-all flex items-center gap-1 text-xs font-bold uppercase tracking-wider cursor-pointer"
+              title="Save and close settings"
             >
               <X size={18} />
               <span className="hidden sm:inline">Close</span>
@@ -1400,37 +1431,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </span>
           <div className="flex items-center gap-3 ml-auto">
             <button 
-              onClick={() => {
-                try {
-                  localStorage.setItem('ai-metadata-pro-user-settings', JSON.stringify(settings));
-                  const current = localStorage.getItem('ai-metadata-pro-config');
-                  const parsed = current ? JSON.parse(current) : {};
-                  localStorage.setItem('ai-metadata-pro-config', JSON.stringify({ ...parsed, settings }));
-                } catch (e) {
-                  console.error(e);
-                }
-                onClose();
-              }}
-              className="px-5 py-2 rounded-md text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-secondary transition-all border border-border cursor-pointer"
+              onClick={handleSaveAllSettings}
+              className="px-5 py-2 rounded-none text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-secondary transition-all border border-border cursor-pointer"
             >
               Close
             </button>
             <button 
-              onClick={() => {
-                try {
-                  localStorage.setItem('ai-metadata-pro-user-settings', JSON.stringify(settings));
-                  const current = localStorage.getItem('ai-metadata-pro-config');
-                  const parsed = current ? JSON.parse(current) : {};
-                  localStorage.setItem('ai-metadata-pro-config', JSON.stringify({ ...parsed, settings }));
-                } catch (e) {
-                  console.error(e);
-                }
-                showNotification("Settings saved successfully!", "success");
-                onClose();
-              }}
-              className="px-5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-black uppercase tracking-wider rounded-md shadow-md cursor-pointer transition-all active:scale-95"
+              onClick={handleSaveAllSettings}
+              className="px-6 py-2.5 bg-[#31AAA9] hover:bg-[#288e8d] text-black text-xs font-black uppercase tracking-wider rounded-none shadow-md cursor-pointer transition-all active:scale-95 flex items-center gap-2"
             >
-              Done & Save
+              <Check size={16} />
+              <span>Save & Close (সেটিংস সেভ করুন)</span>
             </button>
           </div>
         </div>

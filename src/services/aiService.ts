@@ -681,116 +681,16 @@ function cleanBase64(str: string): string {
     .replace(/[\r\n\t\s]+/g, '');
 }
 
-// Fallback visual generator: Creates a crisp artboard thumbnail for EPS vectors
-export function generateVectorArtboardThumbnail(filename: string, headerText: string): string | undefined {
-  if (typeof document === 'undefined') return undefined;
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 400;
-    canvas.height = 400;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return undefined;
+// Instantaneous vector blueprint SVG thumbnail (Zero CPU, zero memory overhead, 100% instant)
+export const INSTANT_EPS_SVG_URI = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120"><rect width="120" height="120" fill="%230b1322"/><rect x="12" y="12" width="96" height="96" rx="6" fill="%23142033" stroke="%2331AAA9" stroke-width="2"/><path d="M25 75 C 40 30, 80 30, 95 75" fill="none" stroke="%2331AAA9" stroke-width="3"/><rect x="22" y="72" width="6" height="6" fill="%2338bdf8"/><rect x="57" y="32" width="6" height="6" fill="%23f59e0b"/><rect x="92" y="72" width="6" height="6" fill="%2338bdf8"/><text x="60" y="100" fill="%2331AAA9" font-family="system-ui,sans-serif" font-size="11" font-weight="900" text-anchor="middle">EPS VECTOR</text></svg>`;
 
-    // Elegant vector blueprint theme
-    ctx.fillStyle = '#0f172a'; // slate-900
-    ctx.fillRect(0, 0, 400, 400);
+export function getInstantVectorArtboardThumbnail(_filename?: string): string {
+  return INSTANT_EPS_SVG_URI;
+}
 
-    // Subtle isometric/vector grid
-    ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 1;
-    for (let x = 20; x < 400; x += 20) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, 400);
-      ctx.stroke();
-    }
-    for (let y = 20; y < 400; y += 20) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(400, y);
-      ctx.stroke();
-    }
-
-    // Centered Artboard canvas frame
-    const bbMatch = headerText.match(/%%(?:HiRes)?BoundingBox:\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)/i);
-    let artW = 280;
-    let artH = 280;
-    if (bbMatch) {
-      const origW = Math.abs(parseInt(bbMatch[3], 10) - parseInt(bbMatch[1], 10)) || 280;
-      const origH = Math.abs(parseInt(bbMatch[4], 10) - parseInt(bbMatch[2], 10)) || 280;
-      const aspect = origW / origH;
-      if (aspect > 1) {
-        artW = 280;
-        artH = Math.max(120, Math.round(280 / aspect));
-      } else {
-        artH = 280;
-        artW = Math.max(120, Math.round(280 * aspect));
-      }
-    }
-
-    const artX = (400 - artW) / 2;
-    const artY = (400 - artH) / 2;
-
-    // Artboard shadow & fill
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(artX + 4, artY + 4, artW, artH);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(artX, artY, artW, artH);
-    ctx.strokeStyle = '#38bdf8'; // sky-400
-    ctx.lineWidth = 2;
-    ctx.strokeRect(artX, artY, artW, artH);
-
-    // Vector anchor points & stylized bezier curves
-    ctx.strokeStyle = '#0284c7';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(artX + artW * 0.2, artY + artH * 0.7);
-    ctx.bezierCurveTo(
-      artX + artW * 0.3, artY + artH * 0.2,
-      artX + artW * 0.7, artY + artH * 0.8,
-      artX + artW * 0.8, artY + artH * 0.3
-    );
-    ctx.stroke();
-
-    // Corner handle points
-    const points = [
-      [artX + artW * 0.2, artY + artH * 0.7],
-      [artX + artW * 0.5, artY + artH * 0.5],
-      [artX + artW * 0.8, artY + artH * 0.3]
-    ];
-    for (const [px, py] of points) {
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(px - 4, py - 4, 8, 8);
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(px - 4, py - 4, 8, 8);
-    }
-
-    // Vector Format Badge
-    ctx.fillStyle = '#0284c7';
-    ctx.beginPath();
-    if (typeof (ctx as any).roundRect === 'function') {
-      (ctx as any).roundRect(artX + 10, artY + 10, 80, 22, 4);
-    } else {
-      ctx.rect(artX + 10, artY + 10, 80, 22);
-    }
-    ctx.fill();
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
-    ctx.fillText('EPS VECTOR', artX + 16, artY + 25);
-
-    // Title label at bottom
-    const titleMatch = headerText.match(/%%Title:\s*([^\n\r]+)/i);
-    const cleanTitle = (titleMatch ? titleMatch[1].trim() : filename).slice(0, 30);
-    ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 10px system-ui, -apple-system, sans-serif';
-    ctx.fillText(cleanTitle, artX + 12, artY + artH - 12);
-
-    return canvas.toDataURL('image/jpeg', 0.85);
-  } catch (err) {
-    return undefined;
-  }
+// Fallback visual generator: Instant zero-lag vector artboard
+export function generateVectorArtboardThumbnail(filename: string, _headerText?: string): string {
+  return INSTANT_EPS_SVG_URI;
 }
 
 /**
@@ -1036,11 +936,11 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
       } catch {}
     }
 
-    // 2. Server-Side Ghostscript Vector Rendering (/api/render-eps) - Renders real EPS/AI vector illustrations
-    if (typeof window !== 'undefined' && file.size <= 100 * 1024 * 1024) {
+    // 2. Server-Side Ghostscript Vector Rendering (/api/render-eps) - Only on-demand for preview modal, NEVER during AI generation batch!
+    if (!forAi && typeof window !== 'undefined' && file.size <= 50 * 1024 * 1024) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
 
         const res = await fetch('/api/render-eps', {
           method: 'POST',
