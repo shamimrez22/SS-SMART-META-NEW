@@ -160,7 +160,7 @@ const TableRow = React.memo<TableRowProps>(({
       onClick={() => onSelect(file.id)}
       onDoubleClick={() => onOpenPreview(file)}
       className={cn(
-        "flex items-center text-xs h-[34px] px-3 border-b cursor-pointer transition-colors font-sans select-none group shrink-0",
+        "flex items-center text-xs h-[34px] px-3 border-b cursor-pointer font-sans select-none group shrink-0",
         isGeneratingThis
           ? "bg-[#31AAA9]/20 border-y border-[#31AAA9] shadow-[inset_0_0_0_1px_#31AAA9] text-white"
           : (isBlue
@@ -186,7 +186,7 @@ const TableRow = React.memo<TableRowProps>(({
         title="Click to view full preview"
       >
         {file.previewUrl ? (
-          <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform cursor-pointer relative shrink-0">
+          <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs cursor-pointer relative shrink-0">
             {fIsVid && !file.previewUrl.startsWith('data:image/') ? (
               <div className="w-full h-full relative bg-purple-950 flex flex-col items-center justify-center text-purple-200">
                 <span className="text-[11px] leading-none">🎬</span>
@@ -201,7 +201,8 @@ const TableRow = React.memo<TableRowProps>(({
                   src={file.previewUrl} 
                   alt={file.filename} 
                   className="w-full h-full object-cover block relative z-1"
-                  loading="eager"
+                  loading="lazy"
+                  decoding="async"
                   onError={(e) => {
                     (e.target as HTMLElement).style.display = 'none';
                   }}
@@ -355,7 +356,7 @@ const VirtualRow = React.memo<ListChildComponentProps<VirtualItemData>>(({ index
   const file = data.files[index];
   if (!file) return null;
   return (
-    <div style={style}>
+    <div style={{ ...style, willChange: 'transform' }}>
       <TableRow
         file={file}
         idx={index + 1}
@@ -569,22 +570,26 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   // Single Page rendering for all uploaded files with smooth 60fps scrolling
   const visibleFiles = currentModeFiles;
 
-  // High-performance virtualized table container measuring
+  // High-performance virtualized table container measuring with fluid 100% width
   const tableContainerRef = React.useRef<HTMLDivElement>(null);
-  const [tableDimensions, setTableDimensions] = React.useState({ width: 1000, height: 500 });
+  const [tableDimensions, setTableDimensions] = React.useState<{ width: string | number; height: number }>({ width: '100%', height: 500 });
 
   React.useEffect(() => {
     const el = tableContainerRef.current;
     if (!el) return;
     const updateSize = () => {
-      if (el.clientWidth > 0 && el.clientHeight > 0) {
-        setTableDimensions({ width: el.clientWidth, height: el.clientHeight });
-      }
+      const rect = el.getBoundingClientRect();
+      const h = Math.max(200, Math.floor(rect.height || el.clientHeight || 500));
+      setTableDimensions(prev => prev.height === h ? prev : { width: '100%', height: h });
     };
     updateSize();
     const ro = new ResizeObserver(updateSize);
     ro.observe(el);
-    return () => ro.disconnect();
+    window.addEventListener('resize', updateSize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
   }, []);
 
   const handleRowRetry = React.useCallback((id: string) => {
@@ -1401,12 +1406,13 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             ) : (
               <FixedSizeList
                 height={tableDimensions.height}
-                width={tableDimensions.width}
+                width="100%"
                 itemCount={visibleFiles.length}
                 itemSize={34}
-                overscanCount={20}
+                overscanCount={40}
                 itemData={itemData}
                 className="custom-scrollbar"
+                style={{ overflowX: 'hidden' }}
               >
                 {VirtualRow}
               </FixedSizeList>

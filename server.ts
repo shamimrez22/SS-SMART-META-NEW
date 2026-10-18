@@ -366,8 +366,8 @@ const modelCooloffUntil = new Map<string, number>();
 function getAvailableGeminiModels(preferredModel?: string): string[] {
   // Ultra-fast, rock-solid production models verified for vision & stock SEO
   const allowed = [
-    "gemini-2.5-flash",
-    "gemini-3.1-flash-lite"
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash"
   ];
   let candidates: string[] = [];
   if (preferredModel && allowed.includes(preferredModel)) {
@@ -981,6 +981,24 @@ Return ONLY valid JSON with keys:
               parsed = JSON.parse(match[0]);
             } catch {}
           }
+        }
+        if (!parsed && response.text) {
+          try {
+            const text = response.text;
+            const titleMatch = text.match(/"title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+            const descMatch = text.match(/"description"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+            const kwMatch = text.match(/"keywords"\s*:\s*(?:\[([\s\S]*?)\]|"([^"\\]*(?:\\.[^"\\]*)*)")/i);
+            const catMatch = text.match(/"category"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+            if (titleMatch && titleMatch[1]) {
+              parsed = {
+                title: titleMatch[1].replace(/\\"/g, '"'),
+                description: descMatch ? descMatch[1].replace(/\\"/g, '"') : '',
+                keywords: kwMatch ? (kwMatch[1] || kwMatch[2] || '').replace(/\\"/g, '"') : '',
+                category: catMatch ? catMatch[1].replace(/\\"/g, '"') : 'Objects',
+                rating: 5
+              };
+            }
+          } catch {}
         }
       }
 

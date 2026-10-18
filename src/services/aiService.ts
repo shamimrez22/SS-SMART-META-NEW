@@ -366,7 +366,7 @@ export async function callServerGemini(
   );
 
   // 0. Instant reuse of existing image thumbnail if already available (avoids re-extracting video/vector on main thread)
-  if (previewUrl && typeof previewUrl === 'string' && previewUrl.startsWith('data:image/')) {
+  if (previewUrl && typeof previewUrl === 'string' && previewUrl.startsWith('data:image/') && !previewUrl.startsWith('data:image/svg')) {
     base64 = previewUrl;
   } else if (isSupportedImage) {
     try {
@@ -481,7 +481,7 @@ export async function callServerGemini(
       prompt,
       apiKeys: keyList,
       apiKey: keyList[0] || '',
-      model: settings.aiModel || 'gemini-2.5-flash',
+      model: settings.aiModel || 'gemini-3.1-flash-lite',
       keywordStyle: settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed'),
       singleWordKeywords: Boolean(settings?.singleWordKeywords),
       minTitleWords: settings?.minTitleWords || 7,
@@ -796,16 +796,16 @@ function findXmpJpegThumbnail(text: string): { dataUrl: string; mime: string } |
 }
 
 /**
- * Searches for embedded raw binary JFIF/JPEG streams in an EPS ArrayBuffer
+ * Searches for embedded raw binary JFIF/JPEG streams in an EPS ArrayBuffer (Capped fast scan)
  */
 function findEmbeddedBinaryJpeg(buf: ArrayBuffer): string | null {
   const u8 = new Uint8Array(buf);
-  const len = u8.length;
+  const len = Math.min(u8.length, 256 * 1024); // Cap scan to 256KB max to prevent main-thread freeze
   // Scan for JPEG SOI (FF D8 FF)
   for (let i = 0; i < len - 100; i++) {
     if (u8[i] === 0xFF && u8[i + 1] === 0xD8 && u8[i + 2] === 0xFF) {
       // Find JPEG EOI (FF D9)
-      const maxScan = Math.min(len - 1, i + 2 * 1024 * 1024);
+      const maxScan = Math.min(len - 1, i + 512 * 1024);
       let foundEnd = -1;
       for (let j = i + 200; j < maxScan; j++) {
         if (u8[j] === 0xFF && u8[j + 1] === 0xD9) {
@@ -823,6 +823,7 @@ function findEmbeddedBinaryJpeg(buf: ArrayBuffer): string | null {
         }
         return `data:image/jpeg;base64,${btoa(binary)}`;
       }
+      break; // Only test first SOI to keep execution under 1ms
     }
   }
   return null;
