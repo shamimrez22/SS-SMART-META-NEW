@@ -150,10 +150,10 @@ const TableRow = React.memo<TableRowProps>(({
     : (isGeneratingThis ? 'Processing...' : '—');
 
   const textClass = isGeneratingThis && !file.title
-    ? (isBlue ? 'text-cyan-300 font-semibold animate-pulse' : (isDark ? 'text-sky-300 font-semibold animate-pulse' : 'text-sky-600 font-semibold animate-pulse')) 
+    ? (isBlue ? 'text-cyan-300 font-semibold animate-pulse' : (isDark ? 'text-sky-300 font-semibold animate-pulse' : 'text-[#359FA0] font-semibold animate-pulse')) 
     : (isPendingThis && !file.title
       ? (isBlue ? 'text-slate-300 font-medium' : (isDark ? 'text-slate-300 font-medium' : 'text-slate-400 font-medium')) 
-      : (isBlue ? 'text-slate-100 font-semibold' : (isDark ? 'text-slate-100 font-semibold' : 'text-slate-800 font-semibold')));
+      : (isBlue ? 'text-slate-100 font-semibold' : (isDark ? 'text-slate-100 font-semibold' : 'text-slate-100 font-semibold')));
 
   return (
     <div 
@@ -162,7 +162,7 @@ const TableRow = React.memo<TableRowProps>(({
       className={cn(
         "flex items-center text-xs h-[34px] px-3 border-b cursor-pointer font-sans select-none group shrink-0",
         isGeneratingThis
-          ? "bg-[#31AAA9]/20 border-y border-[#31AAA9] shadow-[inset_0_0_0_1px_#31AAA9] text-white"
+          ? "bg-[#359FA0]/25 border-y border-[#359FA0] shadow-[inset_0_0_0_1px_#359FA0] text-white"
           : (isBlue
             ? (isSelected 
               ? "bg-[#163a70] text-white border-y border-cyan-400 shadow-[inset_0_0_0_1px_#22d3ee]" 
@@ -172,8 +172,8 @@ const TableRow = React.memo<TableRowProps>(({
                 ? "bg-[#1c2e43] text-white border-y border-[#2d4666]/60 shadow-[inset_0_0_0_1px_#0284c7]" 
                 : "border-[#213347] hover:bg-[#1b2b3e] text-slate-100")
               : (isSelected 
-                ? "bg-sky-100 text-slate-900 border-y border-sky-300 font-medium shadow-[inset_0_0_0_1px_#38bdf8]" 
-                : "border-slate-200 hover:bg-slate-50 text-slate-800")))
+                ? "bg-[#359FA0]/30 text-white border-y border-[#359FA0] shadow-[inset_0_0_0_1px_#359FA0]" 
+                : "border-[#0e2a2c] hover:bg-[#0a2325] text-slate-100")))
       )}
     >
       {/* Preview Thumbnail */}
@@ -255,8 +255,8 @@ const TableRow = React.memo<TableRowProps>(({
         }}
       >
         {isGeneratingThis ? (
-          <span className="inline-flex items-center gap-1 text-[#31AAA9] font-bold animate-pulse">
-            <RefreshCw size={11} className="animate-spin text-[#31AAA9]" />
+          <span className="inline-flex items-center gap-1 text-[#359FA0] font-bold animate-pulse">
+            <RefreshCw size={11} className="animate-spin text-[#359FA0]" />
             <span>AI Processing...</span>
           </span>
         ) : (
@@ -268,7 +268,7 @@ const TableRow = React.memo<TableRowProps>(({
       <div 
         className={cn(
           "w-[25%] truncate pr-2 hover:text-cyan-300 font-semibold", 
-          isCompletedThis ? (isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-800")) : textClass
+          isCompletedThis ? (isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-100")) : textClass
         )} 
         title={`${displayKeywords} (Click to copy)`}
         onClick={(e) => onCopy(e, file.keywords || displayKeywords, `kw-${file.id}`)}
@@ -280,7 +280,7 @@ const TableRow = React.memo<TableRowProps>(({
       <div 
         className={cn(
           "w-[20%] truncate pr-2 hover:text-cyan-300 font-semibold", 
-          isCompletedThis ? (isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-800")) : textClass
+          isCompletedThis ? (isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-100")) : textClass
         )} 
         title={`${displayDescription} (Click to copy)`}
         onClick={(e) => onCopy(e, file.description || displayDescription, `desc-${file.id}`)}
@@ -292,7 +292,7 @@ const TableRow = React.memo<TableRowProps>(({
       <div 
         className={cn(
           "w-[6%] truncate pr-2 font-semibold", 
-          isCompletedThis ? (isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-800")) : textClass
+          isCompletedThis ? (isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-100")) : textClass
         )} 
         title={displayCategory}
       >
@@ -300,7 +300,7 @@ const TableRow = React.memo<TableRowProps>(({
       </div>
 
       {/* KW Count */}
-      <div className={cn("w-[5%] text-center font-mono whitespace-nowrap font-bold", isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-slate-800"))}>
+      <div className={cn("w-[5%] text-center font-mono whitespace-nowrap font-bold", isBlue ? "text-slate-100" : (isDark ? "text-slate-100" : "text-[#359FA0]"))}>
         {kwCount}
       </div>
 
@@ -408,7 +408,7 @@ const LiveTimerWidget = React.memo<{ isGenerating: boolean; isPaused: boolean; i
         "flex items-center gap-1.5 text-[11px] font-mono cursor-pointer transition-colors px-1.5 py-0.5 rounded border shrink-0 whitespace-nowrap",
         isBlue 
           ? "border-[#1d4ed8] bg-[#07152b] text-cyan-300 hover:text-white shadow-[0_0_8px_rgba(34,211,238,0.25)]" 
-          : (isDark ? "border-slate-700/80 bg-[#0f1722] text-slate-300 hover:text-cyan-300" : "border-slate-300 bg-white text-slate-700 hover:text-sky-700 shadow-2xs")
+          : (isDark ? "border-slate-700/80 bg-[#0f1722] text-slate-300 hover:text-cyan-300" : "border-[#359FA0]/50 bg-[#071d1f] text-[#359FA0] hover:text-white shadow-2xs")
       )}
     >
       <span>Elapsed: {formatTimer(elapsed)}</span>
@@ -638,14 +638,14 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   return (
     <div className={cn(
       "flex-1 flex flex-col min-w-0 h-full overflow-hidden select-none font-sans transition-colors duration-200",
-      isBlue ? "bg-[#0a192f] text-blue-100" : (isDark ? "bg-[#162332] text-slate-200" : "bg-[#f1f5f9] text-slate-800")
+      isBlue ? "bg-[#0a192f] text-blue-100" : (isDark ? "bg-[#162332] text-slate-200" : "bg-[#061819] text-slate-100")
     )}>
       {/* 1. Main Header - Brand & Top Controls */}
       <header className={cn(
         "border-b px-3.5 py-2.5 flex items-center justify-between z-30 shrink-0 transition-colors",
         isBlue 
           ? "bg-[#07152b] border-[#1d4ed8] text-slate-100 shadow-[0_2px_12px_rgba(29,78,216,0.3)]" 
-          : (isDark ? "bg-[#14202d] border-[#233449] text-slate-100" : "bg-white border-slate-200 text-slate-800 shadow-2xs")
+          : (isDark ? "bg-[#14202d] border-[#233449] text-slate-100" : "bg-[#081f21] border-[#359FA0]/50 text-slate-100 shadow-[0_2px_12px_rgba(53,159,160,0.2)]")
       )}>
         {/* Left: Brand Logo & Title */}
         <div className="flex items-center gap-3">
@@ -705,7 +705,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "border rounded px-2.5 py-1 text-xs focus:outline-none cursor-pointer transition-colors",
                 isBlue 
                   ? "bg-[#0c2246] border-[#2563eb] text-white shadow-[0_0_8px_rgba(37,99,235,0.3)]" 
-                  : (isDark ? "bg-[#1b2737] border-slate-700/80 text-white" : "bg-white border-slate-300 text-slate-900 shadow-2xs")
+                  : (isDark ? "bg-[#1b2737] border-slate-700/80 text-white" : "bg-[#0a2426] border-[#359FA0]/50 text-white shadow-2xs")
               )}
             >
               <option value="gemini">Gemini</option>
@@ -715,7 +715,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </div>
 
           {/* API Key Status */}
-          <div className={cn("flex items-center gap-1.5 text-xs", isBlue ? "text-blue-200" : (isDark ? "text-slate-200" : "text-slate-700"))}>
+          <div className={cn("flex items-center gap-1.5 text-xs", isBlue ? "text-blue-200" : (isDark ? "text-slate-200" : "text-teal-200"))}>
             <span>API Key:</span>
             <span className="flex items-center gap-1 text-[#22c55e] font-medium">
               <span className="w-2.5 h-2.5 bg-[#22c55e] rounded-xs inline-block" />
@@ -737,7 +737,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               "px-3 py-1 rounded text-xs font-normal transition-colors cursor-pointer",
               isBlue 
                 ? "bg-[#0c2246] hover:bg-[#143265] text-cyan-200 border border-[#2563eb]" 
-                : (isDark ? "bg-[#172535] hover:bg-[#203247] text-white border border-[#0284c7]" : "bg-white hover:bg-sky-50 text-sky-700 border border-sky-400 shadow-2xs")
+                : (isDark ? "bg-[#172535] hover:bg-[#203247] text-white border border-[#0284c7]" : "bg-[#0a2729] hover:bg-[#113a3d] text-[#359FA0] border border-[#359FA0]/50 shadow-2xs")
             )}
           >
             Manage Keys
@@ -751,10 +751,10 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               "flex items-center gap-1.5 px-3 py-1 rounded text-xs font-normal transition-colors cursor-pointer",
               isBlue 
                 ? "bg-[#0c2246] hover:bg-[#143265] text-cyan-300 border border-[#2563eb]" 
-                : (isDark ? "bg-[#172535] hover:bg-[#203247] text-cyan-300 border border-[#0284c7]" : "bg-white hover:bg-cyan-50 text-cyan-700 border border-cyan-400 shadow-2xs")
+                : (isDark ? "bg-[#172535] hover:bg-[#203247] text-cyan-300 border border-[#0284c7]" : "bg-[#0a2729] hover:bg-[#113a3d] text-cyan-300 border border-[#359FA0]/50 shadow-2xs")
             )}
           >
-            <Globe size={12} className={isBlue ? "text-cyan-400" : (isDark ? "text-[#0284c7]" : "text-cyan-600")} />
+            <Globe size={12} className={isBlue ? "text-cyan-400" : (isDark ? "text-[#0284c7]" : "text-[#359FA0]")} />
             <span>Website</span>
           </button>
 
@@ -766,7 +766,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               "flex items-center gap-1.5 px-3 py-1 rounded text-xs font-normal transition-colors cursor-pointer",
               isBlue 
                 ? "bg-[#0c2246] hover:bg-[#143265] text-emerald-300 border border-emerald-500" 
-                : (isDark ? "bg-[#172535] hover:bg-[#203247] text-emerald-300 border border-[#16a34a]" : "bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-500 shadow-2xs")
+                : (isDark ? "bg-[#172535] hover:bg-[#203247] text-emerald-300 border border-[#16a34a]" : "bg-[#0a2729] hover:bg-[#113a3d] text-emerald-300 border border-emerald-500/60 shadow-2xs")
             )}
           >
             <span className="text-[#22c55e] text-xs">💬</span>
@@ -781,7 +781,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               "flex items-center gap-1.5 px-3 py-1 rounded text-xs font-normal transition-colors cursor-pointer",
               isBlue 
                 ? "bg-[#0c2246] hover:bg-[#143265] text-rose-300 border border-rose-500" 
-                : (isDark ? "bg-[#172535] hover:bg-[#203247] text-rose-300 border border-[#dc2626]" : "bg-white hover:bg-rose-50 text-rose-700 border border-rose-400 shadow-2xs")
+                : (isDark ? "bg-[#172535] hover:bg-[#203247] text-rose-300 border border-[#dc2626]" : "bg-[#0a2729] hover:bg-[#113a3d] text-rose-300 border border-rose-400/60 shadow-2xs")
             )}
           >
             <span className="text-[#ef4444] text-xs">▶</span>
