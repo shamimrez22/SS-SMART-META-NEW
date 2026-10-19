@@ -155,14 +155,14 @@ button:disabled {
   opacity: 0.45 !important;
 }
 
-/* Primary #31AAA9 custom helper classes */
+/* Primary #359FA0 custom helper classes */
 .brand-teal {
-  color: #31AAA9;
+  color: #359FA0;
 }
 .bg-brand-teal {
-  background-color: #31AAA9;
+  background-color: #359FA0;
 }
 .border-brand-teal {
-  border-color: #31AAA9;
+  border-color: #359FA0;
 }
 

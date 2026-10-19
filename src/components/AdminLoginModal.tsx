@@ -67,22 +67,22 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
       <div 
-        className="relative w-full max-w-md bg-[#08171c] border-2 border-[#31AAA9]/60 rounded-none shadow-[0_0_40px_rgba(49,170,169,0.3)] overflow-hidden animate-in zoom-in-95 duration-150"
+        className="relative w-full max-w-md bg-[#08171c] border-2 border-[#359FA0]/60 rounded-none shadow-[0_0_40px_rgba(49,170,169,0.3)] overflow-hidden animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Glow & Accent Bar */}
-        <div className="h-1.5 w-full bg-[#31AAA9]" />
+        <div className="h-1.5 w-full bg-[#359FA0]" />
 
         {/* Modal Header */}
         <div className="p-5 pb-3 flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-none bg-[#31AAA9]/20 border-2 border-[#31AAA9]/50 flex items-center justify-center text-[#31AAA9] shrink-0">
+            <div className="w-11 h-11 rounded-none bg-[#359FA0]/20 border-2 border-[#359FA0]/50 flex items-center justify-center text-[#359FA0] shrink-0">
               <Layers size={22} className="animate-pulse" />
             </div>
             <div>
               <h3 className="text-base font-black text-white uppercase tracking-wider flex items-center gap-1.5">
                 <span>Admin Login Access</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-none bg-[#31AAA9]/20 text-[#31AAA9] border border-[#31AAA9]/40 uppercase font-mono">
+                <span className="text-[10px] px-2 py-0.5 rounded-none bg-[#359FA0]/20 text-[#359FA0] border border-[#359FA0]/40 uppercase font-mono">
                   Master Security
                 </span>
               </h3>
@@ -114,7 +114,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           {/* Username Input */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-              <User size={13} className="text-[#31AAA9]" />
+              <User size={13} className="text-[#359FA0]" />
               <span>User Name (ইউজারনেম):</span>
             </label>
             <div className="relative">
@@ -127,7 +127,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   setErrorMsg(null);
                 }}
                 placeholder="Enter admin username"
-                className="w-full px-3.5 py-2.5 rounded-none bg-[#051115] border-2 border-[#1b3c45] focus:border-[#31AAA9] text-sm font-bold text-white placeholder-slate-500 focus:outline-none tracking-wide shadow-inner"
+                className="w-full px-3.5 py-2.5 rounded-none bg-[#051115] border-2 border-[#1b3c45] focus:border-[#359FA0] text-sm font-bold text-white placeholder-slate-500 focus:outline-none tracking-wide shadow-inner"
               />
             </div>
           </div>
@@ -135,7 +135,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           {/* Password Input */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-              <KeyRound size={13} className="text-[#31AAA9]" />
+              <KeyRound size={13} className="text-[#359FA0]" />
               <span>Password (পাসওয়ার্ড):</span>
             </label>
             <div className="relative">
@@ -147,7 +147,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   setErrorMsg(null);
                 }}
                 placeholder="Enter password"
-                className="w-full px-3.5 py-2.5 rounded-none bg-[#051115] border-2 border-[#1b3c45] focus:border-[#31AAA9] text-sm font-bold text-white placeholder-slate-500 focus:outline-none tracking-wider pr-10 shadow-inner"
+                className="w-full px-3.5 py-2.5 rounded-none bg-[#051115] border-2 border-[#1b3c45] focus:border-[#359FA0] text-sm font-bold text-white placeholder-slate-500 focus:outline-none tracking-wider pr-10 shadow-inner"
               />
               <button
                 type="button"
@@ -164,7 +164,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full py-3 rounded-none bg-[#31AAA9] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
+            className="w-full py-3 rounded-none bg-[#359FA0] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
           >
             {isSubmitting ? (
               <span>Authenticating...</span>
@@ -180,7 +180,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         {/* Footer info */}
         <div className="px-5 py-3 bg-[#051014] border-t border-[#122b32] text-[11px] text-slate-400 flex items-center justify-between">
           <span>SS SMART META Studio Security</span>
-          <span className="text-[#31AAA9] font-mono font-semibold">Admin Portal</span>
+          <span className="text-[#359FA0] font-mono font-semibold">Admin Portal</span>
         </div>
       </div>
     </div>

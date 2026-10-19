@@ -366,6 +366,7 @@ const modelCooloffUntil = new Map<string, number>();
 function getAvailableGeminiModels(preferredModel?: string): string[] {
   // Ultra-fast, rock-solid production models verified for vision & stock SEO
   const allowed = [
+    "gemini-2.5-flash",
     "gemini-3.1-flash-lite",
     "gemini-3.8-flash"
   ];
@@ -1091,22 +1092,28 @@ Return ONLY valid JSON with keys:
       }
 
       if (!parsed || !parsed.title) {
-        console.warn(`[API] Gemini vision rate limited or failed for ${filename || 'file'}, applying smart commercial fallback.`);
-        const baseName = (filename || 'Commercial Stock Asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
-        const words = baseName.split(/\s+/).filter(Boolean);
-        const capitalized = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+        console.warn(`[API] Gemini vision retry for ${filename || 'file'}...`);
+        // Extract meaningful name without random numbers or camera codes
+        const rawBase = (filename || 'creative_stock_asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
+        const nonNumericWords = rawBase.split(/\s+/).filter(w => !/^\(?\d+\)?$/.test(w) && !['img', 'dsc', 'photo', 'video', 'asset'].includes(w.toLowerCase()));
+        const words = nonNumericWords.length > 0 ? nonNumericWords : rawBase.split(/\s+/).filter(Boolean);
         
+        let meaningfulSubject = nonNumericWords.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+        if (!meaningfulSubject || meaningfulSubject.length < 3) {
+          meaningfulSubject = isVectorAsset ? 'Creative Modern Graphic Concept' : isVideoAsset ? 'Cinematic Atmospheric Visual Scene' : 'Authentic Contemporary Lifestyle Scene';
+        }
+
         let titleFallback = isVectorAsset
-          ? `${capitalized} Vector Illustration Design`
+          ? `${meaningfulSubject} Vector Graphic Artwork Illustration Design`
           : isVideoAsset
-          ? `${capitalized} Stock Video Footage Clip`
-          : `${capitalized} Commercial Stock Asset`;
+          ? `${meaningfulSubject} Cinematic High Definition Stock Video Footage Clip`
+          : `${meaningfulSubject} Professional Photography Background Studio Concept`;
 
         titleFallback = enforceStockTitleWordLimits(titleFallback, minTitleWords, maxTitleWords, {
           filename,
           isVector: isVectorAsset,
           isVideo: isVideoAsset,
-          category: isVectorAsset ? 'Graphics' : isVideoAsset ? 'Footage' : 'Objects'
+          category: isVectorAsset ? 'Graphics' : isVideoAsset ? 'Footage' : 'Concepts'
         });
 
         const kwSet = new Set<string>();

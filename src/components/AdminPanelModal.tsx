@@ -347,7 +347,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                           showNotification("Failed to activate lifetime: " + err?.message, "error");
                         }
                       }}
-                      className="px-3.5 py-2.5 bg-[#31AAA9] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider rounded-none flex items-center justify-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+                      className="px-3.5 py-2.5 bg-[#359FA0] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider rounded-none flex items-center justify-center gap-1.5 cursor-pointer shadow-md active:scale-95"
                     >
                       <Sparkles size={14} />
                       <span>Make Lifetime Active (লাইফটাইম করুন)</span>

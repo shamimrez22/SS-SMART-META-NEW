@@ -196,11 +196,15 @@ export function createIptcApp13Block(
 
   // Total IPTC byte length
   const iptcLen = records.reduce((sum, r) => sum + r.length, 0);
-  const iptcBuf = new Uint8Array(iptcLen);
+  const padByte = (iptcLen % 2 !== 0) ? 1 : 0;
+  const iptcBuf = new Uint8Array(iptcLen + padByte);
   let pos = 0;
   for (const r of records) {
     iptcBuf.set(r, pos);
     pos += r.length;
+  }
+  if (padByte) {
+    iptcBuf[iptcLen] = 0x00; // Photoshop 8BIM 16-bit word alignment pad
   }
 
   // Adobe Photoshop 3.0 8BIM Resource Block (ID 0x0404 for IPTC-NAA)
@@ -215,7 +219,7 @@ export function createIptcApp13Block(
   bimHeader[11] = iptcLen & 0xff;
 
   const psHeader = enc.encode('Photoshop 3.0\0');
-  const payloadLen = psHeader.length + bimHeader.length + iptcLen;
+  const payloadLen = psHeader.length + bimHeader.length + iptcBuf.length;
   const segLen = 2 + payloadLen;
 
   const app13 = new Uint8Array(4 + payloadLen);
@@ -362,9 +366,17 @@ export async function embedMetadataInImageBlob(
       while (scanPos < jpegBytes.length - 4) {
         if (jpegBytes[scanPos] === 0xFF && jpegBytes[scanPos + 1] === 0xE1) {
           const sLen = (jpegBytes[scanPos + 2] << 8) | jpegBytes[scanPos + 3];
-          const id = String.fromCharCode(...jpegBytes.subarray(scanPos + 4, scanPos + 10));
+          const idBytes = jpegBytes.subarray(scanPos + 4, Math.min(jpegBytes.length, scanPos + 10));
+          let id = '';
+          for (let i = 0; i < idBytes.length; i++) id += String.fromCharCode(idBytes[i]);
           if (id.startsWith('Exif\0\0')) {
-            const rawExifBinary = String.fromCharCode(...jpegBytes.subarray(scanPos + 4, scanPos + 2 + sLen));
+            const rawSlice = jpegBytes.subarray(scanPos + 4, Math.min(jpegBytes.length, scanPos + 2 + sLen));
+            let rawExifBinary = '';
+            const chunkSize = 8192;
+            for (let i = 0; i < rawSlice.length; i += chunkSize) {
+              const chunk = rawSlice.subarray(i, Math.min(rawSlice.length, i + chunkSize));
+              rawExifBinary += String.fromCharCode(...chunk);
+            }
             const loaded = piexif.load(rawExifBinary);
             if (loaded && loaded['0th']) {
               exifObj = loaded;
@@ -534,6 +546,142 @@ export async function embedMetadataInPngBlob(
     return new Blob([result], { type: 'image/png' });
   } catch (pngErr) {
     console.warn("embedMetadataInPngBlob warning, fallback to file:", pngErr);
+    return file;
+  }
+}
+
+// Embed Title, Description, Keywords, 5-Star Rating, EXIF and XMP into WebP image (RIFF container)
+export async function embedMetadataInWebpBlob(
+  file: File | Blob,
+  metadata: Partial<StockMetadata>
+): Promise<Blob> {
+  try {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    if (bytes.length < 12) return file;
+
+    const riff = String.fromCharCode(...bytes.subarray(0, 4));
+    const webp = String.fromCharCode(...bytes.subarray(8, 12));
+    if (riff !== 'RIFF' || webp !== 'WEBP') return file;
+
+    const title = (metadata.title || '').trim();
+    const desc = (metadata.description || '').trim();
+    const keywords = (metadata.keywords || '').trim();
+    const rating = (metadata.rating !== undefined && metadata.rating > 0) ? metadata.rating : 5;
+    const windowsKeywords = keywords.split(',').map(k => k.trim()).filter(Boolean).join('; ');
+
+    // 1. Prepare raw EXIF payload
+    const zeroth: any = {};
+    zeroth[piexif.ImageIFD.ImageDescription] = desc;
+    zeroth[piexif.ImageIFD.XPTitle] = toUtf16Le(title);
+    zeroth[piexif.ImageIFD.XPSubject] = toUtf16Le(title);
+    zeroth[piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
+    zeroth[piexif.ImageIFD.XPComment] = toUtf16Le(desc);
+    zeroth[piexif.ImageIFD.XPAuthor] = toUtf16Le('Stock Contributor');
+    zeroth[piexif.ImageIFD.Rating] = rating;
+    zeroth[piexif.ImageIFD.RatingPercent] = 99;
+    zeroth[piexif.ImageIFD.Artist] = 'Stock Contributor';
+
+    const dumped = piexif.dump({ '0th': zeroth, Exif: {}, GPS: {} });
+    const rawExif = new Uint8Array(dumped.length);
+    for (let i = 0; i < dumped.length; i++) {
+      rawExif[i] = dumped.charCodeAt(i) & 0xff;
+    }
+    const tiffOffset = (rawExif.length >= 6 && rawExif[0] === 0x45 && rawExif[1] === 0x78) ? 6 : 0;
+    const exifPayload = rawExif.subarray(tiffOffset);
+
+    // 2. Prepare XMP packet payload
+    const xmpString = createXmpPacket(metadata, 'image/webp');
+    const xmpPayload = new TextEncoder().encode(xmpString);
+
+    function makeChunk(id: string, payload: Uint8Array): Uint8Array {
+      const len = payload.length;
+      const pad = (len % 2 !== 0) ? 1 : 0;
+      const chunk = new Uint8Array(8 + len + pad);
+      for (let i = 0; i < 4; i++) chunk[i] = id.charCodeAt(i);
+      const v = new DataView(chunk.buffer);
+      v.setUint32(4, len, true);
+      chunk.set(payload, 8);
+      if (pad) chunk[8 + len] = 0;
+      return chunk;
+    }
+
+    const exifChunk = makeChunk('EXIF', exifPayload);
+    const xmpChunk = makeChunk('XMP ', xmpPayload);
+
+    const retainedChunks: Uint8Array[] = [];
+    let pos = 12;
+    const view = new DataView(buffer);
+    let hasVp8x = false;
+    let width = 0;
+    let height = 0;
+
+    while (pos + 8 <= bytes.length) {
+      const chunkId = String.fromCharCode(...bytes.subarray(pos, pos + 4));
+      const chunkLen = view.getUint32(pos + 4, true);
+      const totalChunkSize = 8 + chunkLen + (chunkLen % 2);
+      if (pos + totalChunkSize > bytes.length) break;
+
+      if (chunkId === 'VP8X') {
+        hasVp8x = true;
+        width = 1 + (bytes[pos + 12] | (bytes[pos + 13] << 8) | (bytes[pos + 14] << 16));
+        height = 1 + (bytes[pos + 15] | (bytes[pos + 16] << 8) | (bytes[pos + 17] << 16));
+        const vp8xCopy = new Uint8Array(bytes.subarray(pos, pos + totalChunkSize));
+        vp8xCopy[8] = vp8xCopy[8] | 0x08 | 0x04; // set EXIF & XMP flags
+        retainedChunks.push(vp8xCopy);
+      } else if (chunkId !== 'EXIF' && chunkId !== 'XMP ') {
+        if (!hasVp8x && (chunkId === 'VP8 ' || chunkId === 'VP8L')) {
+          if (chunkId === 'VP8 ' && chunkLen >= 10) {
+            width = ((bytes[pos + 14] & 0x3f) << 8) | bytes[pos + 15];
+            height = ((bytes[pos + 16] & 0x3f) << 8) | bytes[pos + 17];
+          } else if (chunkId === 'VP8L' && chunkLen >= 5) {
+            const b1 = bytes[pos + 9];
+            const b2 = bytes[pos + 10];
+            const b3 = bytes[pos + 11];
+            const b4 = bytes[pos + 12];
+            width = 1 + (((b2 & 0x3f) << 8) | b1);
+            height = 1 + (((b4 & 0x0f) << 10) | (b3 << 2) | ((b2 & 0xc0) >> 6));
+          }
+        }
+        retainedChunks.push(new Uint8Array(bytes.subarray(pos, pos + totalChunkSize)));
+      }
+      pos += totalChunkSize;
+    }
+
+    if (!hasVp8x) {
+      const vp8xPayload = new Uint8Array(10);
+      vp8xPayload[0] = 0x08 | 0x04; // EXIF + XMP flags
+      const wMinus1 = Math.max(0, (width || 1) - 1);
+      const hMinus1 = Math.max(0, (height || 1) - 1);
+      vp8xPayload[4] = wMinus1 & 0xff;
+      vp8xPayload[5] = (wMinus1 >> 8) & 0xff;
+      vp8xPayload[6] = (wMinus1 >> 16) & 0xff;
+      vp8xPayload[7] = hMinus1 & 0xff;
+      vp8xPayload[8] = (hMinus1 >> 8) & 0xff;
+      vp8xPayload[9] = (hMinus1 >> 16) & 0xff;
+      const vp8xChunk = makeChunk('VP8X', vp8xPayload);
+      retainedChunks.unshift(vp8xChunk);
+    }
+
+    retainedChunks.push(exifChunk);
+    retainedChunks.push(xmpChunk);
+
+    const totalPayload = retainedChunks.reduce((acc, c) => acc + c.length, 0);
+    const result = new Uint8Array(12 + totalPayload);
+    result.set([0x52, 0x49, 0x46, 0x46], 0); // RIFF
+    const outView = new DataView(result.buffer);
+    outView.setUint32(4, 4 + totalPayload, true);
+    result.set([0x57, 0x45, 0x42, 0x50], 8); // WEBP
+
+    let cur = 12;
+    for (const c of retainedChunks) {
+      result.set(c, cur);
+      cur += c.length;
+    }
+
+    return new Blob([result], { type: 'image/webp' });
+  } catch (webpErr) {
+    console.warn("embedMetadataInWebpBlob warning, fallback to file:", webpErr);
     return file;
   }
 }
@@ -1416,6 +1564,9 @@ export async function prepareEmbeddedBlob(
     if (['png'].includes(ext)) {
       return await embedMetadataInPngBlob(file, metadata);
     }
+    if (['webp'].includes(ext)) {
+      return await embedMetadataInWebpBlob(file, metadata);
+    }
     if (['eps', 'ai'].includes(ext)) {
       return await embedMetadataInEpsBlob(file, metadata);
     }
@@ -1434,6 +1585,9 @@ export async function prepareEmbeddedBlob(
     }
     if (file.type === 'image/png') {
       return await embedMetadataInPngBlob(file, metadata);
+    }
+    if (file.type === 'image/webp') {
+      return await embedMetadataInWebpBlob(file, metadata);
     }
     if (file.type === 'application/postscript' || file.type === 'image/x-eps') {
       return await embedMetadataInEpsBlob(file, metadata);

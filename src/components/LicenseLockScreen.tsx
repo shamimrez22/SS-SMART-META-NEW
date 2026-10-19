@@ -127,26 +127,26 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#071317]/95 backdrop-blur-md p-3 md:p-6 text-slate-200 overflow-y-auto">
-      {/* Background glow effects with #31AAA9 theme */}
+      {/* Background glow effects with #359FA0 theme */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-[#31AAA9]/15 rounded-none blur-3xl"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-[#31AAA9]/10 rounded-none blur-3xl"></div>
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-[#359FA0]/15 rounded-none blur-3xl"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-[#359FA0]/10 rounded-none blur-3xl"></div>
       </div>
 
-      <div className="relative w-full max-w-2xl bg-[#0b1c22] border-2 border-[#31AAA9]/60 rounded-none shadow-[0_0_40px_rgba(49,170,169,0.25)] p-5 md:p-7 space-y-5 animate-in zoom-in-95 duration-150 my-auto">
+      <div className="relative w-full max-w-2xl bg-[#0b1c22] border-2 border-[#359FA0]/60 rounded-none shadow-[0_0_40px_rgba(49,170,169,0.25)] p-5 md:p-7 space-y-5 animate-in zoom-in-95 duration-150 my-auto">
         
         {/* App Branding & Header */}
         <div className="text-center space-y-1.5">
-          <div className="w-14 h-14 bg-[#31AAA9] p-0.5 mx-auto shadow-md flex items-center justify-center rounded-none">
-            <div className="w-full h-full bg-[#0b1c22] flex items-center justify-center text-[#31AAA9]">
+          <div className="w-14 h-14 bg-[#359FA0] p-0.5 mx-auto shadow-md flex items-center justify-center rounded-none">
+            <div className="w-full h-full bg-[#0b1c22] flex items-center justify-center text-[#359FA0]">
               <Shield size={28} />
             </div>
           </div>
           <div>
             <h1 className="text-xl md:text-2xl font-black text-white uppercase tracking-wider">
-              SS SMART META <span className="text-[#31AAA9]">PRO</span>
+              SS SMART META <span className="text-[#359FA0]">PRO</span>
             </h1>
-            <p className="text-xs text-[#31AAA9] font-mono font-bold tracking-widest uppercase mt-0.5">
+            <p className="text-xs text-[#359FA0] font-mono font-bold tracking-widest uppercase mt-0.5">
               DEVELOPED BY MD.SHAMIM REZA
             </p>
           </div>
@@ -160,7 +160,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
             className={cn(
               "flex-1 py-2 rounded-none text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all",
               activeTab === 'activate'
-                ? "bg-[#31AAA9] text-black shadow-md font-extrabold"
+                ? "bg-[#359FA0] text-black shadow-md font-extrabold"
                 : "text-slate-400 hover:text-white"
             )}
           >
@@ -174,7 +174,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
             className={cn(
               "flex-1 py-2 rounded-none text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all",
               activeTab === 'admin-login'
-                ? "bg-[#31AAA9] text-black shadow-md font-extrabold"
+                ? "bg-[#359FA0] text-black shadow-md font-extrabold"
                 : "text-slate-400 hover:text-white"
             )}
           >
@@ -213,8 +213,8 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="p-3 bg-[#0d262e] border border-[#31AAA9]/40 flex items-start gap-3 text-slate-300 rounded-none">
-                <Key size={18} className="shrink-0 mt-0.5 text-[#31AAA9]" />
+              <div className="p-3 bg-[#0d262e] border border-[#359FA0]/40 flex items-start gap-3 text-slate-300 rounded-none">
+                <Key size={18} className="shrink-0 mt-0.5 text-[#359FA0]" />
                 <div className="text-xs space-y-0.5">
                   <p className="font-bold text-white">লাইসেন্স কী অ্যাক্টিভেশন আবশ্যক (Desktop App)</p>
                   <p className="text-slate-300">
@@ -239,7 +239,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                       setErrorMessage(null);
                     }}
                     placeholder="SSM-1M-XXXX-XXXX-XXXX or ADMIN KEY"
-                    className="w-full px-4 py-3 bg-[#061217] border-2 border-[#31AAA9]/50 focus:border-[#31AAA9] text-sm font-mono font-bold text-white placeholder-slate-600 focus:outline-none tracking-wider rounded-none"
+                    className="w-full px-4 py-3 bg-[#061217] border-2 border-[#359FA0]/50 focus:border-[#359FA0] text-sm font-mono font-bold text-white placeholder-slate-600 focus:outline-none tracking-wider rounded-none"
                   />
                   <Key size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
                 </div>
@@ -255,7 +255,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
               <button
                 type="submit"
                 disabled={isVerifying}
-                className="w-full py-3.5 bg-[#31AAA9] hover:bg-[#288e8d] disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer rounded-none active:scale-98"
+                className="w-full py-3.5 bg-[#359FA0] hover:bg-[#288e8d] disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer rounded-none active:scale-98"
               >
                 {isVerifying ? (
                   <span>Verifying License...</span>
@@ -273,8 +273,8 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
         {/* TAB 2: ADMIN LOGIN (Username & Password with 1-Click Lifetime Activation) */}
         {activeTab === 'admin-login' && (
           <div className="space-y-4 animate-in fade-in duration-100">
-            <div className="p-3 bg-[#0d262e] border border-[#31AAA9]/40 flex items-start gap-3 text-slate-300 rounded-none">
-              <User size={18} className="shrink-0 mt-0.5 text-[#31AAA9]" />
+            <div className="p-3 bg-[#0d262e] border border-[#359FA0]/40 flex items-start gap-3 text-slate-300 rounded-none">
+              <User size={18} className="shrink-0 mt-0.5 text-[#359FA0]" />
               <div className="text-xs space-y-0.5">
                 <p className="font-bold text-white">অ্যাডমিন অ্যাক্সেস ও লাইফটাইম আনলকার</p>
                 <p className="text-slate-300">
@@ -298,7 +298,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                         setAdminLoginError(null);
                       }}
                       placeholder="SHAMIM"
-                      className="w-full px-3 py-2 bg-[#061217] border-2 border-[#1b3c45] focus:border-[#31AAA9] text-xs font-mono font-bold text-white placeholder-slate-600 focus:outline-none rounded-none"
+                      className="w-full px-3 py-2 bg-[#061217] border-2 border-[#1b3c45] focus:border-[#359FA0] text-xs font-mono font-bold text-white placeholder-slate-600 focus:outline-none rounded-none"
                     />
                     <User size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
                   </div>
@@ -317,7 +317,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                         setAdminLoginError(null);
                       }}
                       placeholder="321"
-                      className="w-full px-3 py-2 bg-[#061217] border-2 border-[#1b3c45] focus:border-[#31AAA9] text-xs font-mono font-bold text-white placeholder-slate-600 focus:outline-none rounded-none"
+                      className="w-full px-3 py-2 bg-[#061217] border-2 border-[#1b3c45] focus:border-[#359FA0] text-xs font-mono font-bold text-white placeholder-slate-600 focus:outline-none rounded-none"
                     />
                     <KeyRound size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
                   </div>
@@ -334,7 +334,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                 <button
                   type="submit"
-                  className="py-2.5 px-4 bg-[#1b3c45] hover:bg-[#25525e] text-white font-black text-xs uppercase tracking-wider border border-[#31AAA9]/40 flex items-center justify-center gap-1.5 cursor-pointer rounded-none active:scale-98"
+                  className="py-2.5 px-4 bg-[#1b3c45] hover:bg-[#25525e] text-white font-black text-xs uppercase tracking-wider border border-[#359FA0]/40 flex items-center justify-center gap-1.5 cursor-pointer rounded-none active:scale-98"
                 >
                   <Lock size={14} />
                   <span>Verify Credentials</span>
@@ -351,7 +351,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                       setAdminLoginError("ভুল ইউজারনেম বা পাসওয়ার্ড! সঠিক পাসওয়ার্ড দিন (Default: SHAMIM / 321)");
                     }
                   }}
-                  className="py-2.5 px-4 bg-[#31AAA9] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer rounded-none active:scale-98 shadow-md"
+                  className="py-2.5 px-4 bg-[#359FA0] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer rounded-none active:scale-98 shadow-md"
                 >
                   <Sparkles size={14} />
                   <span>Make Lifetime Active (লাইফটাইম করুন)</span>
@@ -403,7 +403,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                       "p-3.5 border-2 flex flex-col justify-between transition-all relative rounded-none shadow-md",
                       isLifetime 
                         ? "bg-[#0f2329] border-amber-500/70"
-                        : "bg-[#0b1c22] border-[#1b3c45] hover:border-[#31AAA9]/60"
+                        : "bg-[#0b1c22] border-[#1b3c45] hover:border-[#359FA0]/60"
                     )}
                   >
                     {isLifetime && (
@@ -417,7 +417,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                         <span className="text-xs font-black text-white uppercase tracking-wider">
                           {plan.name}
                         </span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 bg-[#31AAA9]/15 text-[#31AAA9] border border-[#31AAA9]/30 rounded-none">
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-[#359FA0]/15 text-[#359FA0] border border-[#359FA0]/30 rounded-none">
                           {plan.durationLabel}
                         </span>
                       </div>
@@ -425,7 +425,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                       <div className="flex items-baseline gap-1.5 py-0.5">
                         <span className={cn(
                           "text-2xl font-black font-mono tracking-tight",
-                          isLifetime ? "text-amber-300" : "text-[#31AAA9]"
+                          isLifetime ? "text-amber-300" : "text-[#359FA0]"
                         )}>
                           ৳ {plan.priceTaka}
                         </span>
@@ -441,7 +441,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                         <div className="font-bold text-slate-200">{plan.nameBangla}</div>
                         {plan.features?.map((feat, fIdx) => (
                           <div key={fIdx} className="flex items-center gap-1.5 text-slate-400 text-[10.5px]">
-                            <span className="text-[#31AAA9]">✓</span>
+                            <span className="text-[#359FA0]">✓</span>
                             <span>{feat}</span>
                           </div>
                         ))}
@@ -474,7 +474,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
                 <span className="w-2 h-2 rounded-none bg-emerald-400 animate-pulse"></span>
                 <span>পেমেন্ট মাধ্যম: <strong>bKash / Nagad / Rocket / Bank Transfer</strong></span>
               </span>
-              <span className="text-[#31AAA9] font-bold font-mono">
+              <span className="text-[#359FA0] font-bold font-mono">
                 {adminConfig.whatsapp || '+8801700000000'}
               </span>
             </div>
@@ -522,7 +522,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
 
         {/* Developer Credit */}
         <div className="pt-1.5 text-center border-t border-[#1b3c45]">
-          <span className="text-[11px] font-mono font-black text-[#31AAA9] tracking-widest uppercase">
+          <span className="text-[11px] font-mono font-black text-[#359FA0] tracking-widest uppercase">
             DEVELOPED BY MD.SHAMIM REZA
           </span>
         </div>

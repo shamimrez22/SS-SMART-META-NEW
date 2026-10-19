@@ -175,7 +175,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <button
               type="button"
               onClick={handleSaveAllSettings}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-none bg-[#31AAA9] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-95"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-none bg-[#359FA0] hover:bg-[#288e8d] text-black font-black text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-95"
             >
               <Check size={14} />
               <span>Save Settings (সেভ করুন)</span>
@@ -1438,7 +1438,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </button>
             <button 
               onClick={handleSaveAllSettings}
-              className="px-6 py-2.5 bg-[#31AAA9] hover:bg-[#288e8d] text-black text-xs font-black uppercase tracking-wider rounded-none shadow-md cursor-pointer transition-all active:scale-95 flex items-center gap-2"
+              className="px-6 py-2.5 bg-[#359FA0] hover:bg-[#288e8d] text-black text-xs font-black uppercase tracking-wider rounded-none shadow-md cursor-pointer transition-all active:scale-95 flex items-center gap-2"
             >
               <Check size={16} />
               <span>Save & Close (সেটিংস সেভ করুন)</span>

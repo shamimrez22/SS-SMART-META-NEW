@@ -233,43 +233,28 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
   const isVector = ['eps', 'ai', 'svg'].includes(ext);
   const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
 
-  const rawBase = (filename || 'stock_asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
-  let cleanName = rawBase
-    .replace(/\(\d+\)/g, '')
-    .replace(/Commercial Stock Asset/gi, '')
-    .replace(/Stock Photo/gi, '')
-    .replace(/Stock Footage/gi, '')
-    .replace(/Vector Illustration/gi, '')
-    .replace(/Concept/gi, '')
-    .trim();
-
-  if (!cleanName || cleanName.length < 2) {
-    cleanName = rawBase ? `Asset ${rawBase}` : 'Stock Asset';
+  const rawBase = (filename || 'creative_stock_asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
+  const nonNumericWords = rawBase.split(/\s+/).filter(w => !/^\(?\d+\)?$/.test(w) && !['img', 'dsc', 'photo', 'video', 'asset'].includes(w.toLowerCase()));
+  const words = nonNumericWords.length > 0 ? nonNumericWords : rawBase.split(/\s+/).filter(Boolean);
+  
+  let meaningfulSubject = nonNumericWords.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  if (!meaningfulSubject || meaningfulSubject.length < 3) {
+    meaningfulSubject = isVector ? 'Creative Modern Graphic Concept' : isVideo ? 'Cinematic Atmospheric Visual Scene' : 'Authentic Contemporary Lifestyle Scene';
   }
-
-  const words = cleanName.split(/\s+/).filter(Boolean);
-  const capitalized = words
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
+  const cleanName = meaningfulSubject;
 
   let rawTitle: string;
-  let category = 'Objects';
+  let category = 'Concepts';
 
   if (isVector) {
-    rawTitle = words.length >= 4 
-      ? `${capitalized} Vector Illustration` 
-      : `${capitalized} Vector Graphic Design`;
+    rawTitle = `${meaningfulSubject} Vector Graphic Artwork Illustration Design`;
     category = 'Graphics';
   } else if (isVideo) {
-    rawTitle = words.length >= 4 
-      ? `${capitalized} Stock Footage Clip` 
-      : `${capitalized} Video Footage Motion Clip`;
-    category = 'Movement';
+    rawTitle = `${meaningfulSubject} Cinematic High Definition Stock Video Footage Clip`;
+    category = 'Footage';
   } else {
-    rawTitle = words.length >= 4 
-      ? capitalized 
-      : `${capitalized} Stock Photography`;
-    category = 'Objects';
+    rawTitle = `${meaningfulSubject} Professional Photography Background Studio Concept`;
+    category = 'Concepts';
   }
 
   const sanitizedTitleObj = sanitizeStockTitle(rawTitle, settings?.marketplace || 'universal');
@@ -303,22 +288,27 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
       'vector', 'illustration', 'graphic', 'design', 'template', 'artwork', 'icon', 'symbol', 
       'element', 'scalable', 'background', 'editable', 'creative', 'modern', 'decorative', 
       'drawing', 'art', 'banner', 'sign', 'concept', 'eps', 'layout', 'clipart', 'isolated', 
-      'style', 'visual', 'set', 'collection', 'flat', 'shape'
+      'style', 'visual', 'set', 'collection', 'flat', 'shape', 'artistic', 'digital', 'abstract',
+      'object', 'presentation', 'media', 'contemporary', 'pattern', 'detail', 'clean', 'professional'
     ];
   } else if (isVideo) {
     formatTags = [
       'footage', 'video', 'motion', 'cinematic', '4k', 'b-roll', 'clip', 'movement', 
       'scene', 'real-time', 'dynamic', 'capture', 'slow motion', 'high definition', 'atmosphere', 
-      'visual', 'background', 'film', 'shot', 'camera', 'live action', 'recording', 'panning'
+      'visual', 'background', 'film', 'shot', 'camera', 'live action', 'recording', 'panning',
+      'production', 'hd', 'broadcast', 'streaming', 'creative', 'action', 'storytelling', 'media'
     ];
   } else {
     formatTags = [
-      'backdrop', 'isolated', 'clean', 'view', 'modern', 'style', 'surface', 'background', 'subject', 'composition'
+      'backdrop', 'isolated', 'clean', 'view', 'modern', 'style', 'surface', 'background', 'subject', 'composition',
+      'commercial', 'professional', 'lighting', 'detail', 'bright', 'texture', 'studio', 'high resolution',
+      'realistic', 'authentic', 'contemporary', 'copy space', 'horizontal', 'depth', 'focus', 'creative', 'lifestyle',
+      'presentation', 'media', 'digital', 'sharp', 'visual', 'color', 'clear', 'vibrant', 'elegance'
     ];
   }
 
   formatTags.forEach(w => {
-    if (uniqueKwSet.size < (settings?.maxKeywords || 45)) uniqueKwSet.add(w);
+    if (uniqueKwSet.size < (settings?.maxKeywords || 48)) uniqueKwSet.add(w);
   });
 
   const rawKw = Array.from(uniqueKwSet).slice(0, settings?.maxKeywords || 48).join(', ');
@@ -682,7 +672,7 @@ function cleanBase64(str: string): string {
 }
 
 // Instantaneous vector blueprint SVG thumbnail (Zero CPU, zero memory overhead, 100% instant)
-export const INSTANT_EPS_SVG_URI = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120"><rect width="120" height="120" fill="%230b1322"/><rect x="12" y="12" width="96" height="96" rx="6" fill="%23142033" stroke="%2331AAA9" stroke-width="2"/><path d="M25 75 C 40 30, 80 30, 95 75" fill="none" stroke="%2331AAA9" stroke-width="3"/><rect x="22" y="72" width="6" height="6" fill="%2338bdf8"/><rect x="57" y="32" width="6" height="6" fill="%23f59e0b"/><rect x="92" y="72" width="6" height="6" fill="%2338bdf8"/><text x="60" y="100" fill="%2331AAA9" font-family="system-ui,sans-serif" font-size="11" font-weight="900" text-anchor="middle">EPS VECTOR</text></svg>`;
+export const INSTANT_EPS_SVG_URI = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120"><rect width="120" height="120" fill="%230b1322"/><rect x="12" y="12" width="96" height="96" rx="6" fill="%23142033" stroke="%23359FA0" stroke-width="2"/><path d="M25 75 C 40 30, 80 30, 95 75" fill="none" stroke="%23359FA0" stroke-width="3"/><rect x="22" y="72" width="6" height="6" fill="%2338bdf8"/><rect x="57" y="32" width="6" height="6" fill="%23f59e0b"/><rect x="92" y="72" width="6" height="6" fill="%2338bdf8"/><text x="60" y="100" fill="%23359FA0" font-family="system-ui,sans-serif" font-size="11" font-weight="900" text-anchor="middle">EPS VECTOR</text></svg>`;
 
 export function getInstantVectorArtboardThumbnail(_filename?: string): string {
   return INSTANT_EPS_SVG_URI;

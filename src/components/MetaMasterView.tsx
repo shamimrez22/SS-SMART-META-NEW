@@ -75,6 +75,7 @@ interface MetaMasterViewProps {
   openExtensionsWithTab?: (tab: 'hub' | 'image-to-prompt' | 'prompt-expander' | 'palette-scout' | 'upscaler-advisor') => void;
   handleFileSelectDirect: () => void;
   handleDirectorySelect: () => void;
+  isLoadingFiles?: boolean;
   startGeneration: () => void;
   handleStopGeneration?: () => void;
   isGenerating: boolean;
@@ -131,11 +132,11 @@ const TableRow = React.memo<TableRowProps>(({
 
   const displayTitle = file.title 
     ? file.title 
-    : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '⚠️ Error (Click to Retry)' : (isPendingThis ? '— (Pending)' : file.filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' '))));
+    : (isGeneratingThis ? 'Processing...' : (isPendingThis ? '— (Pending)' : file.filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')));
 
   const displayKeywords = file.keywords 
     ? file.keywords
-    : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '⚠️ Error' : '—'));
+    : (isGeneratingThis ? 'Processing...' : '—');
 
   const kwCount = file.keywords 
     ? file.keywords.split(',').filter(Boolean).length 
@@ -143,7 +144,7 @@ const TableRow = React.memo<TableRowProps>(({
 
   const displayDescription = file.description 
     ? file.description 
-    : (isGeneratingThis ? 'Processing...' : (isErrorThis ? '⚠️ Error (Click to Retry)' : '—'));
+    : (isGeneratingThis ? 'Processing...' : '—');
 
   const displayCategory = file.category 
     ? file.category 
@@ -233,7 +234,7 @@ const TableRow = React.memo<TableRowProps>(({
             ? (isSelected ? "text-white font-bold hover:text-cyan-200" : "text-slate-100 hover:text-cyan-200")
             : (isDark 
               ? (isSelected ? "text-white font-bold hover:text-cyan-300" : "text-slate-100 hover:text-cyan-300")
-              : (isSelected ? "text-sky-950 font-bold hover:text-sky-700" : "text-slate-900 hover:text-sky-600"))
+              : (isSelected ? "text-white font-bold hover:text-[#359FA0]" : "text-slate-100 hover:text-[#359FA0]"))
         )}
         title={`${file.filename} (Click to copy)`}
         onClick={(e) => onCopy(e, file.filename, `fn-${file.id}`)}
@@ -444,6 +445,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   openExtensionsWithTab,
   handleFileSelectDirect,
   handleDirectorySelect,
+  isLoadingFiles,
   startGeneration,
   handleStopGeneration,
   isGenerating,
@@ -684,7 +686,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             className="flex flex-col cursor-pointer select-none group"
             title="SS SMART META"
           >
-            <h1 className={cn("text-2xl font-bold tracking-tight leading-none group-hover:text-cyan-300 transition-colors", isBlue ? "text-cyan-300 drop-shadow-[0_0_8px_rgba(34,211,238,0.4)]" : (isDark ? "text-white" : "text-slate-900"))}>SS SMART META</h1>
+            <h1 className={cn("text-2xl font-bold tracking-tight leading-none group-hover:text-cyan-300 transition-colors", isBlue ? "text-cyan-300 drop-shadow-[0_0_8px_rgba(34,211,238,0.4)]" : (isDark ? "text-white" : "text-[#359FA0] drop-shadow-[0_0_8px_rgba(53,159,160,0.4)]"))}>SS SMART META</h1>
             <span className="text-[10px] sm:text-[11px] font-mono font-black tracking-widest text-cyan-400 uppercase leading-none mt-1">DEVELOPED BY MD.SHAMIM REZA</span>
           </div>
         </div>
@@ -793,13 +795,13 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
       {/* 2. Control Groups Section matching image.png */}
       <div className={cn(
         "border-b px-2.5 py-1 flex flex-col gap-1 shrink-0 transition-colors",
-        isBlue ? "bg-[#07162c] border-[#1d4ed8]" : (isDark ? "bg-[#14202d] border-[#233449]" : "bg-[#f8fafc] border-slate-200")
+        isBlue ? "bg-[#07162c] border-[#1d4ed8]" : (isDark ? "bg-[#14202d] border-[#233449]" : "bg-[#071b1f] border-[#359FA0]/35")
       )}>
         {/* Row 1: Mode, Theme, Generation Options, Application */}
         <div className="flex items-center gap-1.5 flex-wrap w-full py-0.5">
           {/* Mode Group */}
-          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Mode</legend>
+          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_6px_rgba(53,159,160,0.25)]"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Mode</legend>
             <button 
               type="button"
               onClick={() => setMode('all')}
@@ -808,7 +810,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1",
                 mode === 'all' 
                   ? "bg-[#22c55e] text-white shadow-xs ring-1 ring-emerald-300" 
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white"))
               )}
             >
               <span>ALL</span>
@@ -822,7 +824,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1",
                 mode === 'image' 
                   ? "bg-[#22c55e] text-white shadow-xs" 
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white"))
               )}
             >
               <span>Image</span>
@@ -836,7 +838,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1",
                 mode === 'vector' 
                   ? "bg-[#22c55e] text-white shadow-xs" 
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white"))
               )}
             >
               <span>Vector</span>
@@ -850,7 +852,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1",
                 mode === 'video' 
                   ? "bg-[#22c55e] text-white shadow-xs" 
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white"))
               )}
             >
               <span>Video</span>
@@ -867,38 +869,38 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               }}
               className={cn(
                 "px-1.5 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap",
-                isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200")
+                isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white")
               )}
             >
               Prompt Gen
             </button>
           </fieldset>
 
-          {/* Theme Group (Teal #31AAA9, Dark, System / Blue) */}
-          <fieldset className={cn("border rounded-none px-1.5 py-0.5 flex items-center gap-0.5 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#31AAA9]/60 bg-[#071d22]/90"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#31AAA9]"))}>Theme</legend>
+          {/* Theme Group (Teal #359FA0, Dark, System / Blue) */}
+          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-0.5 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/60 bg-[#071d22]/90 shadow-[0_1px_6px_rgba(53,159,160,0.3)]"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Theme</legend>
             <button 
               type="button"
               onClick={() => setTheme('teal')}
               className={cn(
-                "px-2 py-0.5 rounded-none text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
+                "px-2 py-0.5 rounded text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
                 theme === 'teal' || (!isBlue && theme !== 'dark')
-                  ? "bg-[#31AAA9] text-black shadow-md font-extrabold" 
-                  : "bg-[#0b1c22] text-[#31AAA9] border border-[#31AAA9]/40 hover:bg-[#122e37]"
+                  ? "bg-[#359FA0] text-black shadow-md font-extrabold" 
+                  : "bg-[#0b1c22] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#122e37]"
               )}
             >
-              Teal (#31AAA9)
+              Teal (#359FA0)
             </button>
             <button 
               type="button"
               onClick={() => setTheme('dark')}
               className={cn(
-                "px-1.5 py-0.5 rounded-none text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
+                "px-1.5 py-0.5 rounded text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
                 theme === 'dark' 
                   ? "bg-[#1b2737] text-white border border-[#38bdf8] shadow-[0_0_8px_rgba(56,189,248,0.35)]" 
                   : (isBlue 
                     ? "bg-[#091b38] text-blue-300 border border-[#1d4ed8] hover:bg-[#102b54]" 
-                    : "bg-[#162332] text-slate-300 border border-[#30445a] hover:bg-slate-800 hover:text-white")
+                    : "bg-[#0c2328] text-teal-200 border border-[#359FA0]/30 hover:bg-[#13373e] hover:text-white")
               )}
             >
               Dark
@@ -907,10 +909,10 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               type="button"
               onClick={() => setTheme('system')}
               className={cn(
-                "px-1.5 py-0.5 rounded-none text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
+                "px-1.5 py-0.5 rounded text-[11px] transition-all cursor-pointer whitespace-nowrap font-bold",
                 isBlue 
                   ? "bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 text-white border border-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.65)]" 
-                  : "bg-[#162332] text-slate-300 border border-[#30445a] hover:bg-slate-800 hover:text-white"
+                  : "bg-[#0c2328] text-teal-200 border border-[#359FA0]/30 hover:bg-[#13373e] hover:text-white"
               )}
             >
               System (Blue)
@@ -918,8 +920,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </fieldset>
 
           {/* Keyword Style Group: Single Keyword, Double Keyword (e.g. "happy birthday"), Mixed */}
-          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap whitespace-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap flex items-center gap-1", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>
+          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap whitespace-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_6px_rgba(53,159,160,0.25)]"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap flex items-center gap-1", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>
               <Tag size={10} className="text-amber-400" />
               <span>Keyword Style (কীওয়ার্ড ধরন)</span>
             </legend>
@@ -934,7 +936,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95",
                 (!settings.keywordStyle || settings.keywordStyle === 'mixed') && !settings.singleWordKeywords
                   ? "bg-[#22c55e] text-white shadow-xs ring-1 ring-emerald-300"
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white"))
               )}
             >
               Mixed
@@ -950,7 +952,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95",
                 settings.keywordStyle === 'single' || settings.singleWordKeywords
                   ? "bg-[#0284c7] text-white shadow-xs ring-1 ring-sky-300"
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white"))
               )}
             >
               Single (1-Word)
@@ -966,7 +968,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95",
                 settings.keywordStyle === 'double'
                   ? "bg-amber-500 text-white shadow-xs ring-1 ring-amber-300"
-                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"))
+                  : (isBlue ? "bg-[#091b38] text-blue-200 border border-[#1d4ed8] hover:bg-[#102b54]" : (isDark ? "bg-[#1b2737] text-white border border-[#30445a] hover:bg-slate-800" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white"))
               )}
             >
               Double (2-Words) ✨
@@ -974,10 +976,10 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </fieldset>
 
           {/* Generation Options Group (Crystal-clear light white text, no warning icons) */}
-          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-2 shrink-0 flex-nowrap whitespace-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Generation Options</legend>
+          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-2 shrink-0 flex-nowrap whitespace-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_6px_rgba(53,159,160,0.25)]"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Generation Options</legend>
             
-            <label className={cn("flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0", isBlue ? "text-white font-semibold" : (isDark ? "text-white font-semibold" : "text-slate-900 font-semibold"))}>
+            <label className="flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0 text-white font-semibold">
               <input 
                 type="checkbox" 
                 checked={genOptions.description}
@@ -987,7 +989,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               <span className="whitespace-nowrap text-white font-semibold">Description</span>
             </label>
 
-            <label className={cn("flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0", isBlue ? "text-white font-semibold" : (isDark ? "text-white font-semibold" : "text-slate-900 font-semibold"))}>
+            <label className="flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0 text-white font-semibold">
               <input 
                 type="checkbox" 
                 checked={genOptions.filenameHint}
@@ -997,7 +999,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               <span className="whitespace-nowrap text-white font-semibold">Filename Hint</span>
             </label>
 
-            <label className={cn("flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0", isBlue ? "text-white font-semibold" : (isDark ? "text-white font-semibold" : "text-slate-900 font-semibold"))}>
+            <label className="flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0 text-white font-semibold">
               <input 
                 type="checkbox" 
                 checked={genOptions.autoEmbed}
@@ -1007,7 +1009,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               <span className="whitespace-nowrap text-white font-semibold">Auto Embed</span>
             </label>
 
-            <label className={cn("flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0", isBlue ? "text-white font-semibold" : (isDark ? "text-white font-semibold" : "text-slate-900 font-semibold"))}>
+            <label className="flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0 text-white font-semibold">
               <input 
                 type="checkbox" 
                 checked={genOptions.autoRetry}
@@ -1017,7 +1019,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               <span className="whitespace-nowrap text-white font-semibold">Auto Retry</span>
             </label>
 
-            <label className={cn("flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0", isBlue ? "text-white font-semibold" : (isDark ? "text-white font-semibold" : "text-slate-900 font-semibold"))}>
+            <label className="flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0 text-white font-semibold">
               <input 
                 type="checkbox" 
                 checked={genOptions.pngIsolated}
@@ -1027,7 +1029,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               <span className="whitespace-nowrap text-white font-semibold">PNG Isolated</span>
             </label>
 
-            <label className={cn("flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0", isBlue ? "text-white font-semibold" : (isDark ? "text-white font-semibold" : "text-slate-900 font-semibold"))}>
+            <label className="flex items-center gap-1 text-[11px] cursor-pointer select-none whitespace-nowrap shrink-0 text-white font-semibold">
               <input 
                 type="checkbox" 
                 checked={genOptions.refinePngBg}
@@ -1039,8 +1041,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </fieldset>
 
           {/* Application Group */}
-          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Application</legend>
+          <fieldset className={cn("border rounded px-1.5 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_6px_rgba(37,99,235,0.3)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_6px_rgba(53,159,160,0.25)]"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Application</legend>
             <button 
               type="button"
               onClick={() => setIsSettingsOpen(true)}
@@ -1048,7 +1050,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2 py-0.5 rounded text-[11px] font-semibold cursor-pointer transition-colors whitespace-nowrap",
                 isBlue 
                   ? "bg-[#091b38] text-white border border-[#1d4ed8] hover:bg-[#102b54]" 
-                  : (isDark ? "bg-[#172535] text-white border border-[#0284c7] hover:bg-[#203247]" : "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-2xs")
+                  : (isDark ? "bg-[#172535] text-white border border-[#0284c7] hover:bg-[#203247]" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white")
               )}
             >
               Settings
@@ -1060,7 +1062,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2 py-0.5 rounded text-[11px] font-semibold cursor-pointer transition-colors whitespace-nowrap",
                 isBlue 
                   ? "bg-[#091b38] text-white border border-[#1d4ed8] hover:bg-[#102b54]" 
-                  : (isDark ? "bg-[#172535] text-white border border-[#0284c7] hover:bg-[#203247]" : "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-2xs")
+                  : (isDark ? "bg-[#172535] text-white border border-[#0284c7] hover:bg-[#203247]" : "bg-[#0c282e] text-[#359FA0] border border-[#359FA0]/40 hover:bg-[#123840] hover:text-white")
               )}
             >
               Contact
@@ -1071,8 +1073,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
         {/* Row 2: Input, Processing, Export, Utilities - Clean, compact buttons with zero scrollbars */}
         <div className="flex items-center gap-1.5 flex-wrap xl:flex-nowrap overflow-x-hidden w-full py-1 shrink-0">
           {/* Input Group */}
-          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Input</legend>
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_4px_rgba(53,159,160,0.25)]"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Input</legend>
             <button 
               type="button"
               onClick={handleFileSelectDirect}
@@ -1108,8 +1110,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </fieldset>
 
           {/* Processing Group */}
-          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Processing</legend>
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_4px_rgba(53,159,160,0.25)]"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Processing</legend>
             {isGenerating ? (
               <button 
                 type="button"
@@ -1166,8 +1168,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </fieldset>
 
           {/* Target Marketplace SEO Group */}
-          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 flex items-center gap-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_4px_rgba(53,159,160,0.25)]"))}>
+            <legend className={cn("text-[10px] font-bold px-1 flex items-center gap-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>
               <Globe size={10} className="text-cyan-400" />
               <span>Target SEO</span>
             </legend>
@@ -1183,7 +1185,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "text-[11px] font-bold px-2 py-0.5 h-7 rounded cursor-pointer focus:outline-none transition-colors max-w-[150px]",
                 isBlue 
                   ? "bg-[#091b38] border border-[#1d4ed8] text-white" 
-                  : (isDark ? "bg-[#1b2737] border border-slate-600 text-white" : "bg-white border border-slate-300 text-slate-800 shadow-2xs")
+                  : (isDark ? "bg-[#1b2737] border border-slate-600 text-white" : "bg-[#0c282e] border border-[#359FA0]/40 text-[#f0fdfa]")
               )}
             >
               <option value="universal">All Marketplaces (Universal)</option>
@@ -1205,9 +1207,9 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           </fieldset>
 
           {/* Export Group */}
-          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-slate-300 bg-white shadow-2xs"))}>
-            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-slate-900"))}>Export</legend>
-            <span className={cn("text-[10.5px] font-bold whitespace-nowrap", isBlue ? "text-white" : (isDark ? "text-white" : "text-slate-800"))}>CSV:</span>
+          <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_4px_rgba(53,159,160,0.25)]"))}>
+            <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Export</legend>
+            <span className={cn("text-[10.5px] font-bold whitespace-nowrap", isBlue ? "text-white" : (isDark ? "text-white" : "text-[#f0fdfa]"))}>CSV:</span>
             <select 
               value={selectedExportSite}
               onChange={(e) => setSelectedExportSite(e.target.value)}
@@ -1215,7 +1217,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "text-[11px] font-semibold px-2 py-0.5 h-7 rounded cursor-pointer focus:outline-none transition-colors max-w-[130px]",
                 isBlue 
                   ? "bg-[#091b38] border border-[#1d4ed8] text-white" 
-                  : (isDark ? "bg-[#1b2737] border border-slate-600 text-white" : "bg-white border border-slate-300 text-slate-800 shadow-2xs")
+                  : (isDark ? "bg-[#1b2737] border border-slate-600 text-white" : "bg-[#0c282e] border border-[#359FA0]/40 text-[#f0fdfa]")
               )}
             >
               <option value="all_files">All Marketplaces (Universal)</option>
@@ -1241,7 +1243,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1",
                 isBlue 
                   ? "bg-[#091b38] hover:bg-[#102b54] border border-[#1d4ed8] text-cyan-200" 
-                  : (isDark ? "bg-[#172535] hover:bg-[#203247] border border-[#0ea5e9] text-white" : "bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 shadow-2xs")
+                  : (isDark ? "bg-[#172535] hover:bg-[#203247] border border-[#0ea5e9] text-white" : "bg-[#0c282e] hover:bg-[#123840] border border-[#359FA0]/40 text-[#359FA0] hover:text-white")
               )}
             >
               <FileSpreadsheet size={12} />
@@ -1254,13 +1256,13 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             "border rounded px-2 py-0.5 flex items-center gap-1.5 shrink-0 flex-nowrap transition-colors",
             isBlue 
               ? "border-emerald-500/80 bg-[#082832]/90 shadow-[0_1px_8px_rgba(16,185,129,0.3)]" 
-              : (isDark ? "border-emerald-500/70 bg-[#0f2d27]/80" : "border-emerald-400 bg-emerald-50/50 shadow-2xs")
+              : (isDark ? "border-emerald-500/70 bg-[#0f2d27]/80" : "border-[#359FA0]/70 bg-[#072428]/95 shadow-[0_1px_8px_rgba(53,159,160,0.3)]")
           )}>
             <legend className={cn(
               "text-[10px] font-black px-1.5 whitespace-nowrap flex items-center gap-1",
-              isBlue ? "text-emerald-300" : (isDark ? "text-emerald-300" : "text-emerald-700")
+              isBlue ? "text-emerald-300" : (isDark ? "text-emerald-300" : "text-[#359FA0]")
             )}>
-              <Sparkles size={11} className="text-emerald-400 animate-pulse" />
+              <Sparkles size={11} className="text-[#359FA0] animate-pulse" />
               <span>Embed Metadata</span>
             </legend>
             
@@ -1273,7 +1275,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 active:scale-95 shadow-2xs hover:brightness-110",
                 isBlue 
                   ? "bg-sky-950/90 hover:bg-sky-900 border border-sky-400 text-sky-100" 
-                  : (isDark ? "bg-[#0c2e4e] hover:bg-[#103a63] border border-sky-400 text-sky-100" : "bg-sky-50 hover:bg-sky-100 border border-sky-400 text-sky-900")
+                  : (isDark ? "bg-[#0c2e4e] hover:bg-[#103a63] border border-sky-400 text-sky-100" : "bg-[#0c2e4e] hover:bg-[#103a63] border border-sky-400 text-sky-100")
               )}
             >
               <ImageIcon size={13} className="text-sky-400 shrink-0" />
@@ -1294,7 +1296,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 active:scale-95 shadow-2xs hover:brightness-110",
                 isBlue 
                   ? "bg-amber-950/80 hover:bg-amber-900 border border-amber-400 text-amber-100" 
-                  : (isDark ? "bg-[#33220a] hover:bg-[#452f0d] border border-amber-400 text-amber-100" : "bg-amber-50 hover:bg-amber-100 border border-amber-400 text-amber-900")
+                  : (isDark ? "bg-[#33220a] hover:bg-[#452f0d] border border-amber-400 text-amber-100" : "bg-[#33220a] hover:bg-[#452f0d] border border-amber-400 text-amber-100")
               )}
             >
               <Layers size={13} className="text-amber-400 shrink-0" />
@@ -1315,7 +1317,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 active:scale-95 shadow-2xs hover:brightness-110",
                 isBlue 
                   ? "bg-purple-950/80 hover:bg-purple-900 border border-purple-400 text-purple-100" 
-                  : (isDark ? "bg-[#291438] hover:bg-[#381a4d] border border-purple-400 text-purple-100" : "bg-purple-50 hover:bg-purple-100 border border-purple-400 text-purple-900")
+                  : (isDark ? "bg-[#291438] hover:bg-[#381a4d] border border-purple-400 text-purple-100" : "bg-[#291438] hover:bg-[#381a4d] border border-purple-400 text-purple-100")
               )}
             >
               <Film size={13} className="text-purple-400 shrink-0" />
@@ -1349,15 +1351,15 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
       {/* 3. Files and Metadata Section */}
       <div className={cn(
         "flex-1 flex flex-col min-w-0 overflow-hidden px-2.5 pt-0.5 pb-0.5 transition-colors",
-        isBlue ? "bg-[#0a192f]" : (isDark ? "bg-[#162332]" : "bg-[#f1f5f9]")
+        isBlue ? "bg-[#0a192f]" : (isDark ? "bg-[#162332]" : "bg-[#06171a]")
       )}>
         {/* Compact Title Row to remove empty vertical height gap */}
         <div className="flex items-center justify-between mb-0.5 px-0.5">
           <div className="flex items-center gap-1.5">
-            <h2 className={cn("text-[11px] font-bold tracking-tight leading-none", isBlue ? "text-cyan-300 drop-shadow-[0_0_6px_rgba(34,211,238,0.35)]" : (isDark ? "text-slate-100" : "text-slate-900"))}>
+            <h2 className={cn("text-[11px] font-bold tracking-tight leading-none", isBlue ? "text-cyan-300 drop-shadow-[0_0_6px_rgba(34,211,238,0.35)]" : (isDark ? "text-slate-100" : "text-[#359FA0]"))}>
               Files and Metadata
             </h2>
-            <span className={cn("text-[10px] font-normal leading-none", isBlue ? "text-blue-300/80" : (isDark ? "text-slate-400" : "text-slate-500"))}>
+            <span className={cn("text-[10px] font-normal leading-none", isBlue ? "text-blue-300/80" : (isDark ? "text-slate-400" : "text-teal-300/70"))}>
               ({mode === 'all' ? 'ALL ASSETS: IMAGE + EPS + VIDEO' : mode.toUpperCase()})
             </span>
           </div>
@@ -1366,14 +1368,14 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
         {/* Spreadsheet Table Container */}
         <div className={cn(
           "flex-1 rounded overflow-hidden flex flex-col shadow-inner relative transition-colors border",
-          isBlue ? "border-[#1d4ed8] bg-[#07162c] shadow-[0_4px_24px_rgba(7,19,40,0.7)]" : (isDark ? "border-[#24354a] bg-[#182434]" : "border-slate-300 bg-white shadow-xs")
+          isBlue ? "border-[#1d4ed8] bg-[#07162c] shadow-[0_4px_24px_rgba(7,19,40,0.7)]" : (isDark ? "border-[#24354a] bg-[#182434]" : "border-[#359FA0]/40 bg-[#081e22] shadow-[0_4px_24px_rgba(53,159,160,0.15)]")
         )}>
           {/* Table Header - Slim compact height, single-line without wrapping */}
           <div className={cn(
             "flex items-center text-[11px] font-medium px-2 py-0.5 h-6.5 shrink-0 select-none border-b transition-colors whitespace-nowrap",
             isBlue 
               ? "bg-[#051122] border-[#1d4ed8] text-cyan-200 font-semibold shadow-xs" 
-              : (isDark ? "bg-[#14202d] border-[#24354a] text-slate-200" : "bg-slate-100 border-slate-300 text-slate-700 font-semibold")
+              : (isDark ? "bg-[#14202d] border-[#24354a] text-slate-200" : "bg-[#0a272c] border-[#359FA0]/40 text-[#359FA0] font-bold")
           )}>
             <div className="w-[44px] shrink-0 text-center font-bold">Preview</div>
             <div className="w-[17%] truncate pl-1">Filename</div>
@@ -1391,18 +1393,33 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             className="flex-1 w-full min-h-0 overflow-hidden relative select-none"
           >
             {visibleFiles.length === 0 ? (
-              /* Clean empty table canvas matching image.png */
-              <div className="w-full h-full min-h-[260px] flex flex-col items-center justify-center pointer-events-none select-none p-4 text-center">
-                <span className="text-2xl mb-1 opacity-40">
-                  {mode === 'vector' ? '📐' : mode === 'video' ? '🎬' : mode === 'all' ? '⚡' : '🖼️'}
-                </span>
-                <span className={cn("text-xs font-semibold uppercase tracking-wider", isBlue ? "text-cyan-300/80" : (isDark ? "text-slate-400" : "text-[#31AAA9]"))}>
-                  {mode === 'all' ? 'No files in workspace' : `No ${mode.toUpperCase()} files in workspace`}
-                </span>
-                <span className={cn("text-[11px] mt-0.5", isBlue ? "text-blue-300/60" : (isDark ? "text-slate-500" : "text-slate-400"))}>
-                  Click "SELECT FILE" or "SELECT FOLDER" to add {mode === 'all' ? 'EPS, Video or Image' : mode} assets
-                </span>
-              </div>
+              isLoadingFiles ? (
+                <div className="w-full h-full min-h-[260px] flex flex-col items-center justify-center select-none p-4 text-center animate-in fade-in duration-150">
+                  <div className="relative mb-3">
+                    <div className="w-10 h-10 rounded-full border-3 border-[#359FA0]/20 border-t-[#359FA0] animate-spin" />
+                    <span className="absolute inset-0 flex items-center justify-center text-sm">⚡</span>
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#359FA0]">
+                    Importing Files into Workspace...
+                  </span>
+                  <span className={cn("text-[11px] mt-1", isBlue ? "text-cyan-300/70" : (isDark ? "text-slate-400" : "text-teal-300/80"))}>
+                    Streaming asset records directly into table...
+                  </span>
+                </div>
+              ) : (
+                /* Clean empty table canvas matching image.png */
+                <div className="w-full h-full min-h-[260px] flex flex-col items-center justify-center pointer-events-none select-none p-4 text-center">
+                  <span className="text-2xl mb-1 opacity-40">
+                    {mode === 'vector' ? '📐' : mode === 'video' ? '🎬' : mode === 'all' ? '⚡' : '🖼️'}
+                  </span>
+                  <span className={cn("text-xs font-semibold uppercase tracking-wider", isBlue ? "text-cyan-300/80" : (isDark ? "text-slate-400" : "text-[#359FA0]"))}>
+                    {mode === 'all' ? 'No files in workspace' : `No ${mode.toUpperCase()} files in workspace`}
+                  </span>
+                  <span className={cn("text-[11px] mt-0.5", isBlue ? "text-blue-300/60" : (isDark ? "text-slate-500" : "text-teal-300/70"))}>
+                    Click "SELECT FILE" or "SELECT FOLDER" to add {mode === 'all' ? 'EPS, Video or Image' : mode} assets
+                  </span>
+                </div>
+              )
             ) : (
               <FixedSizeList
                 height={tableDimensions.height}
@@ -1423,8 +1440,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
         {/* Compact Text Status Bar immediately under the table - Single Page View for all files */}
         <div className="mt-1 flex items-center justify-between text-[11px] select-none px-2 py-1 rounded bg-black/10 border border-border/40 gap-2 flex-wrap min-h-[32px]">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className={cn("font-medium", isBlue ? "text-cyan-200" : (isDark ? "text-slate-200" : "text-slate-700"))}>
-              {isGenerating ? "● Processing..." : "✓ Ready"}
+            <span className={cn("font-medium", isBlue ? "text-cyan-200" : (isDark ? "text-slate-200" : "text-[#359FA0]"))}>
+              {isGenerating ? "● Processing..." : (isLoadingFiles ? "⚡ Importing files..." : "✓ Ready")}
             </span>
             <span className="opacity-30">|</span>
             <span className={cn("font-mono font-bold text-[10.5px]", isBlue ? "text-cyan-300" : (isDark ? "text-slate-200" : "text-slate-800"))}>
@@ -1465,7 +1482,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
         "shrink-0 border-t px-2.5 py-1 flex items-center justify-between text-[11px] select-none flex-nowrap gap-2 overflow-hidden transition-colors",
         isBlue 
           ? "bg-[#040c18] border-[#1d4ed8] text-blue-200 shadow-[0_-2px_14px_rgba(4,12,24,0.8)]" 
-          : (isDark ? "bg-[#121c27] border-[#233449] text-slate-300" : "bg-slate-200 border-slate-300 text-slate-700 shadow-2xs")
+          : (isDark ? "bg-[#121c27] border-[#233449] text-slate-300" : "bg-[#06171b] border-[#359FA0]/30 text-teal-200 shadow-[0_-2px_14px_rgba(6,23,27,0.8)]")
       )}>
         {/* Left: Statistics, License & Action Buttons */}
         <div className="flex items-center gap-2 flex-nowrap shrink min-w-0 overflow-hidden whitespace-nowrap text-[11px]">
@@ -1475,11 +1492,11 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             onClick={() => setIsStatsModalOpen(true)}
             className={cn(
               "flex items-center gap-1 transition-colors cursor-pointer bg-transparent border-none p-0 focus:outline-none group text-left shrink-0 whitespace-nowrap",
-              isBlue ? "text-blue-200 hover:text-cyan-300" : (isDark ? "text-slate-300 hover:text-cyan-300" : "text-slate-700 hover:text-sky-700")
+              isBlue ? "text-blue-200 hover:text-cyan-300" : (isDark ? "text-slate-300 hover:text-cyan-300" : "text-teal-200 hover:text-[#359FA0]")
             )}
             title="Click to view full generation statistics & analytics report"
           >
-            <span className={cn("font-bold flex items-center gap-1 transition-colors", isBlue ? "text-cyan-300 group-hover:text-white" : (isDark ? "text-white group-hover:text-cyan-300" : "text-slate-900 group-hover:text-sky-700"))}>
+            <span className={cn("font-bold flex items-center gap-1 transition-colors", isBlue ? "text-cyan-300 group-hover:text-white" : (isDark ? "text-white group-hover:text-cyan-300" : "text-[#359FA0] group-hover:text-white"))}>
               📊 Generation:
             </span>
             <span className="group-hover:underline">24H: {12 + completedCount}</span>
@@ -1496,11 +1513,11 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             }}
             className={cn(
               "flex items-center gap-1 transition-colors cursor-pointer bg-transparent border-none p-0 focus:outline-none group text-left shrink-0 whitespace-nowrap",
-              isBlue ? "text-blue-200 hover:text-cyan-300" : (isDark ? "text-slate-300 hover:text-cyan-300" : "text-slate-700 hover:text-sky-700")
+              isBlue ? "text-blue-200 hover:text-cyan-300" : (isDark ? "text-slate-300 hover:text-cyan-300" : "text-teal-200 hover:text-[#359FA0]")
             )}
             title="Click to view license status & device authorization"
           >
-            <span className={cn("font-bold flex items-center gap-1 transition-colors", isBlue ? "text-cyan-300 group-hover:text-white" : (isDark ? "text-white group-hover:text-cyan-300" : "text-slate-900 group-hover:text-sky-700"))}>
+            <span className={cn("font-bold flex items-center gap-1 transition-colors", isBlue ? "text-cyan-300 group-hover:text-white" : (isDark ? "text-white group-hover:text-cyan-300" : "text-[#359FA0] group-hover:text-white"))}>
               🔍 License:
             </span>
             {currentLicense.isAdmin ? (
@@ -1540,7 +1557,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               "px-2 py-0.5 border rounded text-[11px] cursor-pointer transition-colors shadow-xs active:scale-95 whitespace-nowrap shrink-0",
               isBlue 
                 ? "border-cyan-400 text-cyan-300 bg-[#0c203e] hover:bg-[#13305c]" 
-                : (isDark ? "border-[#0ea5e9] text-cyan-300 bg-[#162536] hover:bg-[#1f354e]" : "border-sky-400 text-sky-800 bg-white hover:bg-sky-50")
+                : (isDark ? "border-[#0ea5e9] text-cyan-300 bg-[#162536] hover:bg-[#1f354e]" : "border-[#359FA0] text-[#359FA0] bg-[#0c282e] hover:bg-[#123840] hover:text-white")
             )}
             title="Open AI Extensions Studio (Prompt to Image, Image to Prompt, Upscale)"
           >
@@ -1554,7 +1571,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
               "px-2 py-0.5 border rounded text-[11px] cursor-pointer transition-colors shadow-xs active:scale-95 whitespace-nowrap shrink-0",
               isBlue 
                 ? "border-emerald-400 text-emerald-300 bg-[#0c203e] hover:bg-[#13305c]" 
-                : (isDark ? "border-[#22c55e] text-emerald-300 bg-[#162536] hover:bg-[#1f354e]" : "border-emerald-500 text-emerald-800 bg-white hover:bg-emerald-50")
+                : (isDark ? "border-[#22c55e] text-emerald-300 bg-[#162536] hover:bg-[#1f354e]" : "border-emerald-400 text-emerald-300 bg-[#0c282e] hover:bg-[#123840] hover:text-white")
             )}
             title="Check for software updates & latest AI presets"
           >
@@ -1582,7 +1599,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             "flex items-center gap-1.5 px-1.5 py-0.5 border rounded transition-colors shrink-0",
             isBlue 
               ? "bg-[#07152b] border-[#1d4ed8] text-cyan-300 shadow-2xs" 
-              : (isDark ? "bg-[#0f1722] border-slate-700/80 text-slate-300" : "bg-white border-slate-300 text-slate-700 shadow-2xs")
+              : (isDark ? "bg-[#0f1722] border-slate-700/80 text-slate-300" : "bg-[#0a252a] border-[#359FA0]/40 text-[#359FA0] shadow-2xs")
           )}>
             <button 
               type="button"

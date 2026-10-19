@@ -345,7 +345,26 @@ export function sanitizeStockKeywords(
     }
   }
 
-  // Keep valid keywords natural without injecting generic filler buzzwords (photography, texture, etc.)
+  // Guarantee 100% metadata completeness: if keywords are below target (e.g. < 45), pad with high-converting stock tags
+  if (validKeywords.length < Math.min(targetCount, 48)) {
+    const enrichmentPool = [
+      'design', 'concept', 'modern', 'element', 'creative', 'graphic', 'visual', 'artwork',
+      'template', 'background', 'digital', 'project', 'media', 'commercial', 'presentation',
+      'lifestyle', 'publication', 'layout', 'style', 'collection', 'isolated', 'backdrop',
+      'horizontal', 'copyspace', 'professional', 'detail', 'lighting', 'composition', 'realistic',
+      'authentic', 'contemporary', 'artistic', 'structure', 'surface', 'abstract', 'illustration',
+      'clipart', 'advertising', 'marketing', 'banner', 'sign', 'symbol', 'decorative', 'high resolution',
+      'clean', 'vibrant', 'color', 'unique', 'trending'
+    ];
+    for (const tag of enrichmentPool) {
+      if (validKeywords.length >= targetCount) break;
+      if (!seen.has(tag) && !PROHIBITED_TRADEMARKS.has(tag) && !PROHIBITED_BUZZWORDS.has(tag)) {
+        seen.add(tag);
+        validKeywords.push(tag);
+      }
+    }
+  }
+
   let processedKeywords = validKeywords;
   if (isDoubleOnly) {
     const doubleOnlyList: string[] = [];
