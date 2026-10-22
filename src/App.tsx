@@ -1356,8 +1356,16 @@ export default function App() {
         if (typeof window !== 'undefined') (window as any).__ss_active_dir = handle;
         setFolderName(handle.name);
         
+        // Reset workspace when connecting a folder so old files never duplicate with new ones
+        filesRef.current = [];
+        fileObjectsRef.current = {};
+        fileHandlesRef.current = {};
+        setFiles([]);
+        setFileObjects({});
+        
         const allItems: StockMetadata[] = [];
         const allFileObjects: Record<string, File> = {};
+        const seenNamesInDir = new Set<string>();
         let batchItems: StockMetadata[] = [];
         let batchFileObjects: Record<string, File> = {};
 
@@ -1369,6 +1377,12 @@ export default function App() {
           if (entry.kind === 'file') {
             try {
               const file = await entry.getFile();
+              const lowerName = file.name.toLowerCase().trim();
+              if (seenNamesInDir.has(lowerName)) {
+                continue; // Skip duplicate files in directory
+              }
+              seenNamesInDir.add(lowerName);
+
               const ext = file.name.split('.').pop()?.toLowerCase() || '';
               const isVector = ['eps', 'ai', 'svg'].includes(ext);
               const isVideo = ['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext);
@@ -1778,48 +1792,65 @@ export default function App() {
             }
           }
 
-          // Directly create or overwrite the new renamed file in the user's folder
-          const newFileHandle = await targetDir.getFileHandle(targetFilename, { create: true });
-          if (newFileHandle && typeof newFileHandle.createWritable === 'function') {
-            const writable = await newFileHandle.createWritable({ keepExistingData: false });
+          const existingHandle = metadata.handle || fileMetadata.handle || fileHandlesRef.current[id] || (actualFile as any)?.handle;
+          let activeWriteHandle: any = null;
+
+          // Attempt atomic in-place rename with handle.move() if supported by browser (Zero duplicate files!)
+          if (existingHandle && typeof existingHandle.move === 'function' && targetFilename !== originalFilename) {
+            try {
+              await existingHandle.move(targetFilename);
+              renamedOnDisk = true;
+              activeWriteHandle = existingHandle;
+            } catch (moveErr) {
+              console.warn("Atomic handle.move fallback to create+delete:", moveErr);
+            }
+          }
+
+          if (!activeWriteHandle) {
+            activeWriteHandle = await targetDir.getFileHandle(targetFilename, { create: true });
+          }
+
+          if (activeWriteHandle && typeof activeWriteHandle.createWritable === 'function') {
+            const writable = await activeWriteHandle.createWritable({ keepExistingData: false });
             await writable.write(outputBlob);
             await writable.close();
             writtenInPlace = true;
-            renamedOnDisk = true;
-            fileMetadata.handle = newFileHandle;
-            fileHandlesRef.current[id] = newFileHandle;
+            fileMetadata.handle = activeWriteHandle;
+            fileHandlesRef.current[id] = activeWriteHandle;
 
-            // Safe removal of old original files from folder so only the renamed file exists
-            const oldNames = new Set<string>();
-            if (originalFilename && originalFilename !== targetFilename) oldNames.add(originalFilename);
-            if (fileMetadata.originalFilename && fileMetadata.originalFilename !== targetFilename) oldNames.add(fileMetadata.originalFilename);
-            if (fileMetadata.initialDiskFilename && fileMetadata.initialDiskFilename !== targetFilename) oldNames.add(fileMetadata.initialDiskFilename);
-            if ((fileMetadata as any).currentDiskFilename && (fileMetadata as any).currentDiskFilename !== targetFilename) {
-              oldNames.add((fileMetadata as any).currentDiskFilename);
-            }
+            // Safe removal of old original files from folder so only the single renamed file exists
+            if (targetFilename !== originalFilename) {
+              const oldNames = new Set<string>();
+              if (originalFilename) oldNames.add(originalFilename);
+              if (fileMetadata.originalFilename) oldNames.add(fileMetadata.originalFilename);
+              if (fileMetadata.initialDiskFilename) oldNames.add(fileMetadata.initialDiskFilename);
+              if ((fileMetadata as any).currentDiskFilename) oldNames.add((fileMetadata as any).currentDiskFilename);
 
-            for (const oldName of oldNames) {
-              if (!oldName || oldName === targetFilename) continue;
+              for (const oldName of oldNames) {
+                if (!oldName || oldName === targetFilename) continue;
+                try {
+                  await targetDir.removeEntry(oldName);
+                  renamedOnDisk = true;
+                } catch {}
+              }
+
+              // Robust case-insensitive sweep across directory entries to eliminate duplicate leftover files
               try {
-                await targetDir.removeEntry(oldName);
-              } catch {}
-            }
-
-            // Robust case-insensitive sweep across directory entries
-            try {
-              for await (const [entryName, entryHandle] of targetDir.entries()) {
-                if (entryHandle.kind === 'file' && entryName !== targetFilename) {
-                  const entryLower = entryName.toLowerCase();
-                  for (const oldName of oldNames) {
-                    if (oldName && entryLower === oldName.toLowerCase()) {
-                      try {
-                        await targetDir.removeEntry(entryName);
-                      } catch {}
+                for await (const [entryName] of targetDir.entries()) {
+                  if (entryName !== targetFilename) {
+                    const entryLower = entryName.toLowerCase();
+                    for (const oldName of oldNames) {
+                      if (oldName && entryLower === oldName.toLowerCase()) {
+                        try {
+                          await targetDir.removeEntry(entryName);
+                          renamedOnDisk = true;
+                        } catch {}
+                      }
                     }
                   }
                 }
-              }
-            } catch {}
+              } catch {}
+            }
 
             (fileMetadata as any).currentDiskFilename = targetFilename;
             fileMetadata.filename = targetFilename;
@@ -3078,7 +3109,40 @@ export default function App() {
     });
 
     const candidateFiles = validFiles.length > 0 ? validFiles : filesArray;
-    const totalCount = candidateFiles.length;
+    
+    // Strict deduplication: Don't import duplicate items if file with same name already exists in workspace
+    const existingFileNames = new Set(
+      filesRef.current.map(f => (f.originalFilename || f.filename || '').toLowerCase().trim())
+    );
+
+    const nonDuplicateFiles: File[] = [];
+    for (const f of candidateFiles) {
+      const fn = f.name.toLowerCase().trim();
+      if (existingFileNames.has(fn)) {
+        // Update handle for existing file if new handle provided
+        const existing = filesRef.current.find(e => (e.originalFilename || e.filename).toLowerCase().trim() === fn);
+        if (existing) {
+          if (handlesMap?.[f.name]) {
+            fileHandlesRef.current[existing.id] = handlesMap[f.name];
+            existing.handle = handlesMap[f.name];
+          }
+          fileObjectsRef.current[existing.id] = f;
+          setFileObjects(prev => ({ ...prev, [existing.id]: f }));
+        }
+      } else {
+        existingFileNames.add(fn);
+        nonDuplicateFiles.push(f);
+      }
+    }
+
+    if (nonDuplicateFiles.length === 0 && candidateFiles.length > 0) {
+      setIsLoadingFiles(false);
+      showNotification(`ফাইলগুলো ইতিমধ্যেই ওয়ার্কস্পেসে যুক্ত রয়েছে।`, 'info');
+      return;
+    }
+
+    const filesToProcess = nonDuplicateFiles;
+    const totalCount = filesToProcess.length;
     setIsLoadingFiles(true);
 
     const buildItem = (file: File) => {
@@ -3122,8 +3186,8 @@ export default function App() {
       return { item, file, id };
     };
 
-    // Fast initial slice: Render first 20 items immediately so UI is NEVER blank!
-    const initialSlice = candidateFiles.slice(0, 25);
+    // Fast initial slice: Render first 25 items immediately so UI is NEVER blank!
+    const initialSlice = filesToProcess.slice(0, 25);
     const initialObjs: Record<string, File> = {};
     const initialItems: StockMetadata[] = [];
 
@@ -3154,7 +3218,7 @@ export default function App() {
         return;
       }
 
-      const nextBatch = candidateFiles.slice(currentIndex, currentIndex + 30);
+      const nextBatch = filesToProcess.slice(currentIndex, currentIndex + 30);
       currentIndex += 30;
 
       const chunkObjs: Record<string, File> = {};

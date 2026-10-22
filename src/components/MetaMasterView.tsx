@@ -203,10 +203,10 @@ const TableRow = React.memo<TableRowProps>(({
                   src={file.previewUrl} 
                   alt={file.filename} 
                   className="w-full h-full object-cover block relative z-1"
-                  loading="lazy"
                   decoding="async"
                   onError={(e) => {
-                    (e.target as HTMLElement).style.display = 'none';
+                    // Do not permanently set display:none on the recycled DOM element
+                    (e.currentTarget as HTMLImageElement).classList.add('opacity-0');
                   }}
                 />
                 {fIsVid && (
@@ -537,8 +537,21 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   const { currentModeFiles, imageFilesCount, vectorFilesCount, videoFilesCount } = React.useMemo(() => {
     let img = 0, vec = 0, vid = 0;
     const modeFiles: StockMetadata[] = [];
+    const seenIds = new Set<string>();
+    const seenNames = new Set<string>();
+
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
+      if (!f || !f.id) continue;
+      // 1. Deduplicate by unique id
+      if (seenIds.has(f.id)) continue;
+      seenIds.add(f.id);
+
+      // 2. Deduplicate identical file entries by originalFilename / filename
+      const nameKey = (f.originalFilename || f.filename || '').toLowerCase().trim();
+      if (nameKey && seenNames.has(nameKey)) continue;
+      if (nameKey) seenNames.add(nameKey);
+
       const isVec = isVectorFile(f);
       const isVid = isVideoFile(f);
       if (isVec) vec++;
@@ -1400,10 +1413,10 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <div className="w-[5%] text-center whitespace-nowrap">Rating</div>
           </div>
 
-          {/* Table Rows Body - react-window 120fps hardware-accelerated list */}
+          {/* Table Rows Body - Permanent DOM list with native smooth 120fps scrolling (never loses files) */}
           <div 
             ref={tableContainerRef}
-            className="flex-1 w-full min-h-0 overflow-hidden relative select-none"
+            className="flex-1 w-full min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar relative select-none"
           >
             {visibleFiles.length === 0 ? (
               isLoadingFiles ? (
@@ -1434,18 +1447,22 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 </div>
               )
             ) : (
-              <FixedSizeList
-                height={tableDimensions.height}
-                width="100%"
-                itemCount={visibleFiles.length}
-                itemSize={34}
-                overscanCount={40}
-                itemData={itemData}
-                className="custom-scrollbar"
-                style={{ overflowX: 'hidden' }}
-              >
-                {VirtualRow}
-              </FixedSizeList>
+              visibleFiles.map((file, idx) => (
+                <TableRow
+                  key={file.id}
+                  file={file}
+                  idx={idx + 1}
+                  isSelected={selectedFileId === file.id}
+                  isBlue={isBlue}
+                  isDark={isDark}
+                  copiedCell={copiedCell}
+                  onSelect={setSelectedFileId}
+                  onOpenPreview={openPreviewModal}
+                  onCopy={copyText}
+                  onRetry={handleRowRetry}
+                  onEmbed={handleRowEmbed}
+                />
+              ))
             )}
           </div>
         </div>
