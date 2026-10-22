@@ -233,29 +233,12 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
   const isVector = ['eps', 'ai', 'svg'].includes(ext);
   const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
 
-  const rawBase = (filename || 'creative_stock_asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
-  const nonNumericWords = rawBase.split(/\s+/).filter(w => !/^\(?\d+\)?$/.test(w) && !['img', 'dsc', 'photo', 'video', 'asset'].includes(w.toLowerCase()));
-  const words = nonNumericWords.length > 0 ? nonNumericWords : rawBase.split(/\s+/).filter(Boolean);
-  
-  let meaningfulSubject = nonNumericWords.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-  if (!meaningfulSubject || meaningfulSubject.length < 3) {
-    meaningfulSubject = isVector ? 'Creative Modern Graphic Concept' : isVideo ? 'Cinematic Atmospheric Visual Scene' : 'Authentic Contemporary Lifestyle Scene';
-  }
+  const rawBase = (filename || 'stock_asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
+  const words = rawBase.split(/\s+/).filter(Boolean);
+  const meaningfulSubject = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ') || 'Stock Asset';
   const cleanName = meaningfulSubject;
-
-  let rawTitle: string;
-  let category = 'Concepts';
-
-  if (isVector) {
-    rawTitle = `${meaningfulSubject} Vector Graphic Artwork Illustration Design`;
-    category = 'Graphics';
-  } else if (isVideo) {
-    rawTitle = `${meaningfulSubject} Cinematic High Definition Stock Video Footage Clip`;
-    category = 'Footage';
-  } else {
-    rawTitle = `${meaningfulSubject} Professional Photography Background Studio Concept`;
-    category = 'Concepts';
-  }
+  const rawTitle = cleanName;
+  const category = isVector ? 'Graphics' : isVideo ? 'Footage' : 'Objects';
 
   const sanitizedTitleObj = sanitizeStockTitle(rawTitle, settings?.marketplace || 'universal');
   const baseTitle = sanitizedTitleObj?.title || rawTitle;
@@ -300,10 +283,8 @@ export function buildLocalSmartMetadata(filename: string, settings: any) {
     ];
   } else {
     formatTags = [
-      'backdrop', 'isolated', 'clean', 'view', 'modern', 'style', 'surface', 'background', 'subject', 'composition',
-      'commercial', 'professional', 'lighting', 'detail', 'bright', 'texture', 'studio', 'high resolution',
-      'realistic', 'authentic', 'contemporary', 'copy space', 'horizontal', 'depth', 'focus', 'creative', 'lifestyle',
-      'presentation', 'media', 'digital', 'sharp', 'visual', 'color', 'clear', 'vibrant', 'elegance'
+      'photography', 'composition', 'texture', 'detail', 'lighting', 'horizontal', 
+      'perspective', 'surface', 'still life', 'angle', 'visual', 'focus', 'tone', 'scene'
     ];
   }
 
@@ -648,8 +629,8 @@ export async function generateMetadata(
       return await callServerGemini(file, settings, allGeminiKeys, previewUrl);
     }
   } catch (error) {
-    console.warn("AI metadata generation network or quota fallback:", error);
-    return buildLocalSmartMetadata(file.name, settings);
+    console.error("AI metadata generation failed:", error);
+    throw error;
   }
 }
 

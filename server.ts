@@ -1092,86 +1092,11 @@ Return ONLY valid JSON with keys:
       }
 
       if (!parsed || !parsed.title) {
-        console.warn(`[API] Gemini vision retry for ${filename || 'file'}...`);
-        // Extract meaningful name without random numbers or camera codes
-        const rawBase = (filename || 'creative_stock_asset').replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim();
-        const nonNumericWords = rawBase.split(/\s+/).filter(w => !/^\(?\d+\)?$/.test(w) && !['img', 'dsc', 'photo', 'video', 'asset'].includes(w.toLowerCase()));
-        const words = nonNumericWords.length > 0 ? nonNumericWords : rawBase.split(/\s+/).filter(Boolean);
-        
-        let meaningfulSubject = nonNumericWords.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-        if (!meaningfulSubject || meaningfulSubject.length < 3) {
-          meaningfulSubject = isVectorAsset ? 'Creative Modern Graphic Concept' : isVideoAsset ? 'Cinematic Atmospheric Visual Scene' : 'Authentic Contemporary Lifestyle Scene';
-        }
-
-        let titleFallback = isVectorAsset
-          ? `${meaningfulSubject} Vector Graphic Artwork Illustration Design`
-          : isVideoAsset
-          ? `${meaningfulSubject} Cinematic High Definition Stock Video Footage Clip`
-          : `${meaningfulSubject} Professional Photography Background Studio Concept`;
-
-        titleFallback = enforceStockTitleWordLimits(titleFallback, minTitleWords, maxTitleWords, {
-          filename,
-          isVector: isVectorAsset,
-          isVideo: isVideoAsset,
-          category: isVectorAsset ? 'Graphics' : isVideoAsset ? 'Footage' : 'Concepts'
+        const errorMsg = lastErr?.message || "Gemini vision analysis could not produce valid metadata for this image. Please click RETRY.";
+        return res.status(500).json({
+          success: false,
+          error: { message: errorMsg }
         });
-
-        const kwSet = new Set<string>();
-        words.forEach(w => {
-          const lw = w.toLowerCase();
-          if (lw.length > 2 && !['and', 'the', 'for', 'with', 'from', 'this', 'that', 'jpg', 'jpeg', 'png', 'eps', 'svg', 'mp4', 'mov'].includes(lw)) {
-            kwSet.add(lw);
-          }
-        });
-        for (let i = 0; i < words.length - 1; i++) {
-          const pair = `${words[i].toLowerCase()} ${words[i+1].toLowerCase()}`;
-          if (pair.length > 5) kwSet.add(pair);
-        }
-
-        const formatTags = isVectorAsset
-          ? ['vector', 'illustration', 'graphic', 'design', 'template', 'artwork', 'icon', 'symbol', 'element', 'scalable', 'editable', 'clipart', 'shape', 'eps']
-          : isVideoAsset
-          ? ['footage', 'video', 'motion', 'cinematic', '4k', 'b-roll', 'clip', 'movement', 'scene', 'real-time', 'dynamic', 'action']
-          : ['isolated', 'backdrop', 'object', 'view', 'studio', 'clean', 'modern', 'style'];
-
-        for (const t of formatTags) {
-          if (kwSet.size >= (maxKeywords || 50)) break;
-          kwSet.add(t);
-        }
-
-        let kwList = Array.from(kwSet);
-        if (keywordStyle === 'double') {
-          const pairs: string[] = [];
-          for (let i = 0; i < kwList.length - 1; i += 2) {
-            pairs.push(`${kwList[i]} ${kwList[i+1]}`);
-          }
-          kwList = pairs.length > 0 ? pairs : kwList;
-        } else if (keywordStyle === 'single') {
-          kwList = kwList.map(k => k.split(/\s+/)[0]).filter(Boolean);
-        }
-
-        const keywordsStr = kwList.slice(0, maxKeywords || 50).join(', ');
-
-        const descFallback = generateUniqueStockDescription(
-          titleFallback,
-          words,
-          {
-            filename,
-            isVector: isVectorAsset,
-            isVideo: isVideoAsset,
-            keywords: keywordsStr,
-            minWords: minDescriptionWords,
-            maxWords: maxDescriptionWords
-          }
-        );
-
-        parsed = {
-          title: titleFallback,
-          keywords: keywordsStr,
-          description: descFallback,
-          category: isVectorAsset ? 'Graphics' : isVideoAsset ? 'Footage' : 'Objects',
-          rating: 5
-        };
       }
 
       return res.json({ success: true, metadata: parsed });

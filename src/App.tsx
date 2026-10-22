@@ -1633,6 +1633,17 @@ export default function App() {
         console.warn("Could not retrieve file from handle in saveMetadataToLocalFile:", hErr);
       }
     }
+
+    const targetDir = dirHandle || directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
+    if (!actualFile && targetDir && typeof targetDir.getFileHandle === 'function') {
+      try {
+        const fh = await targetDir.getFileHandle(fileMetadata.originalFilename || fileMetadata.filename);
+        actualFile = await fh.getFile();
+        fileObjectsRef.current[id] = actualFile;
+        setFileObjects(prev => ({ ...prev, [id]: actualFile }));
+      } catch {}
+    }
+
     if (!actualFile && fileMetadata.previewUrl) {
       try {
         const res = await fetch(fileMetadata.previewUrl);
@@ -1658,16 +1669,14 @@ export default function App() {
         ? metadata.rating
         : (fileMetadata.rating !== undefined && fileMetadata.rating > 0) ? fileMetadata.rating : 5;
 
-      // If title or keywords are missing, automatically generate smart commercial stock metadata immediately
-      if (!titleVal || !kwVal) {
-        const smart = buildLocalSmartMetadata(
-          fileMetadata.originalFilename || fileMetadata.filename || (actualFile ? actualFile.name : 'stock_asset'),
-          settings
-        );
-        if (!titleVal) titleVal = smart.title;
-        if (!kwVal) kwVal = smart.keywords;
-        if (!descVal) descVal = smart.description;
-        if (!catVal) catVal = smart.category;
+      if (!titleVal) {
+        titleVal = (fileMetadata.originalFilename || fileMetadata.filename || 'stock_asset')
+          .replace(/\.[^/.]+$/, '')
+          .replace(/[-_]+/g, ' ')
+          .trim();
+      }
+      if (!descVal) {
+        descVal = titleVal;
       }
 
       // Strictly eliminate 'universal', 'marketplace', 'marketplaces' terms from keywords
@@ -1758,14 +1767,21 @@ export default function App() {
       let writtenInPlace = false;
       let renamedOnDisk = false;
 
-      // 3. Silent in-place disk write: Directory handle if local folder is active (TOP PRIORITY for full renaming & in-place replacement)
-      const targetDir = dirHandle || directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
+      // 3. In-place disk write to Directory handle (TOP PRIORITY for full renaming & in-place replacement)
       if (targetDir && typeof targetDir.getFileHandle === 'function') {
         try {
+          // Check and request permission if supported
+          if (typeof targetDir.queryPermission === 'function') {
+            const p = await targetDir.queryPermission({ mode: 'readwrite' });
+            if (p !== 'granted' && typeof targetDir.requestPermission === 'function') {
+              await targetDir.requestPermission({ mode: 'readwrite' });
+            }
+          }
+
           // Directly create or overwrite the new renamed file in the user's folder
           const newFileHandle = await targetDir.getFileHandle(targetFilename, { create: true });
           if (newFileHandle && typeof newFileHandle.createWritable === 'function') {
-            const writable = await newFileHandle.createWritable();
+            const writable = await newFileHandle.createWritable({ keepExistingData: false });
             await writable.write(outputBlob);
             await writable.close();
             writtenInPlace = true;
@@ -1774,29 +1790,42 @@ export default function App() {
             fileHandlesRef.current[id] = newFileHandle;
 
             // Safe removal of old original files from folder so only the renamed file exists
-            if (targetFilename !== originalFilename) {
-              const oldNames = new Set<string>();
-              if (originalFilename && originalFilename !== targetFilename) oldNames.add(originalFilename);
-              if (fileMetadata.originalFilename && fileMetadata.originalFilename !== targetFilename) oldNames.add(fileMetadata.originalFilename);
-              if (fileMetadata.initialDiskFilename && fileMetadata.initialDiskFilename !== targetFilename) oldNames.add(fileMetadata.initialDiskFilename);
-              if ((fileMetadata as any).currentDiskFilename && (fileMetadata as any).currentDiskFilename !== targetFilename) {
-                oldNames.add((fileMetadata as any).currentDiskFilename);
-              }
+            const oldNames = new Set<string>();
+            if (originalFilename && originalFilename !== targetFilename) oldNames.add(originalFilename);
+            if (fileMetadata.originalFilename && fileMetadata.originalFilename !== targetFilename) oldNames.add(fileMetadata.originalFilename);
+            if (fileMetadata.initialDiskFilename && fileMetadata.initialDiskFilename !== targetFilename) oldNames.add(fileMetadata.initialDiskFilename);
+            if ((fileMetadata as any).currentDiskFilename && (fileMetadata as any).currentDiskFilename !== targetFilename) {
+              oldNames.add((fileMetadata as any).currentDiskFilename);
+            }
 
-              for (const oldName of oldNames) {
-                if (!oldName || oldName === targetFilename) continue;
-                try {
-                  await targetDir.removeEntry(oldName);
-                } catch (rmErr) {
-                  // ignore if already removed or file didn't exist under that name
+            for (const oldName of oldNames) {
+              if (!oldName || oldName === targetFilename) continue;
+              try {
+                await targetDir.removeEntry(oldName);
+              } catch {}
+            }
+
+            // Robust case-insensitive sweep across directory entries
+            try {
+              for await (const [entryName, entryHandle] of targetDir.entries()) {
+                if (entryHandle.kind === 'file' && entryName !== targetFilename) {
+                  const entryLower = entryName.toLowerCase();
+                  for (const oldName of oldNames) {
+                    if (oldName && entryLower === oldName.toLowerCase()) {
+                      try {
+                        await targetDir.removeEntry(entryName);
+                      } catch {}
+                    }
+                  }
                 }
               }
-            }
+            } catch {}
 
             (fileMetadata as any).currentDiskFilename = targetFilename;
             fileMetadata.filename = targetFilename;
+            fileMetadata.initialDiskFilename = targetFilename;
           }
-        } catch (dirErr) {
+        } catch (dirErr: any) {
           console.warn("DirHandle embed write warning:", dirErr);
         }
       }
@@ -1805,15 +1834,19 @@ export default function App() {
       const handleToUse = metadata.handle || fileMetadata.handle || fileHandlesRef.current[id] || (actualFile as any)?.handle;
       if (!writtenInPlace && handleToUse && typeof handleToUse.createWritable === 'function') {
         try {
+          if (typeof handleToUse.queryPermission === 'function') {
+            const p = await handleToUse.queryPermission({ mode: 'readwrite' });
+            if (p !== 'granted' && typeof handleToUse.requestPermission === 'function') {
+              await handleToUse.requestPermission({ mode: 'readwrite' });
+            }
+          }
           if (typeof (handleToUse as any).move === 'function' && targetFilename !== originalFilename) {
             try {
               await (handleToUse as any).move(targetFilename);
               renamedOnDisk = true;
-            } catch (mErr) {
-              // move may not be supported outside OPFS on some platforms
-            }
+            } catch {}
           }
-          const writable = await handleToUse.createWritable();
+          const writable = await handleToUse.createWritable({ keepExistingData: false });
           await writable.write(outputBlob);
           await writable.close();
           writtenInPlace = true;
@@ -1978,17 +2011,17 @@ export default function App() {
     }
 
     for (const f of targetModeFiles) {
-      const titleToUse = (f.title && f.title.trim())
-        ? f.title.trim()
-        : buildLocalSmartMetadata(f.originalFilename || f.filename, settings).title;
-      if (titleToUse) {
-        const newName = sanitizeStockFilename(titleToUse, f.originalFilename || f.filename, f.fileType || 'jpg', settings.filenameFormat || 'exact_title');
-        if (newName) {
-          count++;
-          const res = await saveMetadataToLocalFile(f.id, { filename: newName, title: titleToUse }, activeDir, false);
-          if (res && res.writtenInPlace) {
-            inPlaceRenamed++;
-          }
+      const titleToUse = (f.title && f.title.trim()) ? f.title.trim() : '';
+      if (!titleToUse) {
+        // Only rename files that have an AI-generated title
+        continue;
+      }
+      const newName = sanitizeStockFilename(titleToUse, f.originalFilename || f.filename, f.fileType || 'jpg', settings.filenameFormat || 'exact_title');
+      if (newName) {
+        count++;
+        const res = await saveMetadataToLocalFile(f.id, { filename: newName, title: titleToUse }, activeDir, false);
+        if (res && res.writtenInPlace) {
+          inPlaceRenamed++;
         }
       }
       // Micro-yield to keep UI 60fps responsive during bulk rename
@@ -2052,34 +2085,13 @@ export default function App() {
         console.warn("Could not reconstruct file from previewUrl:", e);
       }
     }
-    if (!actualFile || actualFile.size < 100) {
-      const smartFallback = buildLocalSmartMetadata(fileMetadata.filename, settings);
-      const activeKwStyle = settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed');
-      const sanitizedKwObj = sanitizeStockKeywords(
-        smartFallback.keywords || '',
-        smartFallback.title,
-        settings?.maxKeywords || 50,
-        settings?.singleWordKeywords,
-        activeKwStyle
-      );
-      const newFilename = sanitizeStockFilename(
-        smartFallback.title,
-        fileMetadata.originalFilename || fileMetadata.filename,
-        fileMetadata.fileType || 'jpg',
-        settings.filenameFormat || 'exact_title'
-      );
-      const recoveredMetadata: StockMetadata = { 
-        ...fileMetadata, 
-        ...smartFallback, 
-        keywords: sanitizedKwObj.keywords,
-        originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
-        filename: newFilename,
-        status: 'saved',
-        errorMessage: undefined
-      };
-      setFiles(prev => prev.map(f => f.id === id ? recoveredMetadata : f));
-      const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-      await saveMetadataToLocalFile(id, recoveredMetadata, activeDir, false);
+    if (!actualFile || actualFile.size < 10) {
+      setFiles(prev => prev.map(f => f.id === id ? { 
+        ...f, 
+        status: 'error', 
+        errorMessage: 'File content unavailable. Please re-select folder or file.' 
+      } : f));
+      showNotification(`⚠️ "${fileMetadata.filename}" ফাইলের কনটেন্ট লোড করা যায়নি। ফোল্ডারটি আবার সিলেক্ট করুন।`, 'error');
       return;
     }
 
@@ -2130,36 +2142,22 @@ export default function App() {
       const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
       await saveMetadataToLocalFile(id, updatedMetadata, activeDir, false);
     } catch (error: any) {
-      console.warn("Regenerate fallback recovery:", error);
-      const smartFallback = buildLocalSmartMetadata(fileMetadata.filename, settings);
-      const activeKwStyle = settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed');
-      const sanitizedKwObj = sanitizeStockKeywords(
-        smartFallback.keywords || '',
-        smartFallback.title,
-        settings?.maxKeywords || 50,
-        settings?.singleWordKeywords,
-        activeKwStyle
-      );
-      const newFilename = sanitizeStockFilename(
-        smartFallback.title,
-        fileMetadata.originalFilename || fileMetadata.filename,
-        fileMetadata.fileType || 'jpg',
-        settings.filenameFormat || 'exact_title'
-      );
-      const recoveredMetadata: StockMetadata = { 
-        ...fileMetadata, 
-        ...smartFallback, 
-        keywords: sanitizedKwObj.keywords,
-        originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
-        filename: newFilename,
-        status: 'saved',
-        errorMessage: undefined
-      };
-      setFiles(prev => prev.map(f => f.id === id ? recoveredMetadata : f));
+      console.error("Regenerate failed:", error);
+      const errMsg = error?.message || 'Vision AI analysis failed. Click Retry.';
+      setFiles(prev => prev.map(f => f.id === id ? { 
+        ...f, 
+        status: 'error', 
+        errorMessage: errMsg 
+      } : f));
       const fIndex = filesRef.current.findIndex(f => f.id === id);
       if (fIndex !== -1) {
-        filesRef.current[fIndex] = recoveredMetadata;
+        filesRef.current[fIndex] = {
+          ...filesRef.current[fIndex],
+          status: 'error',
+          errorMessage: errMsg
+        };
       }
+      showNotification(`⚠️ "${fileMetadata.filename}" মেটাডাটা তৈরিতে সমস্যা হয়েছে। Retry বাটনে চাপুন।`, 'error');
     }
   };
 
@@ -2229,8 +2227,9 @@ export default function App() {
     setProgress({ current: 0, total: pendingFiles.length });
     showNotification(`🚀 মেটাডাটা তৈরি শুরু হয়েছে (${pendingFiles.length}টি ফাইল)...`, 'info');
 
-    // High-Speed Concurrent Metadata Pipeline: Multi-worker parallel processing so files process swiftly without 1-by-1 waiting
-    const concurrency = Math.min(3, pendingFiles.length);
+    // Multi-worker processing with safe rate-limit pacing so Vision AI processes each image cleanly without 429 quota exhaustion
+    const userMaxConcurrency = Math.max(1, Math.min(2, Number(settings?.concurrency) || 2));
+    const concurrency = Math.min(userMaxConcurrency, pendingFiles.length);
     
     const processNext = async () => {
       while (!stopRef.current && !abortCtrl.signal.aborted && pendingQueueRef.current.length > 0) {
@@ -2261,6 +2260,20 @@ export default function App() {
           } catch (hErr) {
             console.warn("Could not get file from handle:", hErr);
           }
+        }
+
+        const currentActiveDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
+        if ((!actualFile || actualFile.size === 0) && currentActiveDir) {
+          try {
+            const h = await currentActiveDir.getFileHandle(fileMetadata.originalFilename || fileMetadata.filename);
+            if (h && typeof h.getFile === 'function') {
+              const diskFile = await h.getFile();
+              if (diskFile && diskFile.size > 0) {
+                actualFile = diskFile;
+                fileObjectsRef.current[fileMetadata.id] = diskFile;
+              }
+            }
+          } catch {}
         }
 
         if (!actualFile && fileMetadata.previewUrl) {
@@ -2369,8 +2382,8 @@ export default function App() {
 
             setProgress(prev => ({ ...prev, current: prev.current + 1 }));
 
-            // Respectful pacing delay between files (100ms) to stay within API rate limits cleanly
-            await new Promise(r => setTimeout(r, 100));
+            // Respectful pacing delay between files (400ms) to stay within API rate limits cleanly
+            await new Promise(r => setTimeout(r, 400));
             break; // Success, exit retry loop
           } catch (error: any) {
             if (stopRef.current || abortCtrl.signal.aborted || !filesRef.current.some(f => f.id === fileMetadata.id)) {
@@ -2378,56 +2391,25 @@ export default function App() {
             }
             const errStr = String(error?.message || error || '');
             const isRateLimit = errStr.includes('429') || errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('rate');
-            if (retryCount < (isRateLimit ? 2 : maxRetries) && !stopRef.current && !abortCtrl.signal.aborted) {
+            if (retryCount < (isRateLimit ? 3 : maxRetries) && !stopRef.current && !abortCtrl.signal.aborted) {
               retryCount++;
               setFiles(prev => prev.map(f => f.id === fileMetadata.id ? { ...f, status: 'generating', errorMessage: undefined } : f));
-              await new Promise(r => setTimeout(r, isRateLimit ? 2000 : 800));
+              await new Promise(r => setTimeout(r, isRateLimit ? 3500 : 1200));
               continue; // Retry AI analysis
             }
-            console.warn(`Vision AI issue for ${fileMetadata.filename}, applying 100% valid smart metadata:`, error?.message || error);
+            console.error(`Vision AI failed for ${fileMetadata.filename}:`, error?.message || error);
             
-            // ZERO-ERROR GUARANTEE: Never leave file in error state! Apply high-converting smart metadata!
-            const smartFallback = buildLocalSmartMetadata(fileMetadata.filename, settings);
-            const activeKwStyle = settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed');
-            const sanitizedKwObj = sanitizeStockKeywords(
-              smartFallback.keywords || '',
-              smartFallback.title,
-              settings?.maxKeywords || 50,
-              settings?.singleWordKeywords,
-              activeKwStyle
-            );
-            const newFilename = sanitizeStockFilename(
-              smartFallback.title,
-              fileMetadata.originalFilename || fileMetadata.filename,
-              fileMetadata.fileType || 'jpg',
-              settings.filenameFormat || 'exact_title'
-            );
-
-            const recoveredMetadata = { 
+            const failedMetadata: StockMetadata = { 
               ...fileMetadata, 
-              ...smartFallback, 
-              keywords: sanitizedKwObj.keywords,
-              originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
-              filename: newFilename,
-              status: 'completed' as const,
-              errorMessage: undefined
+              status: 'error' as const,
+              errorMessage: error?.message || "Vision AI generation failed. Click Retry to re-analyze."
             };
 
-            setFiles(prev => prev.map(f => (f.id === fileMetadata.id ? recoveredMetadata : f)));
+            setFiles(prev => prev.map(f => (f.id === fileMetadata.id ? failedMetadata : f)));
 
             const fIndex = filesRef.current.findIndex(f => f.id === fileMetadata.id);
             if (fIndex !== -1) {
-              filesRef.current[fIndex] = recoveredMetadata;
-            }
-
-            // In-place disk write if local folder handle is connected
-            const currentDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-            if (currentDir) {
-              try {
-                await saveMetadataToLocalFile(fileMetadata.id, recoveredMetadata, currentDir, false);
-              } catch (saveErr) {
-                console.warn("Recovered metadata save error:", saveErr);
-              }
+              filesRef.current[fIndex] = failedMetadata;
             }
 
             setProgress(prev => ({ ...prev, current: prev.current + 1 }));
@@ -2438,7 +2420,12 @@ export default function App() {
     };
 
     try {
-      const workers = Array.from({ length: concurrency }, () => processNext());
+      const workers = Array.from({ length: concurrency }, (_, i) => {
+        if (i > 0) {
+          return new Promise(resolve => setTimeout(resolve, i * 450)).then(() => processNext());
+        }
+        return processNext();
+      });
       await Promise.all(workers);
     } catch (err) {
       console.error("Batch processing error:", err);
@@ -2783,34 +2770,49 @@ export default function App() {
 
     let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
 
-    // If folder handle is missing, prompt user under this EMBED button click gesture so files can be renamed on disk
-    if (!activeDir && 'showDirectoryPicker' in window) {
+    // 1. If folder handle is missing, prompt user under this EMBED button click gesture so files can be renamed on disk
+    if (!activeDir && typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
       try {
         const pickedDir = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
         if (pickedDir) {
-          if (typeof pickedDir.requestPermission === 'function') {
-            await pickedDir.requestPermission({ mode: 'readwrite' });
-          }
           activeDir = pickedDir;
           setDirectoryHandle(pickedDir);
           directoryHandleRef.current = pickedDir;
           if (typeof window !== 'undefined') (window as any).__ss_active_dir = pickedDir;
           setFolderName(pickedDir.name);
-          showNotification(`✓ "${pickedDir.name}" ফোল্ডার কানেক্ট হয়েছে (ইন-প্লেস রিনেম ও মেটাডাটা সেভ সক্রিয়)`, 'success');
         }
-      } catch (dErr) {
-        // User dismissed optional folder picker dialog
+      } catch (dErr: any) {
+        console.warn("Folder picker dialog in embed:", dErr);
       }
     }
 
-    // Verify readwrite permission under user click gesture if handles support it
-    if (activeDir && typeof activeDir.queryPermission === 'function') {
+    // 2. EXPLICITLY REQUEST AND ENSURE READWRITE PERMISSION UNDER USER CLICK
+    let isPermGranted = false;
+    if (activeDir) {
       try {
-        const q = await activeDir.queryPermission({ mode: 'readwrite' });
-        if (q !== 'granted' && typeof activeDir.requestPermission === 'function') {
-          await activeDir.requestPermission({ mode: 'readwrite' });
+        if (typeof activeDir.requestPermission === 'function') {
+          const perm = await activeDir.requestPermission({ mode: 'readwrite' });
+          isPermGranted = (perm === 'granted');
+        } else if (typeof activeDir.queryPermission === 'function') {
+          const q = await activeDir.queryPermission({ mode: 'readwrite' });
+          if (q !== 'granted' && typeof activeDir.requestPermission === 'function') {
+            const perm = await activeDir.requestPermission({ mode: 'readwrite' });
+            isPermGranted = (perm === 'granted');
+          } else {
+            isPermGranted = (q === 'granted');
+          }
+        } else {
+          isPermGranted = true;
         }
-      } catch {}
+      } catch (pErr) {
+        console.warn("Permission request error:", pErr);
+      }
+
+      if (isPermGranted) {
+        showNotification(`✓ ফোল্ডার "${activeDir.name}" পারমিশন অনুমোদিত (Allow Granted)! সরাসরি আসল ফাইলে মেটাডাটা ও রিনেম সেভ হচ্ছে...`, 'success');
+      } else {
+        showNotification("⚠️ ফোল্ডারে আসল ফাইল রিনেম ও সেভ করতে ব্রাউজারের 'Allow' পারমিশন দিন!", 'error');
+      }
     }
 
     setEmbedPopup({

@@ -1,4 +1,40 @@
 {
+  "titleLength": [
+    30,
+    70
+  ],
+  "descriptionLength": [
+    100,
+    200
+  ],
+  "keywordsCount": 30,
+  "autoDownload": false,
+  "promptMode": "default",
+  "marketplace": "universal",
+  "aiModel": "gemini-2.5-flash",
+  "titlePrefix": "",
+  "titleSuffix": "",
+  "keywordsPrefix": "",
+  "keywordsSuffix": "",
+  "customPrompt": "World-class commercial stock metadata: Literal descriptive title, comprehensive 35-word description, and exactly 50 high-ranking stock keywords categorized by primary subject, environment, and commercial search intent.",
+  "optimizeKeywords": true,
   "minTitleWords": 8,
-  "maxTitleWords": 14
+  "maxTitleWords": 14,
+  "minDescriptionWords": 20,
+  "maxDescriptionWords": 45,
+  "minKeywords": 35,
+  "maxKeywords": 43,
+  "titleChoice": 1,
+  "metadataFor": "video",
+  "keywordStyle": "double",
+  "singleWordKeywords": false,
+  "silhouette": false,
+  "transparentBackground": false,
+  "prohibitedWords": false,
+  "customPromptEnabled": false,
+  "autoGenerateOnAdd": false,
+  "savedKeywords": [],
+  "concurrency": 3,
+  "autoSyncFilenameWithTitle": true,
+  "filenameFormat": "exact_title"
 }

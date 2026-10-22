@@ -33,7 +33,8 @@ import {
   Image as ImageIcon,
   Film,
   Tag,
-  Square
+  Square,
+  ExternalLink
 } from 'lucide-react';
 import { checkCurrentLicenseStatus, validateAndActivateKey, validateAndActivateKeyAsync, getAdminConfig, LicenseStatusResult } from '../services/licenseService';
 import { buildLocalSmartMetadata } from '../services/aiService';
@@ -1096,6 +1097,18 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             >
               <Folder size={12} strokeWidth={2.5} />
               <span>SELECT FOLDER</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => window.open(window.location.href, '_blank')}
+              title="আইফ্রেম ছাড়া সরাসরি নতুন উইন্ডো/ট্যাবে খুলুন (ব্রাউজারের ফুল ডিস্ক রাইট ও Allow পারমিশন সক্রিয় করতে)"
+              className={cn(
+                "px-2 py-1 h-7 text-white font-bold text-[10px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1",
+                isBlue ? "bg-slate-700 hover:bg-slate-600 border border-slate-500" : "bg-slate-700/80 hover:bg-slate-600 border border-slate-600"
+              )}
+            >
+              <ExternalLink size={11} strokeWidth={2.2} />
+              <span>NEW TAB</span>
             </button>
             {folderName && (
               <span 
