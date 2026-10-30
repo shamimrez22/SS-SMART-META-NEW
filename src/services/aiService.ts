@@ -1047,15 +1047,18 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
             cleanup();
             resolve(undefined);
           }
-        }, 2200);
+        }, 6000);
 
         const capture = () => {
           if (resolved) return;
+          if (!video.videoWidth || !video.videoHeight) {
+            return;
+          }
           resolved = true;
           clearTimeout(timer);
           try {
             const canvas = document.createElement('canvas');
-            const maxDim = 480;
+            const maxDim = 640;
             let w = video.videoWidth || 640;
             let h = video.videoHeight || 360;
 
@@ -1097,7 +1100,7 @@ export async function extractVideoThumbnail(file: File): Promise<string | undefi
         video.onloadedmetadata = () => {
           try {
             const duration = video.duration || 2;
-            const seekTime = Math.min(Math.max(duration * 0.2, 0.3), duration > 1 ? duration - 0.2 : 0);
+            const seekTime = Math.min(Math.max(duration * 0.15, 0.5), duration > 1 ? duration - 0.2 : 0.1);
             video.currentTime = seekTime;
           } catch (e) {
             capture();

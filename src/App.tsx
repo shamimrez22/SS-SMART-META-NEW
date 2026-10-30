@@ -57,7 +57,9 @@ import {
   ChevronDown,
   ChevronUp,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  Camera,
+  Film
 } from 'lucide-react';
 import Papa from 'papaparse';
 import * as piexif from "piexifjs";
@@ -93,6 +95,71 @@ import { sanitizeStockKeywords } from './services/marketplaceSanitizer';
 
 const STORAGE_KEY = 'ai-metadata-pro-config';
 const HISTORY_KEY = 'ai-metadata-pro-history';
+
+export const SHUTTERSTOCK_CATEGORIES = [
+  'Abstract',
+  'Animals/Wildlife',
+  'The Arts',
+  'Backgrounds/Textures',
+  'Beauty/Fashion',
+  'Buildings/Landmarks',
+  'Business/Finance',
+  'Celebrities',
+  'Education',
+  'Food and Drink',
+  'Healthcare/Medical',
+  'Holidays',
+  'Illustrations/Clip-Art',
+  'Industrial',
+  'Interiors',
+  'Miscellaneous',
+  'Nature',
+  'Objects',
+  'Parks/Outdoor',
+  'People',
+  'Religion',
+  'Science',
+  'Signs/Symbols',
+  'Sports/Recreation',
+  'Technology',
+  'Transportation',
+  'Vectors',
+  'Vintage'
+];
+
+export function mapToShutterstockCategory(cat: string = '', tags: string = '', isVideo: boolean = false): string {
+  const trimmed = (cat || '').trim();
+  const exact = SHUTTERSTOCK_CATEGORIES.find(c => c.toLowerCase() === trimmed.toLowerCase());
+  if (exact) return exact;
+
+  const text = `${trimmed} ${tags}`.toLowerCase();
+  if (/animal|wildlife|bird|pet|dog|cat|fauna|fish|insect|safari/.test(text)) return 'Animals/Wildlife';
+  if (/build|landmark|architect|tower|monument|city|skyline|house|urban|bridge/.test(text)) return 'Buildings/Landmarks';
+  if (/busin|financ|money|trade|invest|bank|econom|offic|corporat|work/.test(text)) return 'Business/Finance';
+  if (/food|drink|beverag|dish|meal|fruit|veget|cook|bak|restaur|cuisin/.test(text)) return 'Food and Drink';
+  if (/medic|health|doctor|patient|hospit|care|clinic|pharmac|treat/.test(text)) return 'Healthcare/Medical';
+  if (/natur|landscap|forest|tree|sea|ocean|beach|mountain|river|sky|sun/.test(text)) return 'Nature';
+  if (/peopl|person|human|man|woman|child|portrait|face|crowd|famil/.test(text)) return 'People';
+  if (/car|vehicl|traffic|road|highway|plane|train|transport|flight|driv/.test(text)) return 'Transportation';
+  if (/sport|fit|athlet|exercis|run|train|gym|match|play|game/.test(text)) return 'Sports/Recreation';
+  if (/comput|technolog|ai|digital|cyber|network|data|robot|screen|code|chip/.test(text)) return 'Technology';
+  if (/art|paint|music|theatr|creativ|draw|sculptur|cultur/.test(text)) return 'The Arts';
+  if (/beaut|fashion|model|cloth|cosmet|makeup|styl|hair/.test(text)) return 'Beauty/Fashion';
+  if (/celebrat|holiday|christma|easter|new year|party|festiv/.test(text)) return 'Holidays';
+  if (/interi|room|furnitur|living|bedroom|kitchen|indoor/.test(text)) return 'Interiors';
+  if (/industr|factor|construct|manufactur|engin|machin/.test(text)) return 'Industrial';
+  if (/scienc|laborat|chemist|physic|biolog|research|microscop/.test(text)) return 'Science';
+  if (/sign|symbol|icon|emblem|badge|arrow/.test(text)) return 'Signs/Symbols';
+  if (/park|outdoor|garden|meadow|camp/.test(text)) return 'Parks/Outdoor';
+  if (/vector|clipart|illustr/.test(text)) return isVideo ? 'Objects' : 'Vectors';
+  if (/abstract|concept|surreal|geometr/.test(text)) return 'Abstract';
+  if (/textur|pattern|surfac|wall|wood|metal|paper/.test(text)) return 'Backgrounds/Textures';
+  if (/vintag|retro|antiqu|classic|nostalg/.test(text)) return 'Vintage';
+  if (/relig|faith|church|temple|pray/.test(text)) return 'Religion';
+  if (/educat|school|learn|student|univers|book/.test(text)) return 'Education';
+
+  return isVideo ? 'Technology' : 'Objects';
+}
 
 export interface BulkUndoSnapshot {
   id: string;
@@ -1121,7 +1188,12 @@ export default function App() {
   const openPreviewModal = useCallback((file: StockMetadata) => {
     setPreviewModalFileId(file.id);
     setPreviewZoom(1);
+    setVideoCurrentTime(0);
+    setVideoDuration(0);
   }, []);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoCurrentTime, setVideoCurrentTime] = useState<number>(0);
+  const [videoDuration, setVideoDuration] = useState<number>(0);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [selectedExportSite, setSelectedExportSite] = useState(() => {
     try {
@@ -1414,6 +1486,16 @@ export default function App() {
                   previewUrl: (isImage || isVideo || ext === 'svg') ? URL.createObjectURL(file) : generateVectorArtboardThumbnail(file.name),
                   handle: entry
                 };
+
+                if (isVideo) {
+                  extractVideoThumbnail(file).then(thumb => {
+                    if (thumb) {
+                      setFiles(prev => prev.map(item => item.id === id ? { ...item, previewUrl: thumb } : item));
+                      const target = filesRef.current.find(item => item.id === id);
+                      if (target) target.previewUrl = thumb;
+                    }
+                  }).catch(() => {});
+                }
 
                 batchItems.push(newItem);
                 allItems.push(newItem);
@@ -2068,7 +2150,7 @@ export default function App() {
     }
   };
 
-  const regenerateSingleFile = async (id: string) => {
+  const regenerateSingleFile = async (id: string, customFrameUrl?: string) => {
     const fileMetadata = files.find(f => f.id === id);
     if (!fileMetadata || fileMetadata.status === 'generating') return;
 
@@ -2104,9 +2186,9 @@ export default function App() {
         console.warn("Could not get file from handle:", hErr);
       }
     }
-    if (!actualFile && fileMetadata.previewUrl) {
+    if (!actualFile && (customFrameUrl || fileMetadata.previewUrl)) {
       try {
-        const res = await fetch(fileMetadata.previewUrl);
+        const res = await fetch(customFrameUrl || fileMetadata.previewUrl!);
         const blob = await res.blob();
         if (blob && blob.size > 100) {
           actualFile = new File([blob], fileMetadata.filename, { type: blob.type || 'image/jpeg' });
@@ -2129,7 +2211,8 @@ export default function App() {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'generating', errorMessage: undefined } : f));
 
     try {
-      const result = await generateMetadata(actualFile, settings, apiConfig, providerToUse, fileMetadata.previewUrl);
+      const frameToAnalyze = customFrameUrl || fileMetadata.previewUrl;
+      const result = await generateMetadata(actualFile, settings, apiConfig, providerToUse, frameToAnalyze);
       if (!result || !result.title || !String(result.title).trim()) {
         throw new Error("Could not generate valid metadata for this asset. Original file is kept 100% safe.");
       }
@@ -2151,6 +2234,7 @@ export default function App() {
       const updatedMetadata: StockMetadata = { 
         ...fileMetadata, 
         ...result, 
+        previewUrl: customFrameUrl || result.previewUrl || fileMetadata.previewUrl,
         originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
         filename: newFilename,
         status: 'saved',
@@ -2189,6 +2273,45 @@ export default function App() {
         };
       }
       showNotification(`⚠️ "${fileMetadata.filename}" মেটাডাটা তৈরিতে সমস্যা হয়েছে। Retry বাটনে চাপুন।`, 'error');
+    }
+  };
+
+  const handleCaptureVideoFrame = async (generateAi: boolean = false) => {
+    if (!previewModalFile) return;
+    const vidEl = previewVideoRef.current || (document.getElementById('active-preview-video') as HTMLVideoElement);
+    if (!vidEl || !vidEl.videoWidth) {
+      return;
+    }
+
+    try {
+      const canvas = document.createElement('canvas');
+      const maxDim = 1280;
+      let w = vidEl.videoWidth;
+      let h = vidEl.videoHeight;
+      if (w > maxDim) {
+        h = Math.round((h * maxDim) / w);
+        w = maxDim;
+      }
+      canvas.width = Math.max(w, 100);
+      canvas.height = Math.max(h, 60);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(vidEl, 0, 0, w, h);
+      const frameDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+
+      // 1. Update previewUrl in state and ref immediately so table and modal show this frame
+      updateFile(previewModalFile.id, { previewUrl: frameDataUrl });
+      const targetF = filesRef.current.find(f => f.id === previewModalFile.id);
+      if (targetF) targetF.previewUrl = frameDataUrl;
+
+      if (!generateAi) {
+        return;
+      }
+
+      // 2. Run AI generation using this exact visual frame!
+      await regenerateSingleFile(previewModalFile.id, frameDataUrl);
+    } catch (e) {
+      console.warn("Video frame capture error:", e);
     }
   };
 
@@ -2582,17 +2705,57 @@ export default function App() {
           }));
           break;
 
+        case 'shutterstock_footage':
         case 'shutterstock':
-          // Shutterstock official contributor template
-          // Headers: Filename, Description, Keywords, Categories
-          data = targetFiles.map(f => ({
-            'Filename': f.filename,
-            'Description': (f.description || f.title || f.filename).slice(0, 200),
-            'Keywords': getCleanKeywordsList(f.keywords || '', 50),
-            'Categories': f.category || 'Technology',
-            'Editorial': 'no',
-            'Mature content': 'no'
-          }));
+          // Shutterstock official contributor templates (Footage & Image)
+          data = targetFiles.map(f => {
+            const ext = (f.fileType || f.filename.split('.').pop() || '').toLowerCase();
+            const isVid = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
+            const cat = mapToShutterstockCategory(f.category, f.keywords, isVid);
+            
+            // Clean description: Shutterstock requires min 5 words, max 200 chars
+            let desc = (f.description || f.title || f.filename.replace(/\.[^/.]+$/, "")).trim().replace(/[<>{}]/g, '');
+            let descWords = desc.split(/\s+/).filter(Boolean);
+            if (descWords.length < 5) {
+              desc = `${desc} professional stock footage clip`.trim();
+            }
+            if (desc.length > 200) {
+              desc = desc.slice(0, 197).trim() + '...';
+            }
+
+            // Clean keywords: Shutterstock requires min 7, max 50 keywords
+            let kwList = getCleanKeywordsList(f.keywords || '', 50);
+            let kwArr = kwList.split(',').map(k => k.trim()).filter(Boolean);
+            if (kwArr.length < 7) {
+              const filler = isVid 
+                ? ['footage', 'video', 'cinematic', 'b-roll', 'motion', 'clip', 'scene'] 
+                : ['photo', 'image', 'commercial', 'asset', 'detail', 'concept', 'view'];
+              for (const tag of filler) {
+                if (kwArr.length >= 7) break;
+                if (!kwArr.includes(tag)) kwArr.push(tag);
+              }
+              kwList = kwArr.join(',');
+            }
+
+            if (isVid || format === 'shutterstock_footage') {
+              // Shutterstock Official Footage CSV Format: Exactly 4 columns
+              return {
+                'Filename': f.filename,
+                'Description': desc,
+                'Keywords': kwList,
+                'Categories': cat
+              };
+            }
+
+            // Shutterstock Official Images / Vectors CSV Format
+            return {
+              'Filename': f.filename,
+              'Description': desc,
+              'Keywords': kwList,
+              'Categories': cat,
+              'Editorial': 'no'
+            };
+          });
           break;
 
         case 'getty':
@@ -3182,6 +3345,16 @@ export default function App() {
         previewUrl: initialPreviewUrl,
         handle: h
       };
+
+      if (isVid) {
+        extractVideoThumbnail(file).then(thumb => {
+          if (thumb) {
+            setFiles(prev => prev.map(item => item.id === id ? { ...item, previewUrl: thumb } : item));
+            const target = filesRef.current.find(item => item.id === id);
+            if (target) target.previewUrl = thumb;
+          }
+        }).catch(() => {});
+      }
 
       return { item, file, id };
     };
@@ -3942,18 +4115,66 @@ export default function App() {
                     const isStaticPoster = previewModalFile.previewUrl && previewModalFile.previewUrl.startsWith('data:image/');
                     const videoSrc = fObj ? URL.createObjectURL(fObj) : (isStaticPoster ? undefined : previewModalFile.previewUrl);
 
+                    const formatTime = (secs: number) => {
+                      if (isNaN(secs) || secs < 0) return '00:00';
+                      const m = Math.floor(secs / 60);
+                      const s = Math.floor(secs % 60);
+                      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+                    };
+
                     if (videoSrc && isPlayableVid) {
                       return (
-                        <div className="flex flex-col items-center justify-center max-h-[460px] max-w-full relative">
+                        <div className="flex flex-col items-center justify-center max-h-[480px] w-full relative">
                           <video 
+                            id="active-preview-video"
+                            ref={previewVideoRef}
                             src={videoSrc} 
                             poster={isStaticPoster ? previewModalFile.previewUrl : undefined}
                             controls 
                             autoPlay 
                             muted 
                             playsInline 
-                            className="max-h-[440px] max-w-full rounded shadow-md object-contain"
+                            onTimeUpdate={(e) => {
+                              const v = e.currentTarget;
+                              setVideoCurrentTime(v.currentTime);
+                              if (v.duration && !isNaN(v.duration)) setVideoDuration(v.duration);
+                            }}
+                            className="max-h-[390px] max-w-full rounded shadow-md object-contain bg-black border border-slate-800"
                           />
+
+                          {/* Live Video Control & Frame Capture Bar */}
+                          <div className="w-full mt-2.5 px-3 py-1.5 bg-slate-900/90 backdrop-blur-md rounded border border-purple-500/40 flex items-center justify-between gap-2 flex-wrap shadow-md">
+                            <div className="flex items-center gap-2 text-purple-200 text-xs">
+                              <Film size={14} className="text-purple-400" />
+                              <span className="font-bold text-white text-[11px]">Active Scene:</span>
+                              <span className="font-mono text-[10px] bg-black/60 px-2 py-0.5 rounded text-purple-300 border border-purple-500/30">
+                                ⏱ {formatTime(videoCurrentTime)} / {formatTime(videoDuration)}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleCaptureVideoFrame(false)}
+                                className="px-2.5 py-1 bg-purple-950/80 hover:bg-purple-900 text-purple-200 border border-purple-500/50 rounded text-[10.5px] font-bold cursor-pointer transition-all flex items-center gap-1 active:scale-95"
+                                title="এই দৃশ্যটিকে টেবিলে মূল থাম্বনেইল হিসেবে সেট করুন"
+                              >
+                                <Camera size={12} />
+                                <span>Set as Thumbnail</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={isGenerating || previewModalFile.status === 'generating'}
+                                onClick={() => handleCaptureVideoFrame(true)}
+                                className="px-3 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded text-[10.5px] font-bold cursor-pointer transition-all flex items-center gap-1.5 shadow-md active:scale-95 disabled:opacity-50"
+                                title="ভিডিওর বর্তমান দৃশ্য থেকে মেটাডাটা তৈরি করুন (Capture Frame & Generate AI)"
+                              >
+                                <Sparkles size={12} className="text-amber-300" />
+                                <span>Capture Frame & Generate AI</span>
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       );
                     }
@@ -3979,6 +4200,8 @@ export default function App() {
                     if (videoSrc) {
                       return (
                         <video 
+                          id="active-preview-video"
+                          ref={previewVideoRef}
                           src={videoSrc} 
                           controls 
                           className="max-h-[440px] max-w-full rounded shadow-md object-contain"
@@ -4154,7 +4377,16 @@ export default function App() {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => regenerateSingleFile(previewModalFile.id)}
+                  onClick={() => {
+                    const ext = (previewModalFile.fileType || previewModalFile.filename.split('.').pop() || '').toLowerCase();
+                    const isVid = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
+                    const vid = previewVideoRef.current || (document.getElementById('active-preview-video') as HTMLVideoElement);
+                    if (isVid && vid && vid.videoWidth > 0) {
+                      handleCaptureVideoFrame(true);
+                    } else {
+                      regenerateSingleFile(previewModalFile.id);
+                    }
+                  }}
                   disabled={isGenerating || previewModalFile.status === 'generating'}
                   className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-wider rounded transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                 >

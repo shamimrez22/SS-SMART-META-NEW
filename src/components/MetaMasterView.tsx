@@ -108,6 +108,125 @@ interface TableRowProps {
   onUpdatePreview?: (id: string, previewUrl: string) => void;
 }
 
+const VideoRowThumbnail = React.memo(({ file, onUpdatePreview }: { file: StockMetadata; onUpdatePreview?: (id: string, url: string) => void }) => {
+  const [thumbUrl, setThumbUrl] = React.useState<string | undefined>(
+    file.previewUrl?.startsWith('data:image/') ? file.previewUrl : undefined
+  );
+
+  React.useEffect(() => {
+    if (file.previewUrl?.startsWith('data:image/')) {
+      setThumbUrl(file.previewUrl);
+      return;
+    }
+
+    if (file.previewUrl && (file.previewUrl.startsWith('blob:') || file.previewUrl.startsWith('http'))) {
+      const vid = document.createElement('video');
+      vid.preload = 'metadata';
+      vid.muted = true;
+      vid.playsInline = true;
+      vid.src = file.previewUrl;
+
+      let captured = false;
+      const doCapture = () => {
+        if (captured) return;
+        try {
+          if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+            captured = true;
+            const canvas = document.createElement('canvas');
+            const maxDim = 320;
+            let w = vid.videoWidth;
+            let h = vid.videoHeight;
+            if (w > maxDim) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            }
+            canvas.width = Math.max(w, 80);
+            canvas.height = Math.max(h, 45);
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(vid, 0, 0, w, h);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              setThumbUrl(dataUrl);
+              file.previewUrl = dataUrl;
+              if (onUpdatePreview) onUpdatePreview(file.id, dataUrl);
+            }
+          }
+        } catch {}
+      };
+
+      vid.onloadeddata = () => {
+        if (vid.videoWidth > 0) doCapture();
+      };
+      vid.onseeked = doCapture;
+      vid.onloadedmetadata = () => {
+        try {
+          vid.currentTime = Math.min(1.0, (vid.duration || 2) * 0.15);
+        } catch {
+          doCapture();
+        }
+      };
+      const t = setTimeout(() => {
+        if (!captured) doCapture();
+      }, 1500);
+      return () => clearTimeout(t);
+    }
+  }, [file.previewUrl, file.id, onUpdatePreview]);
+
+  if (thumbUrl) {
+    return (
+      <div className="w-full h-full relative bg-slate-900 flex items-center justify-center">
+        <img 
+          src={thumbUrl} 
+          alt={file.filename} 
+          className="w-full h-full object-cover block relative z-1"
+          decoding="async"
+        />
+        <span className="absolute bottom-0 right-0 text-[7px] bg-black/85 text-purple-300 px-0.5 rounded-tl font-bold leading-none z-2">▶</span>
+      </div>
+    );
+  }
+
+  if (file.previewUrl) {
+    return (
+      <div className="w-full h-full relative bg-slate-950 flex items-center justify-center overflow-hidden">
+        <video 
+          src={file.previewUrl} 
+          muted 
+          playsInline 
+          preload="metadata"
+          className="w-full h-full object-cover block pointer-events-none"
+          onLoadedData={(e) => {
+            try {
+              const v = e.currentTarget;
+              if (v.videoWidth > 0) {
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.min(v.videoWidth, 320);
+                canvas.height = Math.round((canvas.width * (v.videoHeight || 180)) / (v.videoWidth || 320));
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+                  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                  setThumbUrl(dataUrl);
+                  file.previewUrl = dataUrl;
+                  if (onUpdatePreview) onUpdatePreview(file.id, dataUrl);
+                }
+              }
+            } catch {}
+          }}
+        />
+        <span className="absolute bottom-0 right-0 text-[7px] bg-black/85 text-purple-300 px-0.5 rounded-tl font-bold leading-none z-2">▶</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full h-full relative bg-purple-950 flex flex-col items-center justify-center text-purple-200">
+      <span className="text-[11px] leading-none">🎬</span>
+      <span className="text-[6.5px] font-bold text-purple-300 font-mono tracking-tighter">VID</span>
+    </div>
+  );
+});
+
 const TableRow = React.memo<TableRowProps>(({
   file,
   idx,
@@ -136,7 +255,7 @@ const TableRow = React.memo<TableRowProps>(({
     : (isGeneratingThis ? 'Processing...' : (isPendingThis ? '— (Pending)' : file.filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')));
 
   const displayKeywords = file.keywords 
-    ? file.keywords
+    ? file.keywords 
     : (isGeneratingThis ? 'Processing...' : '—');
 
   const kwCount = file.keywords 
@@ -187,44 +306,33 @@ const TableRow = React.memo<TableRowProps>(({
         }}
         title="Click to view full preview"
       >
-        {file.previewUrl ? (
-          <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs cursor-pointer relative shrink-0">
-            {fIsVid && !file.previewUrl.startsWith('data:image/') ? (
-              <div className="w-full h-full relative bg-purple-950 flex flex-col items-center justify-center text-purple-200">
-                <span className="text-[11px] leading-none">🎬</span>
-                <span className="text-[6.5px] font-bold text-purple-300 font-mono tracking-tighter">VID</span>
-              </div>
-            ) : (
-              <div className="w-full h-full relative bg-slate-900 flex items-center justify-center">
-                <span className="absolute text-[8px] font-bold text-slate-500 select-none">
-                  {fIsVec ? 'EPS' : fIsVid ? 'VID' : 'IMG'}
-                </span>
-                <img 
-                  src={file.previewUrl} 
-                  alt={file.filename} 
-                  className="w-full h-full object-cover block relative z-1"
-                  decoding="async"
-                  onError={(e) => {
-                    // Do not permanently set display:none on the recycled DOM element
-                    (e.currentTarget as HTMLImageElement).classList.add('opacity-0');
-                  }}
-                />
-                {fIsVid && (
-                  <span className="absolute bottom-0 right-0 text-[7px] bg-black/80 text-purple-300 px-0.5 rounded-tl font-bold leading-none z-2">▶</span>
-                )}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className={cn(
-            "w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border shadow-2xs cursor-pointer",
-            fIsVec ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
-            fIsVid ? "bg-purple-500/20 text-purple-300 border-purple-500/40" :
-            "bg-blue-500/20 text-blue-300 border-blue-500/40"
-          )}>
-            {fIsVec ? 'EPS' : fIsVid ? '🎬' : 'IMG'}
-          </div>
-        )}
+        <div className="w-7 h-7 rounded overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center shadow-2xs cursor-pointer relative shrink-0">
+          {fIsVid ? (
+            <VideoRowThumbnail file={file} onUpdatePreview={onUpdatePreview} />
+          ) : file.previewUrl ? (
+            <div className="w-full h-full relative bg-slate-900 flex items-center justify-center">
+              <span className="absolute text-[8px] font-bold text-slate-500 select-none">
+                {fIsVec ? 'EPS' : 'IMG'}
+              </span>
+              <img 
+                src={file.previewUrl} 
+                alt={file.filename} 
+                className="w-full h-full object-cover block relative z-1"
+                decoding="async"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).classList.add('opacity-0');
+                }}
+              />
+            </div>
+          ) : (
+            <div className={cn(
+              "w-full h-full flex items-center justify-center text-[10px] font-bold",
+              fIsVec ? "bg-amber-500/20 text-amber-300" : "bg-blue-500/20 text-blue-300"
+            )}>
+              {fIsVec ? 'EPS' : 'IMG'}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Filename */}
@@ -1248,7 +1356,8 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             >
               <option value="all_files">All Marketplaces (Universal)</option>
               <option value="adobe">Adobe Stock</option>
-              <option value="shutterstock">Shutterstock</option>
+              <option value="shutterstock">Shutterstock (All / Photo)</option>
+              <option value="shutterstock_footage">Shutterstock Footage / Video</option>
               <option value="freepik">Freepik / Flaticon</option>
               <option value="getty">Getty Images / iStock</option>
               <option value="vecteezy">Vecteezy</option>
@@ -1489,11 +1598,9 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                 title="Click to view full preview modal"
               >
                 {selectedFile.previewUrl && (
-                  ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((selectedFile.fileType || '').toLowerCase()) && !selectedFile.previewUrl.startsWith('data:image/') ? (
-                    <span className="w-4 h-4 rounded bg-purple-900 border border-cyan-400/40 flex items-center justify-center text-[9px]">🎬</span>
-                  ) : (
-                    <img src={selectedFile.previewUrl} alt="" className="w-4 h-4 rounded object-cover border border-cyan-400/40" />
-                  )
+                  <div className="w-4 h-4 rounded overflow-hidden shrink-0 border border-cyan-400/40 flex items-center justify-center bg-slate-900">
+                    <img src={selectedFile.previewUrl} alt="" className="w-full h-full object-cover" />
+                  </div>
                 )}
                 <span className="font-bold truncate max-w-[160px] text-[10px]">{selectedFile.filename}</span>
                 <span className="text-[9px] underline font-medium opacity-80 group-hover/chip:opacity-100">Preview 🔍</span>
