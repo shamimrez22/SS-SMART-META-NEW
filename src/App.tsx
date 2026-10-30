@@ -96,7 +96,7 @@ import { sanitizeStockKeywords } from './services/marketplaceSanitizer';
 const STORAGE_KEY = 'ai-metadata-pro-config';
 const HISTORY_KEY = 'ai-metadata-pro-history';
 
-export const SHUTTERSTOCK_CATEGORIES = [
+export const SHUTTERSTOCK_PHOTO_CATEGORIES = [
   'Abstract',
   'Animals/Wildlife',
   'The Arts',
@@ -127,9 +127,64 @@ export const SHUTTERSTOCK_CATEGORIES = [
   'Vintage'
 ];
 
+export const SHUTTERSTOCK_VIDEO_CATEGORIES = [
+  'Animals/Wildlife',
+  'Art',
+  'Backgrounds/Textures',
+  'Buildings/Landmarks',
+  'Business/Finance',
+  'Education',
+  'Food and drink',
+  'Health care',
+  'Holidays',
+  'Industrial',
+  'Nature',
+  'Objects',
+  'People',
+  'Religion',
+  'Science',
+  'Signs/Symbols',
+  'Sports/Recreation',
+  'Technology',
+  'Transportation'
+];
+
+export const SHUTTERSTOCK_CATEGORIES = SHUTTERSTOCK_PHOTO_CATEGORIES;
+
 export function mapToShutterstockCategory(cat: string = '', tags: string = '', isVideo: boolean = false): string {
   const trimmed = (cat || '').trim();
-  const exact = SHUTTERSTOCK_CATEGORIES.find(c => c.toLowerCase() === trimmed.toLowerCase());
+
+  if (isVideo) {
+    // Exact match in video list
+    const exactVid = SHUTTERSTOCK_VIDEO_CATEGORIES.find(c => c.toLowerCase() === trimmed.toLowerCase());
+    if (exactVid) return exactVid;
+
+    const text = `${trimmed} ${tags}`.toLowerCase();
+    if (/animal|wildlife|bird|pet|dog|cat|fauna|fish|insect|safari/.test(text)) return 'Animals/Wildlife';
+    if (/build|landmark|architect|tower|monument|city|skyline|house|urban|bridge/.test(text)) return 'Buildings/Landmarks';
+    if (/busin|financ|money|trade|invest|bank|econom|offic|corporat|work/.test(text)) return 'Business/Finance';
+    if (/food|drink|beverag|dish|meal|fruit|veget|cook|bak|restaur|cuisin/.test(text)) return 'Food and drink';
+    if (/medic|health|doctor|patient|hospit|care|clinic|pharmac|treat/.test(text)) return 'Health care';
+    if (/natur|landscap|forest|tree|sea|ocean|beach|mountain|river|sky|sun|waterfall|garden/.test(text)) return 'Nature';
+    if (/peopl|person|human|man|woman|child|portrait|face|crowd|family|girl|boy/.test(text)) return 'People';
+    if (/car|vehicl|traffic|road|highway|plane|train|transport|flight|drive|auto|truck/.test(text)) return 'Transportation';
+    if (/sport|fit|athlet|exercis|run|train|gym|match|play|game|football|soccer/.test(text)) return 'Sports/Recreation';
+    if (/sign|symbol|cross|icon|emblem|badge|arrow|warning|mark/.test(text)) return 'Signs/Symbols';
+    if (/celebrat|holiday|christma|easter|new year|party|festiv/.test(text)) return 'Holidays';
+    if (/industr|factor|construct|manufactur|engin|machin|build/.test(text)) return 'Industrial';
+    if (/scienc|laborat|chemist|physic|biolog|research|microscop|dna/.test(text)) return 'Science';
+    if (/relig|faith|church|temple|pray|mosque/.test(text)) return 'Religion';
+    if (/educat|school|learn|student|univers|book|study/.test(text)) return 'Education';
+    if (/comput|technolog|ai|digital|cyber|network|data|robot|screen|code|chip|software/.test(text)) return 'Technology';
+    if (/art|paint|music|theatr|creativ|draw|sculptur|dance/.test(text)) return 'Art';
+    // Abstract, particles, bokeh, textures, backgrounds, glowing, dark space, motion graphics
+    if (/abstract|particle|glow|bokeh|light|space|texture|pattern|motion|cinematic|background|dark|energy|fluid|smoke|fire|wave/.test(text)) return 'Backgrounds/Textures';
+
+    return 'Backgrounds/Textures';
+  }
+
+  // Image / Vector Photo list
+  const exact = SHUTTERSTOCK_PHOTO_CATEGORIES.find(c => c.toLowerCase() === trimmed.toLowerCase());
   if (exact) return exact;
 
   const text = `${trimmed} ${tags}`.toLowerCase();
@@ -151,14 +206,14 @@ export function mapToShutterstockCategory(cat: string = '', tags: string = '', i
   if (/scienc|laborat|chemist|physic|biolog|research|microscop/.test(text)) return 'Science';
   if (/sign|symbol|icon|emblem|badge|arrow/.test(text)) return 'Signs/Symbols';
   if (/park|outdoor|garden|meadow|camp/.test(text)) return 'Parks/Outdoor';
-  if (/vector|clipart|illustr/.test(text)) return isVideo ? 'Objects' : 'Vectors';
+  if (/vector|clipart|illustr/.test(text)) return 'Vectors';
   if (/abstract|concept|surreal|geometr/.test(text)) return 'Abstract';
   if (/textur|pattern|surfac|wall|wood|metal|paper/.test(text)) return 'Backgrounds/Textures';
   if (/vintag|retro|antiqu|classic|nostalg/.test(text)) return 'Vintage';
   if (/relig|faith|church|temple|pray/.test(text)) return 'Religion';
   if (/educat|school|learn|student|univers|book/.test(text)) return 'Education';
 
-  return isVideo ? 'Technology' : 'Objects';
+  return 'Objects';
 }
 
 export interface BulkUndoSnapshot {
@@ -1565,12 +1620,12 @@ export default function App() {
           excludeAcceptAllOption: false,
           types: [
             {
-              description: 'All Media & Vector Assets (Images, EPS, Videos)',
+              description: 'All Media Assets (Videos, Images, Vectors)',
               accept: {
+                'video/*': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.wmv'],
                 'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff', '.bmp', '.gif', '.heic', '.avif'],
                 'application/postscript': ['.eps', '.ai'],
-                'image/svg+xml': ['.svg'],
-                'video/*': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.wmv']
+                'image/svg+xml': ['.svg']
               }
             }
           ]
@@ -2116,19 +2171,12 @@ export default function App() {
 
     let inPlaceRenamed = 0;
     let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-    if (!activeDir && 'showDirectoryPicker' in window) {
+
+    if (activeDir && typeof activeDir.requestPermission === 'function') {
       try {
-        const pickedDir = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-        if (pickedDir) {
-          if (typeof pickedDir.requestPermission === 'function') {
-            await pickedDir.requestPermission({ mode: 'readwrite' });
-          }
-          activeDir = pickedDir;
-          setDirectoryHandle(pickedDir);
-          directoryHandleRef.current = pickedDir;
-          if (typeof window !== 'undefined') (window as any).__ss_active_dir = pickedDir;
-          setFolderName(pickedDir.name);
-          showNotification(`✓ "${pickedDir.name}" ফোল্ডার কানেক্ট হয়েছে (ইন-প্লেস রিনেম সক্রিয়)`, 'success');
+        const q = await activeDir.queryPermission({ mode: 'readwrite' });
+        if (q !== 'granted') {
+          await activeDir.requestPermission({ mode: 'readwrite' });
         }
       } catch {}
     }
@@ -2362,6 +2410,37 @@ export default function App() {
     }
 
     if (pendingFiles.length === 0) return;
+
+    // Proactively acquire folder permission right at the beginning under this click gesture!
+    let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
+    if (!activeDir && typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+      try {
+        const pickedDir = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+        if (pickedDir) {
+          activeDir = pickedDir;
+          setDirectoryHandle(pickedDir);
+          directoryHandleRef.current = pickedDir;
+          if (typeof window !== 'undefined') (window as any).__ss_active_dir = pickedDir;
+          setFolderName(pickedDir.name);
+          if (typeof pickedDir.requestPermission === 'function') {
+            await pickedDir.requestPermission({ mode: 'readwrite' });
+          }
+        }
+      } catch (dErr) {
+        console.warn("Folder picker in startGeneration:", dErr);
+      }
+    }
+
+    if (activeDir && typeof activeDir.requestPermission === 'function') {
+      try {
+        const q = await activeDir.queryPermission({ mode: 'readwrite' });
+        if (q !== 'granted') {
+          await activeDir.requestPermission({ mode: 'readwrite' });
+        }
+      } catch (pErr) {
+        console.warn("Permission check in startGeneration:", pErr);
+      }
+    }
 
     pushUndoSnapshot(`Bulk Metadata Generation`, allCurrentFiles);
 
@@ -2718,19 +2797,21 @@ export default function App() {
         case 'shutterstock_footage':
         case 'shutterstock':
           // Shutterstock official contributor templates (Footage & Image)
-          data = targetFiles.map(f => {
+          filenamePrefix = format === 'shutterstock_footage' ? 'Shutterstock_Footage_Metadata' : 'shutterstock_metadata';
+          const ssRows: any[] = [];
+          for (const f of targetFiles) {
             const ext = (f.fileType || f.filename.split('.').pop() || '').toLowerCase();
             const isVid = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
             const cat = mapToShutterstockCategory(f.category, f.keywords, isVid);
             
             // Clean description: Shutterstock requires min 5 words, max 200 chars
-            let desc = (f.description || f.title || f.filename.replace(/\.[^/.]+$/, "")).trim().replace(/[<>{}]/g, '');
+            let desc = (f.description || f.title || f.filename.replace(/\.[^/.]+$/, "").replace(/[-_]+/g, " ")).trim().replace(/[<>{}\r\n]/g, ' ');
             let descWords = desc.split(/\s+/).filter(Boolean);
             if (descWords.length < 5) {
-              desc = `${desc} professional stock footage clip`.trim();
+              desc = `${desc} high quality stock footage clip`.trim();
             }
-            if (desc.length > 200) {
-              desc = desc.slice(0, 197).trim() + '...';
+            if (desc.length > 195) {
+              desc = desc.slice(0, 195).trim();
             }
 
             // Clean keywords: Shutterstock requires min 7, max 50 keywords
@@ -2747,25 +2828,23 @@ export default function App() {
               kwList = kwArr.join(',');
             }
 
-            if (isVid || format === 'shutterstock_footage') {
-              // Shutterstock Official Footage CSV Format: Exactly 4 columns
-              return {
-                'Filename': f.filename,
-                'Description': desc,
-                'Keywords': kwList,
-                'Categories': cat
-              };
-            }
-
-            // Shutterstock Official Images / Vectors CSV Format
-            return {
-              'Filename': f.filename,
-              'Description': desc,
-              'Keywords': kwList,
-              'Categories': cat,
-              'Editorial': 'no'
-            };
-          });
+            const primaryItem = (isVid || format === 'shutterstock_footage')
+              ? {
+                  'Filename': f.filename,
+                  'Description': desc,
+                  'Keywords': kwList,
+                  'Categories': cat
+                }
+              : {
+                  'Filename': f.filename,
+                  'Description': desc,
+                  'Keywords': kwList,
+                  'Categories': cat,
+                  'Editorial': 'no'
+                };
+            ssRows.push(primaryItem);
+          }
+          data = ssRows;
           break;
 
         case 'getty':
@@ -2973,22 +3052,6 @@ export default function App() {
     const typeTitle = targetSingleId ? 'Single File' : (type === 'image' ? 'Image' : type === 'eps' ? 'Vector' : type === 'video' ? 'Video' : 'All');
 
     let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-
-    // 1. If folder handle is missing, prompt user under this EMBED button click gesture so files can be renamed on disk
-    if (!activeDir && typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
-      try {
-        const pickedDir = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-        if (pickedDir) {
-          activeDir = pickedDir;
-          setDirectoryHandle(pickedDir);
-          directoryHandleRef.current = pickedDir;
-          if (typeof window !== 'undefined') (window as any).__ss_active_dir = pickedDir;
-          setFolderName(pickedDir.name);
-        }
-      } catch (dErr: any) {
-        console.warn("Folder picker dialog in embed:", dErr);
-      }
-    }
 
     // 2. EXPLICITLY REQUEST AND ENSURE READWRITE PERMISSION UNDER USER CLICK
     let isPermGranted = false;
@@ -3748,6 +3811,7 @@ export default function App() {
                 </button>
               </div>
             )}
+
           </div>
         </div>
       )}
