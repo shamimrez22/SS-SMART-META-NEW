@@ -1236,20 +1236,15 @@ export default function App() {
     message: ''
   });
 
-  // Auto-dismiss completed embed popup after 3.5 seconds ONLY if all files were renamed in-place directly on disk
+  // Auto-dismiss completed embed popup cleanly after 2.5 seconds
   useEffect(() => {
-    if (
-      embedPopup.isOpen && 
-      embedPopup.status === 'completed' && 
-      embedPopup.inPlaceCount === embedPopup.total && 
-      (embedPopup.renamedDiskCount || 0) >= embedPopup.total
-    ) {
+    if (embedPopup.isOpen && embedPopup.status === 'completed') {
       const timer = setTimeout(() => {
         setEmbedPopup(prev => ({ ...prev, isOpen: false }));
-      }, 3500);
+      }, 2500);
       return () => clearTimeout(timer);
     }
-  }, [embedPopup.isOpen, embedPopup.status, embedPopup.inPlaceCount, embedPopup.total, embedPopup.renamedDiskCount]);
+  }, [embedPopup.isOpen, embedPopup.status]);
 
   const verifyHandlePermission = async (handle: any): Promise<boolean> => {
     if (!handle) return false;
@@ -1732,15 +1727,30 @@ export default function App() {
 
     const targetDir = dirHandle || directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
     if (!actualFile && targetDir && typeof targetDir.getFileHandle === 'function') {
-      try {
-        const fh = await targetDir.getFileHandle(fileMetadata.originalFilename || fileMetadata.filename);
-        actualFile = await fh.getFile();
-        fileObjectsRef.current[id] = actualFile;
-        setFileObjects(prev => ({ ...prev, [id]: actualFile }));
-      } catch {}
+      const candidateNames = [
+        (fileMetadata as any).currentDiskFilename,
+        fileMetadata.filename,
+        fileMetadata.originalFilename,
+        (fileMetadata as any).initialDiskFilename
+      ].filter(Boolean) as string[];
+
+      for (const name of candidateNames) {
+        try {
+          const fh = await targetDir.getFileHandle(name);
+          if (fh) {
+            actualFile = await fh.getFile();
+            fileObjectsRef.current[id] = actualFile;
+            setFileObjects(prev => ({ ...prev, [id]: actualFile }));
+            fileMetadata.handle = fh;
+            fileHandlesRef.current[id] = fh;
+            break;
+          }
+        } catch {}
+      }
     }
 
-    if (!actualFile && fileMetadata.previewUrl) {
+    const isVideoAsset = ['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes((fileMetadata.fileType || '').toLowerCase()) || fileMetadata.fileType === 'video';
+    if (!actualFile && fileMetadata.previewUrl && !isVideoAsset) {
       try {
         const res = await fetch(fileMetadata.previewUrl);
         const b = await res.blob();
@@ -3071,49 +3081,21 @@ export default function App() {
       status: 'completed',
       inPlaceCount,
       renamedDiskCount,
-      message: allRenamedOnDisk
-        ? `Successfully embedded metadata & renamed ${inPlaceCount} file(s) directly on disk!`
-        : `Successfully embedded metadata & prepared ${candidateFiles.length} renamed file(s)!`,
+      message: inPlaceCount > 0
+        ? `Successfully embedded metadata & saved ${inPlaceCount} file(s) directly into original file(s) on disk!`
+        : `Successfully embedded metadata for ${candidateFiles.length} file(s)!`,
     }));
 
-    if (allRenamedOnDisk) {
+    if (inPlaceCount > 0) {
       showNotification(
-        `🎉 সফলভাবে ${renamedDiskCount}টি ফাইলের নাম টাইটেল অনুযায়ী পরিবর্তন ও মেটাডাটা সরাসরি ফাইলে সেভ হয়েছে!`, 
+        `🎉 সফলভাবে ${inPlaceCount}টি মূল ফাইলের ভেতরে সরাসরি মেটাডাটা ও রিনেম সেভ সম্পন্ন হয়েছে! কোন জিপ ডাউনলোড হবে না।`, 
         'success'
       );
-    } else if (embeddedBlobs.length > 0) {
-      // If direct folder write could not rename all files on disk (e.g. no folder handle):
-      // ALWAYS provide the renamed & embedded files!
-      if (embeddedBlobs.length === 1) {
-        triggerDirectFileDownload(embeddedBlobs[0].blob, embeddedBlobs[0].filename);
-        showNotification(
-          `✓ "${embeddedBlobs[0].filename}" ফাইলে মেটাডাটা এম্বেড ও রিনেম সহ ডাউনলোড সম্পন্ন হয়েছে!`,
-          'success'
-        );
-      } else {
-        try {
-          const zip = new JSZip();
-          for (const item of embeddedBlobs) {
-            zip.file(item.filename, item.blob);
-          }
-          const psScript = generatePhotoshopScript(candidateFiles);
-          zip.file("Run_in_Adobe_Photoshop.jsx", psScript);
-          const epsList = candidateFiles.filter(f => ['eps', 'ai', 'svg'].includes((f.fileType || '').toLowerCase()));
-          if (epsList.length > 0) {
-            zip.file("Run_in_Adobe_Illustrator.jsx", generateIllustratorScript(epsList));
-          }
-          const zipBlob = await zip.generateAsync({ type: 'blob' });
-          triggerDirectFileDownload(zipBlob, `SS_SMART_META_Renamed_${Date.now()}.zip`);
-          showNotification(
-            `✓ ${embeddedBlobs.length}টি ফাইলের নাম টাইটেল অনুযায়ী পরিবর্তন ও মেটাডাটা সহ ZIP ফাইলে ডাউনলোড সম্পন্ন হয়েছে!`,
-            'success'
-          );
-        } catch (zErr) {
-          for (const item of embeddedBlobs) {
-            triggerDirectFileDownload(item.blob, item.filename);
-          }
-        }
-      }
+    } else {
+      showNotification(
+        `✓ ${candidateFiles.length}টি ফাইলের মেটাডাটা সফলভাবে প্রস্তুত হয়েছে। ফাইল সরাসরি সেভ করতে 'Open Folder' দিয়ে ফোল্ডার সিলেক্ট করুন।`,
+        'success'
+      );
     }
   };
 
@@ -3718,15 +3700,15 @@ export default function App() {
               </span>
               <span className="text-emerald-400 font-semibold shrink-0">
                 {embedPopup.status === 'completed' 
-                  ? ((embedPopup.renamedDiskCount || 0) >= embedPopup.total && embedPopup.inPlaceCount > 0
-                      ? `✓ In-Place (${embedPopup.inPlaceCount})` 
-                      : `✓ Renamed (${embedPopup.total})`) 
+                  ? (embedPopup.inPlaceCount > 0
+                      ? `✓ In-Place Saved (${embedPopup.inPlaceCount})` 
+                      : `✓ Processed (${embedPopup.total})`) 
                   : 'IPTC/EXIF/XMP'}
               </span>
             </div>
 
             {/* If completed without direct folder handle, provide instant 1-click solutions */}
-            {embedPopup.status === 'completed' && ((embedPopup.renamedDiskCount || 0) < embedPopup.total || embedPopup.inPlaceCount === 0) && (
+            {embedPopup.status === 'completed' && embedPopup.inPlaceCount === 0 && (
               <div className="flex items-center gap-1.5 pt-1 border-t border-slate-700/60 mt-0.5">
                 <button
                   type="button"
