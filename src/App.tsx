@@ -2828,21 +2828,32 @@ export default function App() {
               kwList = kwArr.join(',');
             }
 
-            const primaryItem = (isVid || format === 'shutterstock_footage')
-              ? {
-                  'Filename': f.filename,
-                  'Description': desc,
-                  'Keywords': kwList,
-                  'Categories': cat
-                }
-              : {
-                  'Filename': f.filename,
-                  'Description': desc,
-                  'Keywords': kwList,
-                  'Categories': cat,
-                  'Editorial': 'no'
-                };
+            const isFootage = isVid || format === 'shutterstock_footage';
+            const isVector = ['eps', 'ai', 'svg'].includes(ext) || f.fileType === 'vector';
+            const primaryItem = {
+              'Filename': f.filename,
+              'Description': desc,
+              'Keywords': kwList,
+              'Categories': cat,
+              'Illustration': isFootage ? 'no' : (isVector ? 'yes' : 'no'),
+              'Mature Content': 'no',
+              'Editorial': 'no'
+            };
             ssRows.push(primaryItem);
+
+            // Also match original filename if different so Shutterstock matches 100% either way!
+            if (f.originalFilename && f.originalFilename.trim().toLowerCase() !== f.filename.trim().toLowerCase()) {
+              const altItem = {
+                'Filename': f.originalFilename,
+                'Description': desc,
+                'Keywords': kwList,
+                'Categories': cat,
+                'Illustration': isFootage ? 'no' : (isVector ? 'yes' : 'no'),
+                'Mature Content': 'no',
+                'Editorial': 'no'
+              };
+              ssRows.push(altItem);
+            }
           }
           data = ssRows;
           break;
@@ -3005,19 +3016,59 @@ export default function App() {
           break;
       }
 
-      // Papa.unparse with strict quoting rules for clean Excel & platform imports
-      content = Papa.unparse(data, {
-        quotes: true, // Quotes ensure commas inside descriptions or titles never break columns
-        quoteChar: '"',
-        escapeChar: '"',
-        delimiter: ",",
-        header: true,
-        newline: "\r\n" // Standard CRLF for Microsoft Excel & CSV parsers
-      });
+      const isShutterstockExport = format === 'shutterstock' || format === 'shutterstock_footage';
+      if (isShutterstockExport) {
+        // Strict Shutterstock Contributor CSV specification:
+        // 1. Unquoted header line: Filename,Description,Keywords,Categories,Illustration,Mature Content,Editorial
+        // 2. Pure UTF-8 WITHOUT Byte Order Mark (BOM) — Shutterstock's backend parser fails on \uFEFF!
+        // 3. Filename MUST NOT have quotes around it (quotes cause string mismatch on Shutterstock's server)
+        const headerLine = 'Filename,Description,Keywords,Categories,Illustration,Mature Content,Editorial';
+
+        const lines: string[] = [headerLine];
+        const seenFilenames = new Set<string>();
+
+        for (const item of data) {
+          const fn = String(item.Filename || '').trim();
+          const cleanFn = fn.replace(/["'\r\n]/g, '').trim();
+          if (!cleanFn || seenFilenames.has(cleanFn.toLowerCase())) continue;
+          seenFilenames.add(cleanFn.toLowerCase());
+
+          // Clean description - escape internal quotes with double quotes
+          const rawDesc = String(item.Description || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+          const desc = `"${rawDesc.replace(/"/g, '""')}"`;
+
+          // Clean keywords - comma-separated, wrapped in quotes
+          const rawKw = String(item.Keywords || '').replace(/[\r\n]+/g, ' ').trim();
+          const kw = `"${rawKw.replace(/"/g, '""')}"`;
+
+          // Clean category - official single category name (no quotes needed unless comma)
+          const cat = String(item.Categories || 'Backgrounds/Textures').trim();
+
+          const ed = item.Editorial === 'yes' ? 'yes' : 'no';
+          const mature = item['Mature Content'] === 'yes' ? 'yes' : 'no';
+          const ill = item.Illustration === 'yes' ? 'yes' : 'no';
+
+          lines.push(`${cleanFn},${desc},${kw},${cat},${ill},${mature},${ed}`);
+        }
+        content = lines.join('\r\n');
+      } else {
+        // Papa.unparse with smart quoting for other platforms
+        content = Papa.unparse(data, {
+          quotes: (val) => typeof val === 'string' && (val.includes(',') || val.includes('"') || val.includes('\n') || val.includes('\r')),
+          quoteChar: '"',
+          escapeChar: '"',
+          delimiter: ",",
+          header: true,
+          newline: "\r\n"
+        });
+      }
     }
 
-    // Add UTF-8 BOM (\uFEFF) so Excel opens UTF-8 characters and columns accurately without garbled text
-    const blob = new Blob([format === 'json' || format === 'txt' ? content : `\uFEFF${content}`], { type: mimeType });
+    // Add UTF-8 BOM (\uFEFF) only for generic CSVs to help Microsoft Excel.
+    // CRITICAL: Shutterstock strictly rejects UTF-8 BOM (\uFEFF) because it causes column 1 to be misread as \uFEFFFilename!
+    const isShutterstockExport = format === 'shutterstock' || format === 'shutterstock_footage';
+    const blobContent = (format === 'json' || format === 'txt' || isShutterstockExport) ? content : `\uFEFF${content}`;
+    const blob = new Blob([blobContent], { type: mimeType });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
@@ -4413,6 +4464,33 @@ export default function App() {
                       ))}
                     </div>
                   )}
+                </div>
+
+                {/* Shutterstock Quick Contributor Helper */}
+                <div className="md:col-span-2 p-2.5 rounded bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-amber-300">Shutterstock Match:</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-amber-200 border border-amber-500/30 font-semibold">
+                      Category 1: <strong>{mapToShutterstockCategory(previewModalFile.category, previewModalFile.keywords, ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((previewModalFile.fileType || previewModalFile.filename.split('.').pop() || '').toLowerCase()))}</strong>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const isVid = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((previewModalFile.fileType || previewModalFile.filename.split('.').pop() || '').toLowerCase());
+                        const cat = mapToShutterstockCategory(previewModalFile.category, previewModalFile.keywords, isVid);
+                        const text = `Description: ${previewModalFile.description || previewModalFile.title}\nCategory 1: ${cat}\nKeywords: ${previewModalFile.keywords}`;
+                        navigator.clipboard.writeText(text);
+                        showNotification("✓ All Shutterstock fields copied!", "success");
+                      }}
+                      className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[10px] cursor-pointer transition-all flex items-center gap-1 active:scale-95 shadow-xs"
+                      title="Copy Description, Category & Keywords for Shutterstock"
+                    >
+                      <Copy size={11} />
+                      <span>Copy for Shutterstock</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
