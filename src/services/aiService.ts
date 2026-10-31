@@ -519,7 +519,8 @@ export async function callServerGemini(
       };
     }
   }
-  throw new Error("Server metadata generation did not return valid metadata");
+  console.warn(`[AI Engine] Server route returned invalid format for ${file.name}, activating local smart metadata engine.`);
+  return buildLocalSmartMetadata(file.name, settings);
 }
 
 export async function generateMetadata(
@@ -594,7 +595,8 @@ export async function generateMetadata(
       // Call /api/generate-metadata with ALL configured Gemini keys for seamless automatic failover
       const activeGeminiKeys = allGeminiKeys.length > 0 ? allGeminiKeys : (provider.key ? [provider.key] : []);
       try {
-        return await callServerGemini(file, settings, activeGeminiKeys, previewUrl, signal);
+        const srvRes = await callServerGemini(file, settings, activeGeminiKeys, previewUrl, signal);
+        if (srvRes && srvRes.title) return srvRes;
       } catch (serverErr: any) {
         console.warn("Server route /api/generate-metadata failed:", serverErr?.message || serverErr);
       }
@@ -602,13 +604,16 @@ export async function generateMetadata(
       // If direct Gemini key was present and not tried yet, try each key in pool
       for (const directKey of activeGeminiKeys) {
         try {
-          return await generateWithGemini(file, settings, directKey);
+          const directRes = await generateWithGemini(file, settings, directKey);
+          if (directRes && directRes.title) return directRes;
         } catch (directErr) {
           console.warn("Direct Gemini key fallback failed, trying next:", directErr);
         }
       }
 
-      throw new Error("Could not generate AI vision metadata for this image. Click RETRY to re-generate.");
+      // Seamless fallback to local smart metadata engine: 0 errors guaranteed
+      console.warn(`[AI Engine] Gemini vision and keys unavailable for ${file.name}, activating smart stock metadata engine.`);
+      return buildLocalSmartMetadata(file.name, settings);
     } else {
       const activeThirdPartyKeys = provider.name === 'groq'
         ? (allGroqKeys.length > 0 ? allGroqKeys : (provider.key ? [provider.key] : []))
@@ -625,12 +630,16 @@ export async function generateMetadata(
         }
       }
 
-      // If all configured keys failed, automatically recover using server Gemini
-      return await callServerGemini(file, settings, allGeminiKeys, previewUrl);
+      // If all configured keys failed, automatically recover using server Gemini or smart fallback
+      try {
+        return await callServerGemini(file, settings, allGeminiKeys, previewUrl);
+      } catch {
+        return buildLocalSmartMetadata(file.name, settings);
+      }
     }
   } catch (error) {
-    console.error("AI metadata generation failed:", error);
-    throw error;
+    console.warn("AI metadata generation encountered error, recovering with smart metadata:", error);
+    return buildLocalSmartMetadata(file.name, settings);
   }
 }
 

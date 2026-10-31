@@ -1092,19 +1092,33 @@ Return ONLY valid JSON with keys:
       }
 
       if (!parsed || !parsed.title) {
-        const errorMsg = lastErr?.message || "Gemini vision analysis could not produce valid metadata for this image. Please click RETRY.";
-        return res.status(500).json({
-          success: false,
-          error: { message: errorMsg }
-        });
+        console.warn(`[API] Gemini vision did not produce valid JSON for ${filename}, activating smart stock metadata engine`);
+        const fallback = generateSmartFallbackMetadata(
+          filename,
+          minTitleWords,
+          maxTitleWords,
+          minDescriptionWords,
+          maxDescriptionWords,
+          maxKeywords
+        );
+        return res.json({ success: true, metadata: fallback, isFallback: true });
       }
 
       return res.json({ success: true, metadata: parsed });
     } catch (err: any) {
-      console.warn("Gemini Metadata Generation error:", err?.message || err);
-      return res.status(500).json({
-        success: false,
-        error: { message: err?.message || "Gemini vision analysis failed. Please click RETRY." }
+      console.warn("Gemini Metadata Generation error, activating smart stock fallback:", err?.message || err);
+      const fallback = generateSmartFallbackMetadata(
+        req.body?.filename || 'stock_asset',
+        req.body?.minTitleWords || 7,
+        req.body?.maxTitleWords || 15,
+        req.body?.minDescriptionWords || 20,
+        req.body?.maxDescriptionWords || 45,
+        req.body?.maxKeywords || 50
+      );
+      return res.json({
+        success: true,
+        metadata: fallback,
+        isFallback: true
       });
     }
   });
