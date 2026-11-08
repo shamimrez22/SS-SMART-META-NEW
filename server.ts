@@ -73,6 +73,8 @@ async function startServer() {
       await fs.promises.writeFile(tempEpsPath, dataToWrite);
 
       const isPdfBased = dataToWrite.subarray(0, 10).toString("binary").startsWith("%PDF-");
+      const headText = dataToWrite.subarray(0, Math.min(dataToWrite.length, 131072)).toString("binary");
+      const isSvgBased = /^\s*(<\?xml|<!DOCTYPE\s+svg|<svg[\s>])/i.test(headText) || headText.slice(0, 4096).includes("<svg");
       let rendered = false;
 
       const isHires = req.query.hires === 'true' || Boolean(req.query.size);
@@ -80,7 +82,6 @@ async function startServer() {
       const quality = isHires ? 96 : 92;
 
       // Parse EPS BoundingBox and Illustrator Artboard dimensions from header/XMP
-      const headText = dataToWrite.subarray(0, Math.min(dataToWrite.length, 131072)).toString("binary");
       let bboxW = 0;
       let bboxH = 0;
       const hiResMatch = headText.match(/%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/);
@@ -119,8 +120,27 @@ async function startServer() {
         ? Math.max(150, Math.min(1200, Math.round((targetDim * 72) / maxBboxPt)))
         : (isHires ? 400 : 180);
 
-      // 1. Primary Ghostscript rasterization with -dEPSCrop so origin & bounding box are exact
-      if (isPdfBased) {
+      // 1. Primary vector rasterization (SVG via ImageMagick convert, PDF/EPS via Ghostscript -dEPSCrop)
+      if (isSvgBased) {
+        const tempSvgPath = `${tempEpsPath}.svg`;
+        try {
+          await fs.promises.writeFile(tempSvgPath, dataToWrite);
+          await execFileAsync("convert", [
+            "-density", isHires ? "300" : "150",
+            "-background", "white",
+            tempSvgPath,
+            "-flatten",
+            "-resize", `${targetDim}x${targetDim}`,
+            "-quality", String(quality),
+            tempRawJpgPath
+          ], { timeout: 15000 });
+          if (fs.existsSync(tempRawJpgPath) && fs.statSync(tempRawJpgPath).size > 0) {
+            rendered = true;
+          }
+        } catch {} finally {
+          try { if (fs.existsSync(tempSvgPath)) await fs.promises.unlink(tempSvgPath); } catch {}
+        }
+      } else if (isPdfBased) {
         try {
           await execFileAsync("gs", [
             "-dSAFER",

@@ -1468,13 +1468,19 @@ export default function App() {
 
     if (!isInIframe && 'showDirectoryPicker' in window) {
       try {
+        // Take readwrite Folder Permission right at the beginning ("prothomei folder permition niye nibe")
+        // Do NOT call handle.requestPermission() after showDirectoryPicker resolves, because showDirectoryPicker({ mode: 'readwrite' })
+        // already requests permission and calling requestPermission() after dialog close hangs when userActivation expires!
         let handle: any = null;
         try {
           // @ts-ignore
           handle = await window.showDirectoryPicker({ mode: 'readwrite' });
         } catch (firstErr: any) {
           if (firstErr?.name === 'AbortError') return;
-          // Fallback to default picker if readwrite mode was rejected
+          const firstMsg = String(firstErr?.message || firstErr || '').toLowerCase();
+          if (firstMsg.includes('system') || firstMsg.includes('restricted') || firstMsg.includes('sandboxed') || firstErr?.name === 'SecurityError' || firstErr?.name === 'NotAllowedError') {
+            throw firstErr;
+          }
           // @ts-ignore
           handle = await window.showDirectoryPicker();
         }
@@ -1498,7 +1504,10 @@ export default function App() {
 
         const scanDir = async (dirHandle: any, depth = 0) => {
           if (depth > 2) return;
-          for await (const entry of dirHandle.values()) {
+          const iterator = typeof dirHandle.values === 'function' ? dirHandle.values() : dirHandle.entries();
+          for await (const rawEntry of iterator) {
+            const entry = Array.isArray(rawEntry) ? rawEntry[1] : rawEntry;
+            if (!entry) continue;
             if (entry.kind === 'file') {
               try {
                 const file = await entry.getFile();
@@ -1506,14 +1515,16 @@ export default function App() {
                 if (lowerName === 'desktop.ini' || lowerName === 'thumbs.db' || lowerName === '.ds_store') {
                   continue;
                 }
-                (file as any).handle = entry;
+                try {
+                  (file as any).handle = entry;
+                } catch {}
                 collectedFiles.push(file);
                 handlesMap[file.name] = entry;
                 handlesMap[lowerName] = entry;
               } catch (fileErr) {
                 console.warn("Could not read file from directory entry:", fileErr);
               }
-            } else if (entry.kind === 'directory' && entry.name.toLowerCase() !== 'jpg') {
+            } else if (entry.kind === 'directory' && String(entry.name || '').toLowerCase() !== 'jpg') {
               try {
                 await scanDir(entry, depth + 1);
               } catch {}
@@ -1523,21 +1534,33 @@ export default function App() {
 
         await scanDir(handle, 0);
 
-        // Request readwrite permission non-blockingly after reading files
-        if (typeof handle.requestPermission === 'function') {
-          handle.requestPermission({ mode: 'readwrite' }).catch(() => {});
-        }
-
         if (collectedFiles.length === 0) {
+          setIsLoadingFiles(false);
           showNotification(`"${handle.name}" ফোল্ডারে কোনো ছবি, ভেক্টর বা ভিডিও ফাইল পাওয়া যায়নি।`, 'info');
           return;
         }
 
         handleFilesAdded(collectedFiles, handlesMap);
+        showNotification(`✓ ফোল্ডার "${handle.name}" এডিট পারমিশনসহ যুক্ত হয়েছে (${collectedFiles.length}টি ফাইল)!`, 'success');
         return;
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
-        console.warn("Folder picker error, falling back to input:", err);
+        console.warn("Folder picker error:", err);
+        const errMsg = String(err?.message || err || '');
+        const lowerMsg = errMsg.toLowerCase();
+
+        // If Chrome blocked a Windows system/Downloads folder after the user selected it in the dialog:
+        if (lowerMsg.includes('system') || lowerMsg.includes('restricted') || !(navigator as any).userActivation?.isActive) {
+          const msg = `Chrome ব্রাউজারের সিকিউরিটি নিয়মের কারণে Windows-এর "Downloads" ফোল্ডারের ভেতরে ("PC > Downloads > 1") সরাসরি ফোল্ডার পারমিশন (Edit Permission) বা ফাইল রিনেম করার অনুমতি দেওয়া হয় না!\n\nসমাধান ১ (Full Edit Permission): আপনার ফোল্ডারটি "Downloads" থেকে কাট/কপি করে "Desktop" অথবা অন্য কোনো ড্রাইভে (যেমন D:\\ বা E:\\) রেখে "SELECT FOLDER" ক্লিক করুন — তাহলেই প্রথমেই Folder Permission নিবে এবং মেইন ফাইলে মেটাডেটা, রিনেম ও "jpg" ফোল্ডার সরাসরি তৈরি হবে!\n\nসমাধান ২: নিচের সবুজ বাটনে ক্লিক করে এখনই এই ফোল্ডারের ফাইলগুলো টেবিলে লোড করতে পারেন।`;
+          setErrorModal({
+            isOpen: true,
+            filename: 'Folder Permission Blocked (Downloads Folder)',
+            message: msg
+          });
+          showNotification(`⚠️ "Downloads" ফোল্ডারে Chrome এডিট পারমিশন দেয় না! ফোল্ডারটি Desktop বা অন্য ড্রাইভে রাখুন অথবা নিচের বাটনে লোড করুন।`, 'error');
+          setIsLoadingFiles(false);
+          return;
+        }
       } finally {
         setIsLoadingFiles(false);
       }
@@ -1550,49 +1573,10 @@ export default function App() {
     }
   };
 
-  const handleFileSelectDirect = async () => {
-    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
-
-    if (!isInIframe && 'showOpenFilePicker' in window) {
-      try {
-        // @ts-ignore
-        const handles = await window.showOpenFilePicker({
-          multiple: true
-        });
-        if (handles && handles.length > 0) {
-          setIsLoadingFiles(true);
-          const pickedFiles: File[] = [];
-          const handlesMap: Record<string, any> = {};
-          for (const h of handles) {
-            try {
-              const f = await h.getFile();
-              (f as any).handle = h;
-              pickedFiles.push(f);
-              handlesMap[f.name] = h;
-              handlesMap[f.name.toLowerCase()] = h;
-              if (typeof h.requestPermission === 'function') {
-                h.requestPermission({ mode: 'readwrite' }).catch(() => {});
-              }
-            } catch (err) {
-              console.warn("Failed to get file from handle:", err);
-            }
-          }
-          if (pickedFiles.length > 0) {
-            handleFilesAdded(pickedFiles, handlesMap);
-            return;
-          }
-        }
-      } catch (err: any) {
-        if (err?.name === 'AbortError') return;
-        console.warn("showOpenFilePicker error, falling back to input:", err);
-      } finally {
-        setIsLoadingFiles(false);
-      }
-    }
-
+  const handleFileSelectDirect = () => {
     const input = document.getElementById('file-upload') as HTMLInputElement | null;
     if (input) {
-      input.value = ''; // reset so same files can be re-selected
+      input.value = '';
       input.click();
     }
   };
@@ -1767,8 +1751,8 @@ export default function App() {
         ? metadata.rating
         : (fileMetadata.rating !== undefined && fileMetadata.rating > 0) ? fileMetadata.rating : 5;
 
-      // Automatically generate full smart stock metadata if title or keywords are missing or generic (e.g. Untitled-1)
-      const isGenericTitle = !titleVal || /^untitled[\s\-_0-9]*$/i.test(titleVal) || /^stock[\s\-_]*asset/i.test(titleVal);
+      // Automatically generate full smart stock metadata if title or keywords are missing or generic (e.g. Untitled-1, 1 (1))
+      const isGenericTitle = !titleVal || /^untitled[\s\-_0-9]*$/i.test(titleVal) || /^stock[\s\-_]*asset/i.test(titleVal) || /^[\d\s\(\)\-_]+$/i.test(titleVal);
       const isKwMissing = !kwVal || kwVal.split(',').filter(Boolean).length < 5;
 
       if (isGenericTitle || isKwMissing) {
@@ -1821,12 +1805,26 @@ export default function App() {
         baseForTarget = titleVal || originalFilename;
       }
 
-      const targetFilename = sanitizeStockFilename(
+      let targetFilename = sanitizeStockFilename(
         baseForTarget,
         originalFilename,
         fallbackExt,
         settings.filenameFormat || 'exact_title'
       );
+
+      // Ensure targetFilename is unique among other files in the workspace so batch files (like 1 (1), 1 (2), 1 (3)) never overwrite each other
+      const extMatch = targetFilename.match(/(\.[^/.]+)$/);
+      const extPart = extMatch ? extMatch[1] : `.${fallbackExt}`;
+      const stemPart = extMatch ? targetFilename.slice(0, -extPart.length) : targetFilename;
+      let collisionIdx = 2;
+      while (
+        filesRef.current.some(
+          other => other.id !== id && (other.filename || '').toLowerCase() === targetFilename.toLowerCase()
+        )
+      ) {
+        targetFilename = `${stemPart} ${collisionIdx}${extPart}`;
+        collisionIdx++;
+      }
 
       // Update table row immediately with all tags, title and renamed filename
       setFiles(prev => prev.map(f => f.id === id ? { 
@@ -3540,7 +3538,7 @@ export default function App() {
       const lower = (f.name || '').toLowerCase().trim();
       if (!lower || lower === 'desktop.ini' || lower === 'thumbs.db' || lower === '.ds_store') return false;
       const rel = ((f as any).webkitRelativePath || '').replace(/\\/g, '/').toLowerCase();
-      if (rel.includes('/jpg/')) return false;
+      if (rel.includes('/jpg/') && (lower.endsWith('.jpg') || lower.endsWith('.jpeg'))) return false;
       return true;
     });
 
@@ -4294,7 +4292,28 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="pt-2">
+              <div className="pt-2 flex flex-col gap-2">
+                {errorModal.filename.includes('Folder Permission') && (
+                  <>
+                    <label
+                      htmlFor="folder-upload"
+                      onClick={() => setErrorModal(prev => ({ ...prev, isOpen: false }))}
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black uppercase tracking-wider rounded-sm transition-all shadow-lg text-center cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      📂 এখনই ফোল্ডারের ফাইলগুলো টেবিলে লোড করুন (Load Files Into Table)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorModal(prev => ({ ...prev, isOpen: false }));
+                        handleDirectorySelect();
+                      }}
+                      className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-black uppercase tracking-wider rounded-sm transition-all shadow-lg cursor-pointer"
+                    >
+                      📁 অন্য ফোল্ডার সিলেক্ট করুন (Desktop / D: Drive - Full Edit Permission)
+                    </button>
+                  </>
+                )}
                 <button 
                   onClick={() => setErrorModal(prev => ({ ...prev, isOpen: false }))}
                   className="w-full py-2 bg-red-500 hover:bg-red-400 text-white text-[10px] font-black uppercase tracking-widest rounded-sm transition-all shadow-lg shadow-red-500/20 active:scale-[0.98]"
@@ -4835,14 +4854,15 @@ export default function App() {
         id="file-upload" 
         multiple 
         className="sr-only" 
-        onClick={(e) => {
-          (e.currentTarget as HTMLInputElement).value = '';
-        }}
         onChange={(e) => {
-          const fileList = e.target.files;
+          const inputEl = e.currentTarget;
+          const fileList = inputEl.files;
           if (fileList && fileList.length > 0) {
             const picked = Array.from(fileList);
             handleFilesAdded(picked);
+            setTimeout(() => {
+              try { inputEl.value = ''; } catch {}
+            }, 300);
           }
         }}
       />
@@ -4852,11 +4872,9 @@ export default function App() {
         {...{ webkitdirectory: "", directory: "" }}
         multiple 
         className="sr-only" 
-        onClick={(e) => {
-          (e.currentTarget as HTMLInputElement).value = '';
-        }}
         onChange={(e) => {
-          const fileList = e.target.files;
+          const inputEl = e.currentTarget;
+          const fileList = inputEl.files;
           if (fileList && fileList.length > 0) {
             const allRaw = Array.from(fileList);
             const picked = allRaw.filter(f => {
@@ -4873,6 +4891,9 @@ export default function App() {
             setFiles([]);
             setFileObjects({});
             handleFilesAdded(picked.length > 0 ? picked : allRaw);
+            setTimeout(() => {
+              try { inputEl.value = ''; } catch {}
+            }, 300);
           }
         }}
       />

@@ -1211,80 +1211,44 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           {/* Input Group */}
           <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_4px_rgba(53,159,160,0.25)]"))}>
             <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Input</legend>
-            {typeof window !== 'undefined' && window.self !== window.top ? (
-              <label 
-                htmlFor="file-upload"
-                onClick={() => {
-                  const el = document.getElementById('file-upload') as HTMLInputElement | null;
-                  if (el) el.value = '';
-                }}
-                className={cn(
-                  "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1 select-none",
-                  isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
-                )}
-              >
-                <Upload size={12} strokeWidth={2.5} />
-                <span>SELECT FILE</span>
-              </label>
-            ) : (
-              <button 
-                type="button"
-                onClick={handleFileSelectDirect}
-                className={cn(
-                  "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1 select-none",
-                  isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
-                )}
-              >
-                <Upload size={12} strokeWidth={2.5} />
-                <span>SELECT FILE</span>
-              </button>
-            )}
-            {typeof window !== 'undefined' && window.self !== window.top ? (
-              <label 
-                htmlFor="folder-upload"
-                onClick={() => {
-                  const el = document.getElementById('folder-upload') as HTMLInputElement | null;
-                  if (el) el.value = '';
-                }}
-                className={cn(
-                  "px-2.5 py-1 h-7 text-white font-extrabold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-md transition-all whitespace-nowrap flex items-center gap-1.5 select-none",
-                  folderName 
-                    ? "bg-emerald-700 hover:bg-emerald-600 border border-emerald-400 text-emerald-100" 
-                    : "bg-[#926004] hover:bg-[#a87006] border border-[#d9822b] text-amber-100"
-                )}
-                title={folderName ? `Connected: ${folderName}` : "ফোল্ডার সিলেক্ট করে সব ফাইল এক ক্লিকে লোড করুন"}
-              >
-                <Folder size={13} strokeWidth={2.5} />
-                <span>SELECT FOLDER</span>
-              </label>
-            ) : (
-              <button 
-                type="button"
-                onClick={handleDirectorySelect}
-                className={cn(
-                  "px-2.5 py-1 h-7 text-white font-extrabold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-md transition-all whitespace-nowrap flex items-center gap-1.5",
-                  folderName 
-                    ? "bg-emerald-700 hover:bg-emerald-600 border border-emerald-400 text-emerald-100" 
-                    : "bg-[#926004] hover:bg-[#a87006] border border-[#d9822b] text-amber-100"
-                )}
-                title={folderName ? `Connected: ${folderName} (Full In-Place Disk Write Active)` : "ফোল্ডারে সরাসরি ফাইল রিনেম ও JPG সেভ করার পারমিশন সক্রিয় করুন"}
-              >
-                <Folder size={13} strokeWidth={2.5} />
-                <span>SELECT FOLDER</span>
-              </button>
-            )}
-            <button
+            <label 
+              htmlFor="file-upload"
+              className={cn(
+                "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1 select-none",
+                isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
+              )}
+              title="সিঙ্গেল বা একাধিক ইমেজ, ভেক্টর (.eps, .ai, .svg) বা ভিডিও ফাইল সিলেক্ট করুন"
+            >
+              <Upload size={12} strokeWidth={2.5} />
+              <span>SELECT FILE</span>
+            </label>
+            <button 
               type="button"
-              onClick={() => window.open(window.location.href, '_blank')}
+              onClick={handleDirectorySelect}
+              className={cn(
+                "px-2.5 py-1 h-7 text-white font-extrabold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-md transition-all whitespace-nowrap flex items-center gap-1.5 select-none",
+                folderName 
+                  ? "bg-emerald-700 hover:bg-emerald-600 border border-emerald-400 text-emerald-100" 
+                  : "bg-[#926004] hover:bg-[#a87006] border border-[#d9822b] text-amber-100"
+              )}
+              title={folderName ? `Connected: ${folderName} (Full In-Place Disk Write Active)` : "ফোল্ডার সিলেক্ট করে প্রথমেই পারমিশন নিন এবং সব ফাইল লোড করুন"}
+            >
+              <Folder size={13} strokeWidth={2.5} />
+              <span>SELECT FOLDER</span>
+            </button>
+            <a
+              href={typeof window !== 'undefined' ? window.location.href : '#'}
+              target="_blank"
+              rel="noopener noreferrer"
               title="আইফ্রেম ছাড়া সরাসরি নতুন উইন্ডো/ট্যাবে খুলুন (ব্রাউজারের ফুল ডিস্ক রাইট ও Allow পারমিশন সক্রিয় করতে)"
               className={cn(
-                "px-2 py-1 h-7 text-white font-bold text-[10px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1",
+                "px-2 py-1 h-7 text-white font-bold text-[10px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1 no-underline",
                 isBlue ? "bg-slate-700 hover:bg-slate-600 border border-slate-500" : "bg-slate-700/80 hover:bg-slate-600 border border-slate-600"
               )}
             >
               <ExternalLink size={11} strokeWidth={2.2} />
               <span>NEW TAB</span>
-            </button>
+            </a>
             {folderName && (
               <span 
                 title={`Connected folder: ${folderName} (Direct in-place disk write active)`}
