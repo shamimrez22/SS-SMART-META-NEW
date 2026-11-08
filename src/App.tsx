@@ -71,7 +71,8 @@ import {
   embedMetadataInPngBlob,
   prepareEmbeddedBlob,
   generatePhotoshopScript, 
-  generateIllustratorScript 
+  generateIllustratorScript,
+  generateCompanionJpgBlob
 } from './services/embedService';
 import { StockMetadata, ApiConfig, GeneratorSettings, ApiStatus, HistoryItem, StockMarketplace } from './types';
 import { generateMetadata, testApiConnection, extractEpsThumbnail, extractVideoThumbnail, renderSvgThumbnail, applyTitleAndKeywordsAffixes, buildLocalSmartMetadata, enforceStockTitleWordLimits, generateVectorArtboardThumbnail } from './services/aiService';
@@ -717,7 +718,9 @@ export default function App() {
       savedKeywords: [],
       concurrency: 2,
       autoSyncFilenameWithTitle: true,
-      filenameFormat: 'exact_title'
+      filenameFormat: 'exact_title',
+      freepikCompanionJpg: true,
+      freepikCompanionJpgSize: 4000
     };
     const loaded = initialSaved?.settings ? { ...defaultSettings, ...initialSaved.settings } : defaultSettings;
     if (!loaded.keywordStyle) {
@@ -725,6 +728,12 @@ export default function App() {
     }
     if (!loaded.aiModel) {
       loaded.aiModel = 'gemini-2.5-flash';
+    }
+    if (loaded.freepikCompanionJpg === undefined) {
+      loaded.freepikCompanionJpg = true;
+    }
+    if (!loaded.freepikCompanionJpgSize) {
+      loaded.freepikCompanionJpgSize = 4000;
     }
     return loaded;
   });
@@ -1455,180 +1464,100 @@ export default function App() {
   };
 
   const handleDirectorySelect = async () => {
-    if ('showDirectoryPicker' in window) {
-      try {
-        // @ts-ignore
-        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        if (!handle) return;
+    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
 
-        if (typeof handle.requestPermission === 'function') {
-          try {
-            const perm = await handle.requestPermission({ mode: 'readwrite' });
-            if (perm !== 'granted') {
-              showNotification("ফোল্ডারে ফাইল রিনেম ও সেভ করার জন্য ব্রাউজারের 'Allow' পারমিশন প্রয়োজন।", 'info');
-            }
-          } catch (pErr) {
-            console.warn("Directory initial permission check:", pErr);
-          }
+    if (!isInIframe && 'showDirectoryPicker' in window) {
+      try {
+        let handle: any = null;
+        try {
+          // @ts-ignore
+          handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        } catch (firstErr: any) {
+          if (firstErr?.name === 'AbortError') return;
+          // Fallback to default picker if readwrite mode was rejected
+          // @ts-ignore
+          handle = await window.showDirectoryPicker();
         }
+        if (!handle) return;
 
         setIsLoadingFiles(true);
         setDirectoryHandle(handle);
         directoryHandleRef.current = handle;
         if (typeof window !== 'undefined') (window as any).__ss_active_dir = handle;
         setFolderName(handle.name);
-        
+
         // Reset workspace when connecting a folder so old files never duplicate with new ones
         filesRef.current = [];
         fileObjectsRef.current = {};
         fileHandlesRef.current = {};
         setFiles([]);
         setFileObjects({});
-        
-        const allItems: StockMetadata[] = [];
-        const allFileObjects: Record<string, File> = {};
-        const seenNamesInDir = new Set<string>();
-        let batchItems: StockMetadata[] = [];
-        let batchFileObjects: Record<string, File> = {};
 
-        let foundImages = 0;
-        let foundVectors = 0;
-        let foundVideos = 0;
+        const collectedFiles: File[] = [];
+        const handlesMap: Record<string, any> = {};
 
-        for await (const entry of handle.values()) {
-          if (entry.kind === 'file') {
-            try {
-              const file = await entry.getFile();
-              const lowerName = file.name.toLowerCase().trim();
-              if (seenNamesInDir.has(lowerName)) {
-                continue; // Skip duplicate files in directory
-              }
-              seenNamesInDir.add(lowerName);
-
-              const ext = file.name.split('.').pop()?.toLowerCase() || '';
-              const isVector = ['eps', 'ai', 'svg'].includes(ext);
-              const isVideo = ['mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext);
-              const isImage = ['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif'].includes(ext) || file.type.startsWith('image/');
-
-              if (isVector) foundVectors++;
-              else if (isVideo) foundVideos++;
-              else if (isImage) foundImages++;
-
-              // Include all supported media assets
-              if (isImage || isVector || isVideo) {
-                const id = Math.random().toString(36).substr(2, 9);
-                batchFileObjects[id] = file;
-                allFileObjects[id] = file;
-                fileHandlesRef.current[id] = entry;
-
-                const newItem: StockMetadata = {
-                  id,
-                  filename: file.name,
-                  originalFilename: file.name,
-                  initialDiskFilename: file.name,
-                  currentDiskFilename: file.name,
-                  title: '',
-                  description: '',
-                  keywords: '',
-                  rating: 5,
-                  status: 'pending',
-                  fileType: ext,
-                  previewUrl: (isImage || isVideo || ext === 'svg') ? URL.createObjectURL(file) : generateVectorArtboardThumbnail(file.name),
-                  handle: entry
-                };
-
-                if (isVideo) {
-                  extractVideoThumbnail(file).then(thumb => {
-                    if (thumb) {
-                      setFiles(prev => prev.map(item => item.id === id ? { ...item, previewUrl: thumb } : item));
-                      const target = filesRef.current.find(item => item.id === id);
-                      if (target) target.previewUrl = thumb;
-                    }
-                  }).catch(() => {});
+        const scanDir = async (dirHandle: any, depth = 0) => {
+          if (depth > 2) return;
+          for await (const entry of dirHandle.values()) {
+            if (entry.kind === 'file') {
+              try {
+                const file = await entry.getFile();
+                const lowerName = file.name.toLowerCase().trim();
+                if (lowerName === 'desktop.ini' || lowerName === 'thumbs.db' || lowerName === '.ds_store') {
+                  continue;
                 }
-
-                batchItems.push(newItem);
-                allItems.push(newItem);
-
-                // Stream initial 10 items immediately so UI populates within 30ms, then stream chunks of 20
-                if (batchItems.length >= (allItems.length <= 10 ? 10 : 20)) {
-                  const chunkItems = [...batchItems];
-                  const chunkObjs = { ...batchFileObjects };
-                  batchItems = [];
-                  batchFileObjects = {};
-
-                  Object.assign(fileObjectsRef.current, chunkObjs);
-                  filesRef.current = [...filesRef.current, ...chunkItems];
-                  setFiles(prev => [...prev, ...chunkItems]);
-                  setFileObjects(prev => ({ ...prev, ...chunkObjs }));
-                  setSelectedFileId(prev => prev || chunkItems[0]?.id || null);
-
-                  // Yield to browser event loop to maintain 60fps responsiveness and zero freeze
-                  await new Promise(r => setTimeout(r, 0));
-                }
+                (file as any).handle = entry;
+                collectedFiles.push(file);
+                handlesMap[file.name] = entry;
+                handlesMap[lowerName] = entry;
+              } catch (fileErr) {
+                console.warn("Could not read file from directory entry:", fileErr);
               }
-            } catch (fileErr) {
-              console.warn("Could not read file from directory entry:", fileErr);
+            } else if (entry.kind === 'directory' && entry.name.toLowerCase() !== 'jpg') {
+              try {
+                await scanDir(entry, depth + 1);
+              } catch {}
             }
           }
+        };
+
+        await scanDir(handle, 0);
+
+        // Request readwrite permission non-blockingly after reading files
+        if (typeof handle.requestPermission === 'function') {
+          handle.requestPermission({ mode: 'readwrite' }).catch(() => {});
         }
 
-        // Flush remaining buffered items
-        if (batchItems.length > 0) {
-          Object.assign(fileObjectsRef.current, batchFileObjects);
-          filesRef.current = [...filesRef.current, ...batchItems];
-          setFiles(prev => [...prev, ...batchItems]);
-          setFileObjects(prev => ({ ...prev, ...batchFileObjects }));
-          setSelectedFileId(prev => prev || batchItems[0]?.id || null);
-        }
-
-        if (allItems.length === 0) {
+        if (collectedFiles.length === 0) {
           showNotification(`"${handle.name}" ফোল্ডারে কোনো ছবি, ভেক্টর বা ভিডিও ফাইল পাওয়া যায়নি।`, 'info');
           return;
         }
 
-        // Auto-switch mode: if mixed files exist, choose 'all' so NO files are ever hidden!
-        const distinctTypes = (foundVectors > 0 ? 1 : 0) + (foundVideos > 0 ? 1 : 0) + (foundImages > 0 ? 1 : 0);
-        if (distinctTypes > 1) {
-          setMode('all');
-        } else if (foundVectors > 0) {
-          setMode('vector');
-        } else if (foundVideos > 0) {
-          setMode('video');
-        } else {
-          setMode('image');
-        }
-
-        showNotification(`✓ ফোল্ডার "${handle.name}" যুক্ত হয়েছে (${allItems.length} ফাইল)। মেটাডাটা সরাসরি এই ফোল্ডারের ফাইলে সেভ ও রিনেম হবে (কোনো ডাউনলোড হবে না)!`, 'success');
+        handleFilesAdded(collectedFiles, handlesMap);
         return;
       } catch (err: any) {
-        if (err.name === 'AbortError') return;
+        if (err?.name === 'AbortError') return;
         console.warn("Folder picker error, falling back to input:", err);
       } finally {
         setIsLoadingFiles(false);
       }
     }
-    document.getElementById('folder-upload')?.click();
+
+    const folderInput = document.getElementById('folder-upload') as HTMLInputElement | null;
+    if (folderInput) {
+      folderInput.value = '';
+      folderInput.click();
+    }
   };
 
   const handleFileSelectDirect = async () => {
-    if ('showOpenFilePicker' in window) {
+    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
+
+    if (!isInIframe && 'showOpenFilePicker' in window) {
       try {
         // @ts-ignore
         const handles = await window.showOpenFilePicker({
-          multiple: true,
-          excludeAcceptAllOption: false,
-          types: [
-            {
-              description: 'All Media Assets (Videos, Images, Vectors)',
-              accept: {
-                'video/*': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.wmv'],
-                'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff', '.bmp', '.gif', '.heic', '.avif'],
-                'application/postscript': ['.eps', '.ai'],
-                'image/svg+xml': ['.svg']
-              }
-            }
-          ]
+          multiple: true
         });
         if (handles && handles.length > 0) {
           setIsLoadingFiles(true);
@@ -1636,19 +1565,14 @@ export default function App() {
           const handlesMap: Record<string, any> = {};
           for (const h of handles) {
             try {
-              if (typeof h.queryPermission === 'function') {
-                try {
-                  const perm = await h.queryPermission({ mode: 'readwrite' });
-                  if (perm !== 'granted' && typeof h.requestPermission === 'function') {
-                    await h.requestPermission({ mode: 'readwrite' });
-                  }
-                } catch {}
-              }
               const f = await h.getFile();
               (f as any).handle = h;
               pickedFiles.push(f);
               handlesMap[f.name] = h;
               handlesMap[f.name.toLowerCase()] = h;
+              if (typeof h.requestPermission === 'function') {
+                h.requestPermission({ mode: 'readwrite' }).catch(() => {});
+              }
             } catch (err) {
               console.warn("Failed to get file from handle:", err);
             }
@@ -1659,12 +1583,13 @@ export default function App() {
           }
         }
       } catch (err: any) {
-        if (err.name === 'AbortError') return;
+        if (err?.name === 'AbortError') return;
         console.warn("showOpenFilePicker error, falling back to input:", err);
       } finally {
         setIsLoadingFiles(false);
       }
     }
+
     const input = document.getElementById('file-upload') as HTMLInputElement | null;
     if (input) {
       input.value = ''; // reset so same files can be re-selected
@@ -1762,7 +1687,19 @@ export default function App() {
     metadata: Partial<StockMetadata>, 
     dirHandle?: any, 
     shouldDownload: boolean = false
-  ): Promise<{ success: boolean; writtenInPlace: boolean; renamedOnDisk?: boolean; downloaded?: boolean; blob: Blob; filename: string; title?: string; description?: string; keywords?: string } | null> => {
+  ): Promise<{ 
+    success: boolean; 
+    writtenInPlace: boolean; 
+    renamedOnDisk?: boolean; 
+    downloaded?: boolean; 
+    blob: Blob; 
+    companionBlob?: Blob | null;
+    companionFilename?: string;
+    filename: string; 
+    title?: string; 
+    description?: string; 
+    keywords?: string 
+  } | null> => {
     const fileMetadata = filesRef.current.find(f => f.id === id) || files.find(f => f.id === id);
     if (!fileMetadata) return null;
 
@@ -1829,6 +1766,30 @@ export default function App() {
       let ratingVal = (metadata.rating !== undefined && metadata.rating > 0)
         ? metadata.rating
         : (fileMetadata.rating !== undefined && fileMetadata.rating > 0) ? fileMetadata.rating : 5;
+
+      // Automatically generate full smart stock metadata if title or keywords are missing or generic (e.g. Untitled-1)
+      const isGenericTitle = !titleVal || /^untitled[\s\-_0-9]*$/i.test(titleVal) || /^stock[\s\-_]*asset/i.test(titleVal);
+      const isKwMissing = !kwVal || kwVal.split(',').filter(Boolean).length < 5;
+
+      if (isGenericTitle || isKwMissing) {
+        try {
+          const smartMeta = buildLocalSmartMetadata(originalFilename, settings);
+          if (isGenericTitle && smartMeta.title) {
+            titleVal = smartMeta.title;
+          }
+          if (isKwMissing && smartMeta.keywords) {
+            kwVal = smartMeta.keywords;
+          }
+          if (!descVal || isGenericTitle) {
+            descVal = smartMeta.description || titleVal;
+          }
+          if (!catVal && smartMeta.category) {
+            catVal = smartMeta.category;
+          }
+        } catch (autoErr) {
+          console.warn("Auto smart metadata fallback error:", autoErr);
+        }
+      }
 
       if (!titleVal) {
         titleVal = (fileMetadata.originalFilename || fileMetadata.filename || 'stock_asset')
@@ -1927,34 +1888,69 @@ export default function App() {
 
       let writtenInPlace = false;
       let renamedOnDisk = false;
+      let companionJpgBlobResult: Blob | null = null;
+      let companionJpgFilenameResult: string | undefined = undefined;
+
+      // Accurate vector asset detection without extension shadowing
+      const nameExt = (targetFilename || fileMetadata.filename || originalFilename || '').split('.').pop()?.toLowerCase() || '';
+      const typeExt = (fileMetadata.fileType || '').toLowerCase();
+      const isVec = ['eps', 'ai', 'svg'].includes(nameExt) || ['eps', 'ai', 'svg', 'vector'].includes(typeExt);
+
+      // Auto-generate High-Resolution Companion JPG for Freepik / Stock Agencies (4000px standard)
+      if (isVec) {
+        try {
+          const baseName = targetFilename.replace(/\.[^/.]+$/, '');
+          const rawCompName = `${baseName}.jpg`;
+          const targetSize = Number(settings.freepikCompanionJpgSize) || 4000;
+          const fileForJpg = actualFile || new File([outputBlob], targetFilename, { type: 'application/postscript' });
+
+          const companionJpg = await generateCompanionJpgBlob(
+            fileForJpg,
+            {
+              ...fileMetadata,
+              ...metadata,
+              filename: rawCompName,
+              title: titleVal,
+              description: descVal,
+              keywords: kwVal,
+              category: catVal,
+              rating: ratingVal
+            },
+            targetSize,
+            fileMetadata.previewUrl
+          );
+
+          if (companionJpg) {
+            companionJpgBlobResult = companionJpg;
+            companionJpgFilenameResult = `jpg/${rawCompName}`;
+          }
+        } catch (compErr) {
+          console.error("Companion Freepik JPG generation error:", compErr);
+        }
+      }
 
       // 3. In-place disk write to Directory handle (TOP PRIORITY for full renaming & in-place replacement)
       if (targetDir && typeof targetDir.getFileHandle === 'function') {
         try {
-          // Check and request permission if supported
+          // Explicit permission verification & request
           if (typeof targetDir.queryPermission === 'function') {
-            const p = await targetDir.queryPermission({ mode: 'readwrite' });
-            if (p !== 'granted' && typeof targetDir.requestPermission === 'function') {
-              await targetDir.requestPermission({ mode: 'readwrite' });
+            try {
+              let perm = await targetDir.queryPermission({ mode: 'readwrite' });
+              if (perm !== 'granted' && typeof targetDir.requestPermission === 'function') {
+                perm = await targetDir.requestPermission({ mode: 'readwrite' });
+              }
+            } catch (pErr) {
+              console.warn("TargetDir permission check:", pErr);
             }
           }
 
-          const existingHandle = metadata.handle || fileMetadata.handle || fileHandlesRef.current[id] || (actualFile as any)?.handle;
           let activeWriteHandle: any = null;
 
-          // Attempt atomic in-place rename with handle.move() if supported by browser (Zero duplicate files!)
-          if (existingHandle && typeof existingHandle.move === 'function' && targetFilename !== originalFilename) {
-            try {
-              await existingHandle.move(targetFilename);
-              renamedOnDisk = true;
-              activeWriteHandle = existingHandle;
-            } catch (moveErr) {
-              console.warn("Atomic handle.move fallback to create+delete:", moveErr);
-            }
-          }
-
-          if (!activeWriteHandle) {
+          // Create / update target file directly with targetFilename
+          try {
             activeWriteHandle = await targetDir.getFileHandle(targetFilename, { create: true });
+          } catch (createErr) {
+            console.warn("Could not get or create targetFilename handle:", createErr);
           }
 
           if (activeWriteHandle && typeof activeWriteHandle.createWritable === 'function') {
@@ -1966,25 +1962,25 @@ export default function App() {
             fileHandlesRef.current[id] = activeWriteHandle;
 
             // Safe removal of old original files from folder so only the single renamed file exists
-            if (targetFilename !== originalFilename) {
+            if (originalFilename && targetFilename !== originalFilename) {
               const oldNames = new Set<string>();
-              if (originalFilename) oldNames.add(originalFilename);
+              oldNames.add(originalFilename);
               if (fileMetadata.originalFilename) oldNames.add(fileMetadata.originalFilename);
-              if (fileMetadata.initialDiskFilename) oldNames.add(fileMetadata.initialDiskFilename);
+              if ((fileMetadata as any).initialDiskFilename) oldNames.add((fileMetadata as any).initialDiskFilename);
               if ((fileMetadata as any).currentDiskFilename) oldNames.add((fileMetadata as any).currentDiskFilename);
 
               for (const oldName of oldNames) {
-                if (!oldName || oldName === targetFilename) continue;
+                if (!oldName || oldName.toLowerCase() === targetFilename.toLowerCase()) continue;
                 try {
                   await targetDir.removeEntry(oldName);
                   renamedOnDisk = true;
                 } catch {}
               }
 
-              // Robust case-insensitive sweep across directory entries to eliminate duplicate leftover files
+              // Case-insensitive sweep across directory entries to eliminate duplicate leftover files
               try {
                 for await (const [entryName] of targetDir.entries()) {
-                  if (entryName !== targetFilename) {
+                  if (entryName.toLowerCase() !== targetFilename.toLowerCase()) {
                     const entryLower = entryName.toLowerCase();
                     for (const oldName of oldNames) {
                       if (oldName && entryLower === oldName.toLowerCase()) {
@@ -2002,6 +1998,34 @@ export default function App() {
             (fileMetadata as any).currentDiskFilename = targetFilename;
             fileMetadata.filename = targetFilename;
             fileMetadata.initialDiskFilename = targetFilename;
+
+            // If companion JPG was generated for vector, save directly inside 'jpg' folder on disk
+            if (companionJpgBlobResult) {
+              try {
+                const baseName = targetFilename.replace(/\.[^/.]+$/, '');
+                const rawCompName = `${baseName}.jpg`;
+                const jpgDir = await targetDir.getDirectoryHandle('jpg', { create: true });
+                const compHandle = await jpgDir.getFileHandle(rawCompName, { create: true });
+                if (compHandle && typeof compHandle.createWritable === 'function') {
+                  const cw = await compHandle.createWritable({ keepExistingData: false });
+                  await cw.write(companionJpgBlobResult);
+                  await cw.close();
+                }
+
+                // If renamed from original filename, safely clean up old companion JPG from 'jpg' folder
+                if (originalFilename && targetFilename !== originalFilename) {
+                  const oldBase = originalFilename.replace(/\.[^/.]+$/, '');
+                  const oldCompName = `${oldBase}.jpg`;
+                  if (oldCompName.toLowerCase() !== rawCompName.toLowerCase()) {
+                    try {
+                      await jpgDir.removeEntry(oldCompName);
+                    } catch {}
+                  }
+                }
+              } catch (subDirErr) {
+                console.error("Failed to write to jpg/ subfolder on disk:", subDirErr);
+              }
+            }
           }
         } catch (dirErr: any) {
           console.warn("DirHandle embed write warning:", dirErr);
@@ -2013,10 +2037,12 @@ export default function App() {
       if (!writtenInPlace && handleToUse && typeof handleToUse.createWritable === 'function') {
         try {
           if (typeof handleToUse.queryPermission === 'function') {
-            const p = await handleToUse.queryPermission({ mode: 'readwrite' });
-            if (p !== 'granted' && typeof handleToUse.requestPermission === 'function') {
-              await handleToUse.requestPermission({ mode: 'readwrite' });
-            }
+            try {
+              let qp = await handleToUse.queryPermission({ mode: 'readwrite' });
+              if (qp !== 'granted' && typeof handleToUse.requestPermission === 'function') {
+                await handleToUse.requestPermission({ mode: 'readwrite' });
+              }
+            } catch {}
           }
           if (typeof (handleToUse as any).move === 'function' && targetFilename !== originalFilename) {
             try {
@@ -2035,12 +2061,8 @@ export default function App() {
         }
       }
 
-      // 5. Download only if explicitly requested by an export or download action
-      let downloaded = false;
-      if (shouldDownload) {
-        triggerDirectFileDownload(outputBlob, targetFilename);
-        downloaded = true;
-      }
+      // 5. Never trigger browser file downloads; metadata and companion JPG are saved directly in place
+      const downloaded = false;
 
       return {
         success: true,
@@ -2048,6 +2070,8 @@ export default function App() {
         renamedOnDisk,
         downloaded,
         blob: outputBlob,
+        companionBlob: companionJpgBlobResult,
+        companionFilename: companionJpgFilenameResult,
         filename: targetFilename,
         title: titleVal,
         description: descVal,
@@ -2088,17 +2112,21 @@ export default function App() {
       showNotification("No completed EPS/vector files found to generate Illustrator script.", 'info');
       return;
     }
-    const scriptContent = generateIllustratorScript(epsFiles);
+    const targetSize = Number(settings.freepikCompanionJpgSize) || 4000;
+    const scriptContent = generateIllustratorScript(epsFiles, {
+      companionImageSize: targetSize,
+      generateCompanionJpg: settings.freepikCompanionJpg !== false
+    });
     const blob = new Blob([scriptContent], { type: 'application/javascript;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Illustrator_AutoEmbed_Rename.jsx`;
+    a.download = `Illustrator_Freepik_AutoEmbed_${targetSize}px.jsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showNotification("Downloaded Illustrator_AutoEmbed_Rename.jsx! Run in Illustrator (File > Scripts > Other Script)", 'success');
+    showNotification(`Downloaded Illustrator_Freepik_AutoEmbed_${targetSize}px.jsx! Run in Illustrator (File > Scripts > Other Script)`, 'success');
   };
 
   const handleDownloadZip = async () => {
@@ -2125,6 +2153,30 @@ export default function App() {
         console.warn(`Error bundling ${targetFilename}:`, e);
         zip.file(targetFilename, file);
       }
+
+      // If vector asset and freepikCompanionJpg enabled, create a "jpg" folder where EPS file is located and place only JPG files inside it!
+      if (['eps', 'ai', 'svg'].includes(ext) && settings.freepikCompanionJpg !== false) {
+        try {
+          const lastSlash = targetFilename.lastIndexOf('/');
+          const dirPrefix = lastSlash !== -1 ? targetFilename.slice(0, lastSlash + 1) : '';
+          const bareFilename = lastSlash !== -1 ? targetFilename.slice(lastSlash + 1) : targetFilename;
+          const baseName = bareFilename.replace(/\.[^/.]+$/, '');
+          const companionFilename = `${dirPrefix}jpg/${baseName}.jpg`;
+          const targetSize = Number(settings.freepikCompanionJpgSize) || 4000;
+          const companionBlob = await generateCompanionJpgBlob(
+            file,
+            item,
+            targetSize,
+            item.previewUrl
+          );
+          if (companionBlob) {
+            zip.file(companionFilename, companionBlob);
+          }
+        } catch (compZipErr) {
+          console.warn("ZIP companion JPG packaging warning:", compZipErr);
+        }
+      }
+
       // Micro-yield to prevent browser hang on huge zip batches
       await new Promise(r => setTimeout(r, 10));
     }
@@ -2135,8 +2187,12 @@ export default function App() {
 
     const epsFiles = candidateFiles.filter(f => ['eps', 'ai', 'svg'].includes(f.fileType.toLowerCase()));
     if (epsFiles.length > 0) {
-      const aiScript = generateIllustratorScript(epsFiles);
-      zip.file("Run_in_Adobe_Illustrator.jsx", aiScript);
+      const targetSize = Number(settings.freepikCompanionJpgSize) || 4000;
+      const aiScript = generateIllustratorScript(epsFiles, {
+        companionImageSize: targetSize,
+        generateCompanionJpg: settings.freepikCompanionJpg !== false
+      });
+      zip.file(`Run_in_Adobe_Illustrator_${targetSize}px.jsx`, aiScript);
     }
 
     const zipBlob = await zip.generateAsync({ type: 'blob' });
@@ -2772,14 +2828,25 @@ export default function App() {
     showNotification(result.message || `✓ ${provider.toUpperCase()} Slot #${index + 1} Connected! Key is active in 5-key pool.`, 'success');
   };
 
+  const getCleanKeywordsList = (raw: string, max: number = 49) => {
+    const cleaned = (raw || '')
+      .split(',')
+      .map(k => k.trim())
+      .filter(k => k && k.length > 1 && !['universal', 'marketplace', 'commercial', 'concept'].includes(k.toLowerCase()));
+    const unique = Array.from(new Set(cleaned));
+    return unique.slice(0, max).join(',');
+  };
+
   const handleExport = (format: string, exportAll: boolean = false) => {
     const isVector = (f: StockMetadata) => {
-      const ext = (f.fileType || f.filename.split('.').pop() || '').toLowerCase();
-      return ['eps', 'ai', 'svg'].includes(ext) || f.fileType === 'vector';
+      const nameExt = (f.filename || f.originalFilename || '').split('.').pop()?.toLowerCase() || '';
+      const typeExt = (f.fileType || '').toLowerCase();
+      return ['eps', 'ai', 'svg'].includes(nameExt) || ['eps', 'ai', 'svg', 'vector'].includes(typeExt);
     };
     const isVideo = (f: StockMetadata) => {
-      const ext = (f.fileType || f.filename.split('.').pop() || '').toLowerCase();
-      return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
+      const nameExt = (f.filename || f.originalFilename || '').split('.').pop()?.toLowerCase() || '';
+      const typeExt = (f.fileType || '').toLowerCase();
+      return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(nameExt) || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv', 'video', 'footage'].includes(typeExt);
     };
     const modeScopedFiles = files.filter(f => {
       if (mode === 'all') return true;
@@ -2822,15 +2889,6 @@ export default function App() {
       // Standard Stock Agency CSV Specifications
       let data: any[] = [];
       filenamePrefix = `${format}_metadata`;
-
-      const getCleanKeywordsList = (raw: string, max: number = 49) => {
-        const cleaned = (raw || '')
-          .split(',')
-          .map(k => k.trim())
-          .filter(k => k && k.length > 1 && !['universal', 'marketplace', 'commercial', 'concept'].includes(k.toLowerCase()));
-        const unique = Array.from(new Set(cleaned));
-        return unique.slice(0, max).join(',');
-      };
 
       switch (format) {
         case 'all_files':
@@ -3159,13 +3217,15 @@ export default function App() {
   };
 
   const handleEmbed = async (type: 'image' | 'video' | 'eps' | 'all', targetSingleId?: string) => {
+    const sourceFiles = (filesRef.current && filesRef.current.length > 0) ? filesRef.current : files;
     const candidateFiles = targetSingleId 
-      ? filesRef.current.filter(f => f.id === targetSingleId)
-      : filesRef.current.filter(f => {
-          const ext = (f.fileType || f.filename.split('.').pop() || '').toLowerCase();
-          const isImg = ['image', 'photo', 'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif'].includes(ext) || f.fileType === 'image';
-          const isVid = ['video', 'footage', 'mp4', 'mov', 'avi', 'm4v', 'webm', 'mkv', 'wmv'].includes(ext) || f.fileType === 'video';
-          const isVec = ['vector', 'eps', 'ai', 'svg'].includes(ext) || f.fileType === 'vector';
+      ? sourceFiles.filter(f => f.id === targetSingleId)
+      : sourceFiles.filter(f => {
+          const nameExt = (f.filename || f.originalFilename || '').split('.').pop()?.toLowerCase() || '';
+          const typeExt = (f.fileType || '').toLowerCase();
+          const isVec = ['eps', 'ai', 'svg'].includes(nameExt) || ['eps', 'ai', 'svg', 'vector'].includes(typeExt);
+          const isVid = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(nameExt) || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv', 'video', 'footage'].includes(typeExt);
+          const isImg = !isVec && !isVid;
           if (type === 'image') return isImg;
           if (type === 'video') return isVid;
           if (type === 'eps') return isVec;
@@ -3174,41 +3234,45 @@ export default function App() {
 
     if (candidateFiles.length === 0) {
       const typeLabel = type === 'image' ? 'Image (JPG, PNG, WebP)' : type === 'eps' ? 'Vector (EPS, AI, SVG)' : type === 'video' ? 'Video (MP4, MOV)' : 'files';
-      showNotification(`No ${typeLabel} found in workspace to embed. Please add ${typeLabel} first.`, 'info');
+      showNotification(`কোনো ${typeLabel} ফাইল পাওয়া যায়নি। মেটাডাটা এম্বেড করতে ফাইল যুক্ত করুন।`, 'info');
       return;
     }
 
     const typeTitle = targetSingleId ? 'Single File' : (type === 'image' ? 'Image' : type === 'eps' ? 'Vector' : type === 'video' ? 'Video' : 'All');
 
     let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
+    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
 
-    // 2. EXPLICITLY REQUEST AND ENSURE READWRITE PERMISSION UNDER USER CLICK
-    let isPermGranted = false;
-    if (activeDir) {
+    // If no active directory connected, attempt to prompt user under this click gesture for folder
+    if (!activeDir && !isInIframe && typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
       try {
-        if (typeof activeDir.requestPermission === 'function') {
-          const perm = await activeDir.requestPermission({ mode: 'readwrite' });
-          isPermGranted = (perm === 'granted');
-        } else if (typeof activeDir.queryPermission === 'function') {
-          const q = await activeDir.queryPermission({ mode: 'readwrite' });
-          if (q !== 'granted' && typeof activeDir.requestPermission === 'function') {
-            const perm = await activeDir.requestPermission({ mode: 'readwrite' });
-            isPermGranted = (perm === 'granted');
-          } else {
-            isPermGranted = (q === 'granted');
+        try {
+          activeDir = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+        } catch (firstErr: any) {
+          if (firstErr?.name !== 'AbortError') {
+            activeDir = await (window as any).showDirectoryPicker();
           }
-        } else {
-          isPermGranted = true;
         }
-      } catch (pErr) {
-        console.warn("Permission request error:", pErr);
+        if (activeDir) {
+          if (typeof activeDir.requestPermission === 'function') {
+            try {
+              await activeDir.requestPermission({ mode: 'readwrite' });
+            } catch {}
+          }
+          setDirectoryHandle(activeDir);
+          directoryHandleRef.current = activeDir;
+          (window as any).__ss_active_dir = activeDir;
+          setFolderName(activeDir.name);
+        }
+      } catch (cancelErr) {
+        console.warn("Folder picker cancelled or restricted:", cancelErr);
       }
+    }
 
-      if (isPermGranted) {
-        showNotification(`✓ ফোল্ডার "${activeDir.name}" পারমিশন অনুমোদিত (Allow Granted)! সরাসরি আসল ফাইলে মেটাডাটা ও রিনেম সেভ হচ্ছে...`, 'success');
-      } else {
-        showNotification("⚠️ ফোল্ডারে আসল ফাইল রিনেম ও সেভ করতে ব্রাউজারের 'Allow' পারমিশন দিন!", 'error');
-      }
+    if (activeDir && typeof activeDir.requestPermission === 'function') {
+      try {
+        await activeDir.requestPermission({ mode: 'readwrite' });
+      } catch (pErr) {}
     }
 
     setEmbedPopup({
@@ -3219,12 +3283,15 @@ export default function App() {
       currentFilename: candidateFiles[0].filename,
       status: 'processing',
       inPlaceCount: 0,
+      renamedDiskCount: 0,
       message: `Embedding IPTC, EXIF & XMP and renaming ${candidateFiles.length} file(s)...`,
     });
 
     let inPlaceCount = 0;
     let renamedDiskCount = 0;
+    let downloadedCount = 0;
     const embeddedBlobs: { id: string; filename: string; blob: Blob }[] = [];
+    const processedVideoFiles: StockMetadata[] = [];
 
     for (let i = 0; i < candidateFiles.length; i++) {
       const file = candidateFiles[i];
@@ -3248,16 +3315,28 @@ export default function App() {
       if (res && res.blob) {
         embeddedBlobs.push({ id: file.id, filename: finalFilename, blob: res.blob });
       }
+      if (res && res.companionBlob && res.companionFilename) {
+        embeddedBlobs.push({ id: `${file.id}_comp_jpg`, filename: res.companionFilename, blob: res.companionBlob });
+      }
 
-      setFiles(prev => prev.map(f => f.id === file.id ? { 
-        ...f, 
+      // Direct in-place disk write handles all saving into folder; no download popups triggered
+
+      const updatedFileMeta: StockMetadata = { 
+        ...file, 
         status: 'saved', 
         filename: finalFilename,
-        title: res?.title || f.title,
-        description: res?.description || f.description,
-        keywords: res?.keywords || f.keywords,
+        title: res?.title || file.title,
+        description: res?.description || file.description,
+        keywords: res?.keywords || file.keywords,
         errorMessage: undefined 
-      } : f));
+      };
+
+      const nameExt = finalFilename.split('.').pop()?.toLowerCase() || '';
+      if (['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(nameExt)) {
+        processedVideoFiles.push(updatedFileMeta);
+      }
+
+      setFiles(prev => prev.map(f => f.id === file.id ? updatedFileMeta : f));
 
       // Small delay for fluid progress bar animation
       await new Promise(r => setTimeout(r, 40));
@@ -3265,7 +3344,51 @@ export default function App() {
 
     latestEmbeddedBlobsRef.current = embeddedBlobs;
 
-    const allRenamedOnDisk = (renamedDiskCount === candidateFiles.length && inPlaceCount === candidateFiles.length);
+    // For video assets, automatically generate and save/download matching Shutterstock Video Contributor CSV
+    // This allows Shutterstock contributor portal to automatically populate Description, Category, and 50 Keywords!
+    if (processedVideoFiles.length > 0) {
+      try {
+        const headerLine = 'Filename,Description,Keywords,Categories,Illustration,Mature Content,Editorial';
+        const lines: string[] = [headerLine];
+        for (const vf of processedVideoFiles) {
+          const fn = vf.filename.trim();
+          let desc = (vf.description || vf.title || fn.replace(/\.[^/.]+$/, '')).trim().replace(/[<>{}\r\n]/g, ' ');
+          if (desc.split(/\s+/).filter(Boolean).length < 5) {
+            desc = `${desc} high quality stock footage clip`.trim();
+          }
+          if (desc.length > 195) desc = desc.slice(0, 195).trim();
+          const cleanDesc = `"${desc.replace(/"/g, '""')}"`;
+
+          let kw = getCleanKeywordsList(vf.keywords || '', 50);
+          const kwArr = kw.split(',').map(k => k.trim()).filter(Boolean);
+          if (kwArr.length < 7) {
+            const fillers = ['footage', 'video', 'cinematic', 'b-roll', 'motion', 'clip', 'scene'];
+            for (const fill of fillers) {
+              if (kwArr.length >= 7) break;
+              if (!kwArr.includes(fill)) kwArr.push(fill);
+            }
+            kw = kwArr.join(',');
+          }
+          const cleanKw = `"${kw.replace(/"/g, '""')}"`;
+          const cat = mapToShutterstockCategory(vf.category, vf.keywords, true);
+
+          lines.push(`${fn},${cleanDesc},${cleanKw},${cat},no,no,no`);
+        }
+        const csvContent = lines.join('\r\n');
+        const csvBlob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+
+        if (activeDir && typeof activeDir.getFileHandle === 'function') {
+          try {
+            const csvHandle = await activeDir.getFileHandle('shutterstock_video_metadata.csv', { create: true });
+            const cw = await csvHandle.createWritable({ keepExistingData: false });
+            await cw.write(csvBlob);
+            await cw.close();
+          } catch {}
+        }
+      } catch (vidCsvErr) {
+        console.warn("Shutterstock auto-video CSV error:", vidCsvErr);
+      }
+    }
 
     setEmbedPopup(prev => ({
       ...prev,
@@ -3275,7 +3398,7 @@ export default function App() {
       renamedDiskCount,
       message: inPlaceCount > 0
         ? `Successfully embedded metadata & saved ${inPlaceCount} file(s) directly into original file(s) on disk!`
-        : `Successfully embedded metadata for ${candidateFiles.length} file(s)!`,
+        : `Successfully embedded & generated ${candidateFiles.length} file(s)!`,
     }));
 
     if (inPlaceCount > 0) {
@@ -3285,7 +3408,7 @@ export default function App() {
       );
     } else {
       showNotification(
-        `✓ ${candidateFiles.length}টি ফাইলের মেটাডাটা সফলভাবে প্রস্তুত হয়েছে। ফাইল সরাসরি সেভ করতে 'Open Folder' দিয়ে ফোল্ডার সিলেক্ট করুন।`,
+        `🎉 সফলভাবে ${candidateFiles.length}টি ফাইলে মেটাডাটা এম্বেড ও নাম রিনেম সম্পন্ন হয়েছে!`, 
         'success'
       );
     }
@@ -3413,18 +3536,43 @@ export default function App() {
   };
 
   const handleFilesAdded = (fileList: FileList | File[], handlesMap?: Record<string, any>) => {
-    const filesArray = Array.from(fileList);
-    const isVector = (ext: string) => ['eps', 'ai', 'svg'].includes(ext);
-    const isVideo = (ext: string) => ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext);
-    const isImage = (ext: string) => ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif'].includes(ext);
-    
+    const rawFilesArray = Array.from(fileList).filter(f => {
+      const lower = (f.name || '').toLowerCase().trim();
+      if (!lower || lower === 'desktop.ini' || lower === 'thumbs.db' || lower === '.ds_store') return false;
+      const rel = ((f as any).webkitRelativePath || '').replace(/\\/g, '/').toLowerCase();
+      if (rel.includes('/jpg/')) return false;
+      return true;
+    });
+
+    if (rawFilesArray.length === 0) {
+      setIsLoadingFiles(false);
+      return;
+    }
+
+    const detectType = (f: File): { kind: 'vector' | 'video' | 'image'; ext: string } => {
+      const rawExt = f.name.includes('.') ? (f.name.split('.').pop()?.toLowerCase() || '') : '';
+      const mime = (f.type || '').toLowerCase();
+      if (['eps', 'epsf', 'epsi', 'ai', 'svg', 'ps'].includes(rawExt) || mime.includes('postscript') || mime.includes('eps') || mime.includes('illustrator') || mime.includes('svg')) {
+        const cleanExt = ['eps', 'ai', 'svg'].includes(rawExt) ? rawExt : 'eps';
+        return { kind: 'vector', ext: cleanExt };
+      }
+      if (['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(rawExt) || mime.startsWith('video/')) {
+        return { kind: 'video', ext: rawExt || 'mp4' };
+      }
+      if (['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'avif'].includes(rawExt) || mime.startsWith('image/')) {
+        return { kind: 'image', ext: rawExt || 'jpg' };
+      }
+      // If file has no recognized extension (e.g., Windows hidden extension or custom EPS), treat as EPS vector
+      return { kind: 'vector', ext: 'eps' };
+    };
+
     let vCount = 0;
     let vidCount = 0;
     let imgCount = 0;
-    for (const f of filesArray) {
-      const ext = f.name.split('.').pop()?.toLowerCase() || '';
-      if (isVector(ext)) vCount++;
-      else if (isVideo(ext)) vidCount++;
+    for (const f of rawFilesArray) {
+      const { kind } = detectType(f);
+      if (kind === 'vector') vCount++;
+      else if (kind === 'video') vidCount++;
       else imgCount++;
     }
 
@@ -3440,73 +3588,61 @@ export default function App() {
       setMode('image');
     }
 
-    const validFiles = filesArray.filter(file => {
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      return isImage(ext) || isVector(ext) || isVideo(ext) || Boolean(file.type);
-    });
-
-    const candidateFiles = validFiles.length > 0 ? validFiles : filesArray;
-    
-    // Strict deduplication: Don't import duplicate items if file with same name already exists in workspace
-    const existingFileNames = new Set(
-      filesRef.current.map(f => (f.originalFilename || f.filename || '').toLowerCase().trim())
-    );
-
-    const nonDuplicateFiles: File[] = [];
-    for (const f of candidateFiles) {
+    // Deduplicate within the incoming batch itself, and replace any old workspace entry with the same name
+    const seenIncoming = new Set<string>();
+    const filesToProcess: File[] = [];
+    for (const f of rawFilesArray) {
       const fn = f.name.toLowerCase().trim();
-      if (existingFileNames.has(fn)) {
-        // Update handle for existing file if new handle provided
-        const existing = filesRef.current.find(e => (e.originalFilename || e.filename).toLowerCase().trim() === fn);
-        if (existing) {
-          if (handlesMap?.[f.name]) {
-            fileHandlesRef.current[existing.id] = handlesMap[f.name];
-            existing.handle = handlesMap[f.name];
-          }
-          fileObjectsRef.current[existing.id] = f;
-          setFileObjects(prev => ({ ...prev, [existing.id]: f }));
-        }
-      } else {
-        existingFileNames.add(fn);
-        nonDuplicateFiles.push(f);
+      if (!seenIncoming.has(fn)) {
+        seenIncoming.add(fn);
+        filesToProcess.push(f);
       }
     }
 
-    if (nonDuplicateFiles.length === 0 && candidateFiles.length > 0) {
-      setIsLoadingFiles(false);
-      showNotification(`ফাইলগুলো ইতিমধ্যেই ওয়ার্কস্পেসে যুক্ত রয়েছে।`, 'info');
-      return;
+    // Remove any pre-existing items with the same filename so re-selecting files always shows them fresh
+    if (filesRef.current.length > 0) {
+      const kept = filesRef.current.filter(
+        existing => !seenIncoming.has((existing.originalFilename || existing.filename || '').toLowerCase().trim()) &&
+                    !seenIncoming.has((existing.filename || '').toLowerCase().trim())
+      );
+      if (kept.length !== filesRef.current.length) {
+        filesRef.current = kept;
+        setFiles(kept);
+      }
     }
 
-    const filesToProcess = nonDuplicateFiles;
     const totalCount = filesToProcess.length;
     setIsLoadingFiles(true);
 
     const buildItem = (file: File) => {
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      const { kind, ext } = detectType(file);
       const id = Math.random().toString(36).substr(2, 9);
-      const isImg = isImage(ext) || (Boolean(file.type) && file.type.startsWith('image/'));
-      const isVid = isVideo(ext) || (Boolean(file.type) && file.type.startsWith('video/'));
+      const isImg = kind === 'image';
+      const isVid = kind === 'video';
+      const isVec = kind === 'vector';
+
+      // Ensure filename has an extension if Windows hid it
+      const displayFilename = file.name.includes('.') ? file.name : `${file.name}.${ext}`;
 
       let initialPreviewUrl: string | undefined = undefined;
       if (isImg || isVid || ext === 'svg') {
         try {
           initialPreviewUrl = URL.createObjectURL(file);
         } catch {}
-      } else if (['eps', 'ai'].includes(ext)) {
+      } else if (isVec) {
         try {
-          initialPreviewUrl = generateVectorArtboardThumbnail(file.name, '');
+          initialPreviewUrl = generateVectorArtboardThumbnail(displayFilename, '');
         } catch {}
       }
 
-      const h = handlesMap?.[file.name] || (file as any).handle || undefined;
+      const h = handlesMap?.[file.name] || handlesMap?.[file.name.toLowerCase()] || (file as any).handle || undefined;
       if (h) {
         fileHandlesRef.current[id] = h;
       }
 
       const item: StockMetadata = {
         id,
-        filename: file.name,
+        filename: displayFilename,
         originalFilename: file.name,
         initialDiskFilename: file.name,
         currentDiskFilename: file.name,
@@ -3522,6 +3658,14 @@ export default function App() {
 
       if (isVid) {
         extractVideoThumbnail(file).then(thumb => {
+          if (thumb) {
+            setFiles(prev => prev.map(item => item.id === id ? { ...item, previewUrl: thumb } : item));
+            const target = filesRef.current.find(item => item.id === id);
+            if (target) target.previewUrl = thumb;
+          }
+        }).catch(() => {});
+      } else if (isVec && ext !== 'svg') {
+        extractEpsThumbnail(file, false).then(thumb => {
           if (thumb) {
             setFiles(prev => prev.map(item => item.id === id ? { ...item, previewUrl: thumb } : item));
             const target = filesRef.current.find(item => item.id === id);
@@ -3548,7 +3692,7 @@ export default function App() {
     filesRef.current = [...filesRef.current, ...initialItems];
     setFiles(prev => [...prev, ...initialItems]);
     setFileObjects(prev => ({ ...prev, ...initialObjs }));
-    setSelectedFileId(prev => prev || initialItems[0]?.id || null);
+    setSelectedFileId(initialItems[0]?.id || null);
 
     if (totalCount <= 25) {
       setIsLoadingFiles(false);
@@ -3615,6 +3759,8 @@ export default function App() {
     setIsDragging(false);
 
     const handlesMap: Record<string, any> = {};
+    const droppedDirFiles: File[] = [];
+
     if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
       for (let i = 0; i < e.dataTransfer.items.length; i++) {
         const item = e.dataTransfer.items[i];
@@ -3623,13 +3769,32 @@ export default function App() {
             const h = await (item as any).getAsFileSystemHandle();
             if (h && h.kind === 'file') {
               handlesMap[h.name] = h;
+              handlesMap[h.name.toLowerCase()] = h;
             } else if (h && h.kind === 'directory') {
               setDirectoryHandle(h);
+              directoryHandleRef.current = h;
+              if (typeof window !== 'undefined') (window as any).__ss_active_dir = h;
               setFolderName(h.name);
+              try {
+                for await (const entry of h.values()) {
+                  if (entry.kind === 'file') {
+                    const df = await entry.getFile();
+                    (df as any).handle = entry;
+                    handlesMap[df.name] = entry;
+                    handlesMap[df.name.toLowerCase()] = entry;
+                    droppedDirFiles.push(df);
+                  }
+                }
+              } catch {}
             }
           } catch {}
         }
       }
+    }
+
+    if (droppedDirFiles.length > 0) {
+      handleFilesAdded(droppedDirFiles, handlesMap);
+      return;
     }
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -3904,39 +4069,17 @@ export default function App() {
               <div className="flex items-center gap-1.5 pt-1 border-t border-slate-700/60 mt-0.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    setEmbedPopup(prev => ({ ...prev, isOpen: false }));
-                    handleDirectorySelect();
-                  }}
-                  className="flex-1 py-1 px-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                  title="Connect your working folder to save directly into your files on disk"
-                >
-                  <FolderCheck size={11} />
-                  <span>Connect Folder (In-Place)</span>
-                </button>
-                <button
-                  type="button"
                   onClick={async () => {
-                    const blobs = latestEmbeddedBlobsRef.current;
-                    if (blobs && blobs.length > 0) {
-                      if (blobs.length === 1) {
-                        triggerDirectFileDownload(blobs[0].blob, blobs[0].filename);
-                      } else {
-                        const zip = new JSZip();
-                        for (const b of blobs) {
-                          zip.file(b.filename, b.blob);
-                        }
-                        const zipBlob = await zip.generateAsync({ type: 'blob' });
-                        triggerDirectFileDownload(zipBlob, `SS_SMART_META_Renamed_${Date.now()}.zip`);
-                      }
-                      showNotification("✓ Renamed files downloaded!", "success");
-                    }
+                    setEmbedPopup(prev => ({ ...prev, isOpen: false }));
+                    await handleDirectorySelect();
+                    // Auto-embed after directory selected
+                    handleEmbed('all');
                   }}
-                  className="py-1 px-2.5 rounded bg-sky-700 hover:bg-sky-600 text-white font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-2xs shrink-0"
-                  title="Download all renamed files with embedded metadata"
+                  className="w-full py-1.5 px-3 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10.5px] flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                  title="Connect your working folder to save directly into original files and 'jpg' folder on disk"
                 >
-                  <Download size={11} />
-                  <span>Download (.ZIP)</span>
+                  <FolderCheck size={12} />
+                  <span>Select Folder to Save Directly on Disk</span>
                 </button>
               </div>
             )}
@@ -4691,25 +4834,45 @@ export default function App() {
         type="file" 
         id="file-upload" 
         multiple 
-        className="hidden" 
+        className="sr-only" 
+        onClick={(e) => {
+          (e.currentTarget as HTMLInputElement).value = '';
+        }}
         onChange={(e) => {
-          if (e.target.files) {
-            handleFilesAdded(e.target.files);
-            e.target.value = ''; // Reset to allow re-uploading same file
+          const fileList = e.target.files;
+          if (fileList && fileList.length > 0) {
+            const picked = Array.from(fileList);
+            handleFilesAdded(picked);
           }
         }}
-        accept="image/*,video/*,.jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.gif,.heic,.avif,.eps,.ai,.svg,.mp4,.mov,.avi,.mkv,.webm,.m4v,.wmv,*/*"
       />
       <input 
         type="file" 
         id="folder-upload" 
         {...{ webkitdirectory: "", directory: "" }}
         multiple 
-        className="hidden" 
+        className="sr-only" 
+        onClick={(e) => {
+          (e.currentTarget as HTMLInputElement).value = '';
+        }}
         onChange={(e) => {
-          if (e.target.files) {
-            handleFilesAdded(e.target.files);
-            e.target.value = ''; // Reset to allow re-uploading same file
+          const fileList = e.target.files;
+          if (fileList && fileList.length > 0) {
+            const allRaw = Array.from(fileList);
+            const picked = allRaw.filter(f => {
+              const rel = ((f as any).webkitRelativePath || '').replace(/\\/g, '/').toLowerCase();
+              const lower = f.name.toLowerCase();
+              return !(rel.includes('/jpg/') && (lower.endsWith('.jpg') || lower.endsWith('.jpeg')));
+            });
+            const firstRel = ((picked[0] as any)?.webkitRelativePath || (allRaw[0] as any)?.webkitRelativePath || '').replace(/\\/g, '/');
+            const folder = firstRel.split('/')[0] || 'Selected Folder';
+            setFolderName(folder);
+            filesRef.current = [];
+            fileObjectsRef.current = {};
+            fileHandlesRef.current = {};
+            setFiles([]);
+            setFileObjects({});
+            handleFilesAdded(picked.length > 0 ? picked : allRaw);
           }
         }}
       />

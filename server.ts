@@ -51,6 +51,7 @@ async function startServer() {
     const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const tempEpsPath = path.join(os.tmpdir(), `vector_${uniqueId}.eps`);
     const tempTiffPath = path.join(os.tmpdir(), `preview_${uniqueId}.tif`);
+    const tempRawJpgPath = path.join(os.tmpdir(), `raw_${uniqueId}.jpg`);
     const tempJpgPath = path.join(os.tmpdir(), `preview_${uniqueId}.jpg`);
 
     try {
@@ -74,7 +75,51 @@ async function startServer() {
       const isPdfBased = dataToWrite.subarray(0, 10).toString("binary").startsWith("%PDF-");
       let rendered = false;
 
-      // 1. Ghostscript primary render
+      const isHires = req.query.hires === 'true' || Boolean(req.query.size);
+      const targetDim = Math.max(800, Math.min(8000, Number(req.query.size) || (isHires ? 4000 : 1200)));
+      const quality = isHires ? 96 : 92;
+
+      // Parse EPS BoundingBox and Illustrator Artboard dimensions from header/XMP
+      const headText = dataToWrite.subarray(0, Math.min(dataToWrite.length, 131072)).toString("binary");
+      let bboxW = 0;
+      let bboxH = 0;
+      const hiResMatch = headText.match(/%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/);
+      const stdBboxMatch = headText.match(/%%BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/);
+      const bboxMatch = hiResMatch || stdBboxMatch;
+      if (bboxMatch) {
+        const llx = parseFloat(bboxMatch[1]);
+        const lly = parseFloat(bboxMatch[2]);
+        const urx = parseFloat(bboxMatch[3]);
+        const ury = parseFloat(bboxMatch[4]);
+        if (isFinite(llx) && isFinite(lly) && isFinite(urx) && isFinite(ury)) {
+          bboxW = Math.abs(urx - llx);
+          bboxH = Math.abs(ury - lly);
+        }
+      }
+
+      let artW = 0;
+      let artH = 0;
+      const stDimW = headText.match(/<stDim:w>\s*([0-9.]+)\s*<\/stDim:w>/i);
+      const stDimH = headText.match(/<stDim:h>\s*([0-9.]+)\s*<\/stDim:h>/i);
+      const aiArtSize = headText.match(/%AI5_ArtSize:\s*([0-9.]+)\s+([0-9.]+)/);
+      const aiTileBox = headText.match(/%AI3_TileBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/);
+      if (stDimW && stDimH) {
+        artW = parseFloat(stDimW[1]);
+        artH = parseFloat(stDimH[1]);
+      } else if (aiArtSize) {
+        artW = parseFloat(aiArtSize[1]);
+        artH = parseFloat(aiArtSize[2]);
+      } else if (aiTileBox) {
+        artW = Math.abs(parseFloat(aiTileBox[3]) - parseFloat(aiTileBox[1]));
+        artH = Math.abs(parseFloat(aiTileBox[4]) - parseFloat(aiTileBox[2]));
+      }
+
+      const maxBboxPt = Math.max(bboxW, bboxH, 100);
+      const calcDpi = bboxW > 0 && bboxH > 0
+        ? Math.max(150, Math.min(1200, Math.round((targetDim * 72) / maxBboxPt)))
+        : (isHires ? 400 : 180);
+
+      // 1. Primary Ghostscript rasterization with -dEPSCrop so origin & bounding box are exact
       if (isPdfBased) {
         try {
           await execFileAsync("gs", [
@@ -82,19 +127,20 @@ async function startServer() {
             "-dBATCH",
             "-dNOPAUSE",
             "-sDEVICE=jpeg",
-            "-dJPEGQ=92",
-            "-r150",
+            `-dJPEGQ=${quality}`,
+            `-r${calcDpi}`,
             "-dFirstPage=1",
             "-dLastPage=1",
-            `-sOutputFile=${tempJpgPath}`,
+            "-dTextAlphaBits=4",
+            "-dGraphicsAlphaBits=4",
+            `-sOutputFile=${tempRawJpgPath}`,
             tempEpsPath
-          ], { timeout: 12000 });
-          if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
+          ], { timeout: 18000 });
+          if (fs.existsSync(tempRawJpgPath) && fs.statSync(tempRawJpgPath).size > 0) {
             rendered = true;
           }
         } catch {}
       } else {
-        // Try with -dEPSCrop
         try {
           await execFileAsync("gs", [
             "-dSAFER",
@@ -102,17 +148,18 @@ async function startServer() {
             "-dNOPAUSE",
             "-dEPSCrop",
             "-sDEVICE=jpeg",
-            "-dJPEGQ=92",
-            "-r150",
-            `-sOutputFile=${tempJpgPath}`,
+            `-dJPEGQ=${quality}`,
+            `-r${calcDpi}`,
+            "-dTextAlphaBits=4",
+            "-dGraphicsAlphaBits=4",
+            `-sOutputFile=${tempRawJpgPath}`,
             tempEpsPath
-          ], { timeout: 12000 });
-          if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
+          ], { timeout: 18000 });
+          if (fs.existsSync(tempRawJpgPath) && fs.statSync(tempRawJpgPath).size > 0) {
             rendered = true;
           }
         } catch {}
 
-        // 1b. Fallback to -dFitPage with fixed dimensions
         if (!rendered) {
           try {
             await execFileAsync("gs", [
@@ -120,18 +167,88 @@ async function startServer() {
               "-dBATCH",
               "-dNOPAUSE",
               "-sDEVICE=jpeg",
-              "-dJPEGQ=92",
-              "-r150",
-              "-dDEVICEWIDTHPOINTS=1200",
-              "-dDEVICEHEIGHTPOINTS=1200",
+              `-dJPEGQ=${quality}`,
+              `-dDEVICEWIDTHPOINTS=${targetDim}`,
+              `-dDEVICEHEIGHTPOINTS=${targetDim}`,
               "-dPDFFitPage",
-              `-sOutputFile=${tempJpgPath}`,
+              "-dTextAlphaBits=4",
+              "-dGraphicsAlphaBits=4",
+              `-sOutputFile=${tempRawJpgPath}`,
               tempEpsPath
-            ], { timeout: 12000 });
-            if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
+            ], { timeout: 18000 });
+            if (fs.existsSync(tempRawJpgPath) && fs.statSync(tempRawJpgPath).size > 0) {
               rendered = true;
             }
           } catch {}
+        }
+      }
+
+      // 1b. Center and normalize canvas via ImageMagick so vector icons/artwork are always centered in the middle
+      if (rendered && fs.existsSync(tempRawJpgPath)) {
+        try {
+          const { stdout } = await execFileAsync("identify", [
+            "-format",
+            "%w %h %[fx:(p{0,0}.r>0.94&&p{0,0}.g>0.94&&p{0,0}.b>0.94)+(p{w-1,0}.r>0.94&&p{w-1,0}.g>0.94&&p{w-1,0}.b>0.94)+(p{0,h-1}.r>0.94&&p{0,h-1}.g>0.94&&p{0,h-1}.b>0.94)+(p{w-1,h-1}.r>0.94&&p{w-1,h-1}.g>0.94&&p{w-1,h-1}.b>0.94)]",
+            tempRawJpgPath
+          ], { timeout: 6000 });
+
+          const parts = stdout.trim().split(/\s+/);
+          const rawW = parseInt(parts[0], 10) || targetDim;
+          const rawH = parseInt(parts[1], 10) || targetDim;
+          const whiteCorners = parseInt(parts[2], 10) || 0;
+
+          const hasLargerArtboard = artW > 0 && artH > 0 && (artW > bboxW * 1.03 || artH > bboxH * 1.03);
+          const isWhiteBg = whiteCorners >= 3 || hasLargerArtboard;
+
+          // Determine target canvas aspect ratio (use Illustrator Artboard if available, otherwise balanced canvas)
+          let canvasAspect = rawW / Math.max(1, rawH);
+          if (artW > 0 && artH > 0) {
+            canvasAspect = artW / artH;
+          }
+
+          let finalW = targetDim;
+          let finalH = targetDim;
+          if (canvasAspect >= 1) {
+            finalW = targetDim;
+            finalH = Math.max(400, Math.round(targetDim / canvasAspect));
+          } else {
+            finalH = targetDim;
+            finalW = Math.max(400, Math.round(targetDim * canvasAspect));
+          }
+
+          if (isWhiteBg) {
+            // Trim any uneven off-center margins and place the vector artwork dead-center with balanced white margins
+            const innerW = Math.round(finalW * 0.84);
+            const innerH = Math.round(finalH * 0.84);
+            await execFileAsync("convert", [
+              tempRawJpgPath,
+              "-fuzz", "3%",
+              "-trim",
+              "+repage",
+              "-resize", `${innerW}x${innerH}`,
+              "-background", "white",
+              "-gravity", "center",
+              "-extent", `${finalW}x${finalH}`,
+              "-quality", String(quality),
+              tempJpgPath
+            ], { timeout: 12000 });
+          } else {
+            // Full-bleed colored background vector: resize cleanly and center on exact aspect ratio
+            await execFileAsync("convert", [
+              tempRawJpgPath,
+              "-resize", `${finalW}x${finalH}^`,
+              "-gravity", "center",
+              "-extent", `${finalW}x${finalH}`,
+              "-quality", String(quality),
+              tempJpgPath
+            ], { timeout: 12000 });
+          }
+
+          if (!fs.existsSync(tempJpgPath) || fs.statSync(tempJpgPath).size === 0) {
+            await fs.promises.copyFile(tempRawJpgPath, tempJpgPath);
+          }
+        } catch {
+          await fs.promises.copyFile(tempRawJpgPath, tempJpgPath);
         }
       }
 
@@ -142,9 +259,16 @@ async function startServer() {
           await fs.promises.writeFile(tempTiffPath, tiffBuf);
           await execFileAsync("convert", [
             tempTiffPath,
-            "-quality", "92",
+            "-fuzz", "3%",
+            "-trim",
+            "+repage",
+            "-resize", `${Math.round(targetDim * 0.84)}x${Math.round(targetDim * 0.84)}`,
+            "-background", "white",
+            "-gravity", "center",
+            "-extent", `${targetDim}x${targetDim}`,
+            "-quality", String(quality),
             tempJpgPath
-          ], { timeout: 6000 });
+          ], { timeout: 8000 });
           if (fs.existsSync(tempJpgPath) && fs.statSync(tempJpgPath).size > 0) {
             rendered = true;
           }
@@ -218,6 +342,9 @@ async function startServer() {
       } catch {}
       try {
         if (fs.existsSync(tempTiffPath)) await fs.promises.unlink(tempTiffPath);
+      } catch {}
+      try {
+        if (fs.existsSync(tempRawJpgPath)) await fs.promises.unlink(tempRawJpgPath);
       } catch {}
       try {
         if (fs.existsSync(tempJpgPath)) await fs.promises.unlink(tempJpgPath);

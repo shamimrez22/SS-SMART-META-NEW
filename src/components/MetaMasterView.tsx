@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { checkCurrentLicenseStatus, validateAndActivateKey, validateAndActivateKeyAsync, getAdminConfig, LicenseStatusResult } from '../services/licenseService';
 import { buildLocalSmartMetadata } from '../services/aiService';
+import { generateIllustratorScript, generatePhotoshopScript } from '../services/embedService';
 import { cn } from '../lib/utils';
 
 interface MetaMasterViewProps {
@@ -579,7 +580,18 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
   const [isAdobeScriptModalOpen, setIsAdobeScriptModalOpen] = useState(false);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
   const [isQuickSaveModalOpen, setIsQuickSaveModalOpen] = useState(false);
-  const [activeScriptTab, setActiveScriptTab] = useState<'photoshop' | 'illustrator'>('photoshop');
+  const [activeScriptTab, setActiveScriptTab] = useState<'photoshop' | 'illustrator'>('illustrator');
+
+  const generatedScriptCode = React.useMemo(() => {
+    if (activeScriptTab === 'illustrator') {
+      return generateIllustratorScript(files, {
+        companionImageSize: settings.freepikCompanionJpgSize || 4000,
+        generateCompanionJpg: settings.freepikCompanionJpg !== false
+      });
+    } else {
+      return generatePhotoshopScript(files);
+    }
+  }, [activeScriptTab, files, settings.freepikCompanionJpgSize, settings.freepikCompanionJpg]);
   const [newLicenseKey, setNewLicenseKey] = useState('');
   const [isVerifyingKey, setIsVerifyingKey] = useState(false);
   const [currentLicense, setCurrentLicense] = useState<LicenseStatusResult>(checkCurrentLicenseStatus);
@@ -633,13 +645,15 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
 
   // Separate files by active mode so Vector, Image, and Video operate completely independently
   const isVectorFile = (f: StockMetadata) => {
-    const ext = (f.fileType || f.filename.split('.').pop() || '').toLowerCase();
-    return ['eps', 'ai', 'svg'].includes(ext) || f.fileType === 'vector';
+    const nameExt = (f.filename || f.originalFilename || '').split('.').pop()?.toLowerCase() || '';
+    const typeExt = (f.fileType || '').toLowerCase();
+    return ['eps', 'epsf', 'epsi', 'ai', 'svg', 'ps'].includes(nameExt) || ['eps', 'epsf', 'epsi', 'ai', 'svg', 'ps', 'vector'].includes(typeExt);
   };
 
   const isVideoFile = (f: StockMetadata) => {
-    const ext = (f.fileType || f.filename.split('.').pop() || '').toLowerCase();
-    return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(ext) || f.fileType === 'video';
+    const nameExt = (f.filename || f.originalFilename || '').split('.').pop()?.toLowerCase() || '';
+    const typeExt = (f.fileType || '').toLowerCase();
+    return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes(nameExt) || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv', 'video', 'footage'].includes(typeExt);
   };
 
   const { currentModeFiles, imageFilesCount, vectorFilesCount, videoFilesCount } = React.useMemo(() => {
@@ -1197,28 +1211,68 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           {/* Input Group */}
           <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_4px_rgba(53,159,160,0.25)]"))}>
             <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Input</legend>
-            <button 
-              type="button"
-              onClick={handleFileSelectDirect}
-              className={cn(
-                "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1",
-                isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
-              )}
-            >
-              <Upload size={12} strokeWidth={2.5} />
-              <span>SELECT FILE</span>
-            </button>
-            <button 
-              type="button"
-              onClick={handleDirectorySelect}
-              className={cn(
-                "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1",
-                isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
-              )}
-            >
-              <Folder size={12} strokeWidth={2.5} />
-              <span>SELECT FOLDER</span>
-            </button>
+            {typeof window !== 'undefined' && window.self !== window.top ? (
+              <label 
+                htmlFor="file-upload"
+                onClick={() => {
+                  const el = document.getElementById('file-upload') as HTMLInputElement | null;
+                  if (el) el.value = '';
+                }}
+                className={cn(
+                  "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1 select-none",
+                  isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
+                )}
+              >
+                <Upload size={12} strokeWidth={2.5} />
+                <span>SELECT FILE</span>
+              </label>
+            ) : (
+              <button 
+                type="button"
+                onClick={handleFileSelectDirect}
+                className={cn(
+                  "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1 select-none",
+                  isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
+                )}
+              >
+                <Upload size={12} strokeWidth={2.5} />
+                <span>SELECT FILE</span>
+              </button>
+            )}
+            {typeof window !== 'undefined' && window.self !== window.top ? (
+              <label 
+                htmlFor="folder-upload"
+                onClick={() => {
+                  const el = document.getElementById('folder-upload') as HTMLInputElement | null;
+                  if (el) el.value = '';
+                }}
+                className={cn(
+                  "px-2.5 py-1 h-7 text-white font-extrabold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-md transition-all whitespace-nowrap flex items-center gap-1.5 select-none",
+                  folderName 
+                    ? "bg-emerald-700 hover:bg-emerald-600 border border-emerald-400 text-emerald-100" 
+                    : "bg-[#926004] hover:bg-[#a87006] border border-[#d9822b] text-amber-100"
+                )}
+                title={folderName ? `Connected: ${folderName}` : "ফোল্ডার সিলেক্ট করে সব ফাইল এক ক্লিকে লোড করুন"}
+              >
+                <Folder size={13} strokeWidth={2.5} />
+                <span>SELECT FOLDER</span>
+              </label>
+            ) : (
+              <button 
+                type="button"
+                onClick={handleDirectorySelect}
+                className={cn(
+                  "px-2.5 py-1 h-7 text-white font-extrabold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-md transition-all whitespace-nowrap flex items-center gap-1.5",
+                  folderName 
+                    ? "bg-emerald-700 hover:bg-emerald-600 border border-emerald-400 text-emerald-100" 
+                    : "bg-[#926004] hover:bg-[#a87006] border border-[#d9822b] text-amber-100"
+                )}
+                title={folderName ? `Connected: ${folderName} (Full In-Place Disk Write Active)` : "ফোল্ডারে সরাসরি ফাইল রিনেম ও JPG সেভ করার পারমিশন সক্রিয় করুন"}
+              >
+                <Folder size={13} strokeWidth={2.5} />
+                <span>SELECT FOLDER</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => window.open(window.location.href, '_blank')}
@@ -1426,7 +1480,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <button 
               type="button"
               onClick={() => handleEmbed('eps')}
-              title={`সব ভেক্টর ফাইলে (EPS, AI, SVG) সরাসরি XMP ও PostScript মেটাডাটা এম্বেড করুন (${vectorFilesCount}টি ফাইল)`}
+              title={`সব ভেক্টর ফাইলে (EPS, AI, SVG) সরাসরি XMP ও PostScript মেটাডাটা এম্বেড করুন ${settings.freepikCompanionJpg !== false ? `+ Freepik Companion JPG (${settings.freepikCompanionJpgSize || 4000}px)` : ''} (${vectorFilesCount}টি ফাইল)`}
               className={cn(
                 "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 active:scale-95 shadow-2xs hover:brightness-110",
                 isBlue 
@@ -1478,6 +1532,17 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
                   {allFilesCount}
                 </span>
               )}
+            </button>
+
+            {/* 5. Adobe Illustrator .JSX Script Button (from attachment image_7acd3010.png) */}
+            <button
+              type="button"
+              onClick={() => setIsAdobeScriptModalOpen(true)}
+              title="Adobe Illustrator CC অটোমেশন স্ক্রিপ্ট (.jsx) ডাউনলোড বা রান করুন"
+              className="px-2 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1 active:scale-95 border border-[#d9822b] bg-[#452703] hover:bg-[#5a3304] text-[#fcd34d] shadow-2xs hover:brightness-110"
+            >
+              <FileCode size={13} className="text-[#fcd34d] shrink-0" />
+              <span>Ai Script (.jsx)</span>
             </button>
           </fieldset>
         </div>
@@ -2189,61 +2254,52 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
 
             <div className="p-4 flex flex-col gap-3 text-xs">
               {/* Tab Selector */}
-              <div className="flex border-b border-[#24354a] gap-2">
-                <button 
-                  onClick={() => setActiveScriptTab('photoshop')}
-                  className={cn(
-                    "px-4 py-1.5 border-b-2 font-semibold text-xs transition-colors cursor-pointer",
-                    activeScriptTab === 'photoshop' 
-                      ? "border-cyan-400 text-cyan-300" 
-                      : "border-transparent text-slate-400 hover:text-slate-200"
-                  )}
-                >
-                  Photoshop Script (.jsx)
-                </button>
-                <button 
-                  onClick={() => setActiveScriptTab('illustrator')}
-                  className={cn(
-                    "px-4 py-1.5 border-b-2 font-semibold text-xs transition-colors cursor-pointer",
-                    activeScriptTab === 'illustrator' 
-                      ? "border-amber-400 text-amber-300" 
-                      : "border-transparent text-slate-400 hover:text-slate-200"
-                  )}
-                >
-                  Illustrator Script (.jsx)
-                </button>
+              <div className="flex border-b border-[#24354a] gap-2 items-center justify-between">
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => setActiveScriptTab('illustrator')}
+                    className={cn(
+                      "px-4 py-1.5 border-b-2 font-semibold text-xs transition-colors cursor-pointer",
+                      activeScriptTab === 'illustrator' 
+                        ? "border-amber-400 text-amber-300" 
+                        : "border-transparent text-slate-400 hover:text-slate-200"
+                    )}
+                  >
+                    Illustrator Vector Script (.jsx)
+                  </button>
+                  <button 
+                    onClick={() => setActiveScriptTab('photoshop')}
+                    className={cn(
+                      "px-4 py-1.5 border-b-2 font-semibold text-xs transition-colors cursor-pointer",
+                      activeScriptTab === 'photoshop' 
+                        ? "border-cyan-400 text-cyan-300" 
+                        : "border-transparent text-slate-400 hover:text-slate-200"
+                    )}
+                  >
+                    Photoshop Script (.jsx)
+                  </button>
+                </div>
+                {activeScriptTab === 'illustrator' && (
+                  <span className="text-[10.5px] text-amber-300 font-mono bg-amber-950/70 border border-amber-500/50 px-2 py-0.5 rounded">
+                    Freepik JPG: {settings.freepikCompanionJpgSize || 4000}px
+                  </span>
+                )}
               </div>
 
               {/* Script Instructions */}
               <div className="p-2.5 bg-[#14202d] border border-[#223549] rounded text-[11px] text-slate-300">
-                <span className="font-bold text-cyan-300">Instructions:</span> Run this script in {activeScriptTab === 'photoshop' ? 'Adobe Photoshop' : 'Adobe Illustrator'} via <strong>File &gt; Scripts &gt; Browse...</strong> to automatically inject titles, descriptions, and keywords directly into unopened assets!
+                <span className="font-bold text-amber-300">Instructions:</span> Run this script in {activeScriptTab === 'photoshop' ? 'Adobe Photoshop' : 'Adobe Illustrator'} via <strong>File &gt; Scripts &gt; Browse...</strong> to automatically inject titles, descriptions, keywords, and 5-star ratings directly into assets.
+                {activeScriptTab === 'illustrator' && (
+                  <div className="mt-1 text-amber-200/90 text-[10.5px]">
+                    ⭐ <strong>Freepik Companion JPG Ready:</strong> Auto-saves vector as EPS10 and exports high-res companion JPEG ({settings.freepikCompanionJpgSize || 4000}px) with matching base name!
+                  </div>
+                )}
               </div>
 
               {/* Code Preview Box */}
               <div className="relative">
-                <pre className="p-3 bg-[#0f1722] border border-[#24354a] rounded text-[11px] font-mono text-slate-300 h-44 overflow-y-auto custom-scrollbar select-all">
-                  {activeScriptTab === 'photoshop' ? `// SS SMART META - Photoshop Batch Metadata Injector
-// Developed By Shamim
-#target photoshop
-app.bringToFront();
-
-function batchEmbedMetadata() {
-  var folder = Folder.selectDialog("Select Folder with Stock Images");
-  if (!folder) return;
-  var files = folder.getFiles(/\.(jpg|jpeg|png|tif|psd)$/i);
-  alert("Found " + files.length + " files. SS SMART META engine ready.");
-}
-batchEmbedMetadata();` : `// SS SMART META - Illustrator Vector Batch Metadata Injector
-// Developed By Shamim
-#target illustrator
-
-function batchIllustratorEmbed() {
-  var folder = Folder.selectDialog("Select Folder with EPS/AI Vectors");
-  if (!folder) return;
-  var files = folder.getFiles(/\.(eps|ai)$/i);
-  alert("Found " + files.length + " vector files ready for XMP injection.");
-}
-batchIllustratorEmbed();`}
+                <pre className="p-3 bg-[#0f1722] border border-[#24354a] rounded text-[11px] font-mono text-slate-300 h-52 overflow-y-auto custom-scrollbar select-all whitespace-pre">
+                  {generatedScriptCode}
                 </pre>
               </div>
             </div>
@@ -2251,10 +2307,7 @@ batchIllustratorEmbed();`}
             <div className="px-4 py-3 bg-[#131d28] border-t border-[#24354a] flex items-center justify-between">
               <button 
                 onClick={() => {
-                  const code = activeScriptTab === 'photoshop' 
-                    ? `// SS SMART META - Photoshop Script\n#target photoshop\n// Developed By Shamim\n` 
-                    : `// SS SMART META - Illustrator Script\n#target illustrator\n// Developed By Shamim\n`;
-                  navigator.clipboard.writeText(code);
+                  navigator.clipboard.writeText(generatedScriptCode);
                   showNotification("Script copied to clipboard!", "success");
                 }}
                 className="px-3 py-1.5 bg-[#1c2c3e] hover:bg-[#253950] text-slate-300 rounded text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
@@ -2264,8 +2317,11 @@ batchIllustratorEmbed();`}
               <div className="flex gap-2">
                 <button 
                   onClick={() => {
-                    const filename = activeScriptTab === 'photoshop' ? "SS_Meta_Photoshop.jsx" : "SS_Meta_Illustrator.jsx";
-                    const blob = new Blob([`// SS SMART META JSX Script\n// Developed By Shamim\n`], { type: 'text/plain' });
+                    const targetSize = settings.freepikCompanionJpgSize || 4000;
+                    const filename = activeScriptTab === 'photoshop' 
+                      ? "SS_Meta_Photoshop.jsx" 
+                      : `Illustrator_Freepik_AutoEmbed_${targetSize}px.jsx`;
+                    const blob = new Blob([generatedScriptCode], { type: 'text/javascript' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
@@ -2274,7 +2330,7 @@ batchIllustratorEmbed();`}
                     URL.revokeObjectURL(url);
                     showNotification(`Downloaded ${filename}`, "success");
                   }}
-                  className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                  className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
                 >
                   <Download size={13} /> Download .JSX
                 </button>

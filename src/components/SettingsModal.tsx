@@ -56,6 +56,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     marketplace: false,
     aiModel: false,
     imagerRules: false,
+    freepikJpg: false,
     affixes: false,
     autoSync: false,
     savedKeywords: false,
@@ -95,6 +96,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       marketplace: true,
       aiModel: true,
       imagerRules: true,
+      freepikJpg: true,
       affixes: true,
       autoSync: true,
       savedKeywords: true,
@@ -107,6 +109,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       marketplace: false,
       aiModel: false,
       imagerRules: false,
+      freepikJpg: false,
       affixes: false,
       autoSync: false,
       savedKeywords: false,
@@ -1115,6 +1118,127 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </button>
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+
+              {/* DROPDOWN: FREEPIK VECTOR & COMPANION JPG SETTINGS */}
+              <div className="rounded-xl border border-border bg-card/60 overflow-hidden shadow-xs transition-all">
+                <button
+                  type="button"
+                  onClick={() => toggleDropdown('freepikJpg')}
+                  className="w-full p-4 flex items-center justify-between hover:bg-muted/40 transition-colors cursor-pointer text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <Layers size={18} className="text-orange-400" />
+                    <div>
+                      <span className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-2">
+                        Freepik Vector + Companion JPG Auto-Export
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                          Same Name JPG
+                        </span>
+                      </span>
+                      <p className="text-[11px] text-muted-foreground">
+                        ভেক্টর এম্বেড করার সময় একই নামে হাই-রেজ্যুলেশন প্রিভিউ JPG তৈরি ও মেটাডাটা সেট হবে (Freepik-এর নিয়মানুযায়ী)।
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                      {settings.freepikCompanionJpg !== false ? `${settings.freepikCompanionJpgSize || 4000}px Active` : 'Disabled'}
+                    </span>
+                    {openDropdowns.freepikJpg ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </div>
+                </button>
+
+                {openDropdowns.freepikJpg && (
+                  <div className="p-4 border-t border-border bg-background/50 space-y-4 animate-in slide-in-from-top-1 duration-150">
+                    {/* Toggle */}
+                    <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg border border-border">
+                      <div className="pr-3">
+                        <div className="text-xs font-bold text-foreground">Auto-Export Companion JPG for Vectors</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          Freepik-এ ভেক্টর (.eps) আপলোড করতে একই নামের একটি .jpg ইমেজ ফাইল বাধ্যতামূলক। এটি স্বয়ংক্রিয়ভাবে তৈরি হবে।
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSettings(prev => ({ ...prev, freepikCompanionJpg: prev.freepikCompanionJpg === false ? true : false }))}
+                        className={cn(
+                          "w-10 h-6 rounded-full transition-all relative border border-border shrink-0 cursor-pointer",
+                          settings.freepikCompanionJpg !== false ? "bg-orange-500 border-orange-500" : "bg-muted"
+                        )}
+                      >
+                        <div className={cn(
+                          "absolute top-0.5 w-4.5 h-4.5 rounded-full bg-white transition-all shadow-sm",
+                          settings.freepikCompanionJpg !== false ? "left-5" : "left-0.5"
+                        )} />
+                      </button>
+                    </div>
+
+                    {/* Resolution / Size selector */}
+                    <div className="p-3 bg-secondary/50 rounded-lg border border-border space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-foreground">Companion JPG Image Size / Resolution</span>
+                        <span className="text-[10px] font-mono font-bold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded border border-orange-500/20">
+                          {settings.freepikCompanionJpgSize || 4000} x {settings.freepikCompanionJpgSize || 4000} px
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        Freepik মিনিমাম 2000px থেকে 4000px+ রিকমেন্ড করে। আপনার পছন্দের রেজ্যুলেশন সিলেক্ট করুন:
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                        {[
+                          { size: 2000, label: '2000 px', desc: 'Standard 2K' },
+                          { size: 3000, label: '3000 px', desc: 'High 3K' },
+                          { size: 4000, label: '4000 px', desc: 'Freepik Rec. ⭐', badge: 'Best' },
+                          { size: 5000, label: '5000 px', desc: 'Ultra 5K' },
+                          { size: 6000, label: '6000 px', desc: 'Max 6K Print' },
+                        ].map(opt => (
+                          <button
+                            key={opt.size}
+                            type="button"
+                            onClick={() => setSettings(prev => ({ ...prev, freepikCompanionJpgSize: opt.size }))}
+                            className={cn(
+                              "p-2 rounded border text-left cursor-pointer transition-all flex flex-col justify-between",
+                              (settings.freepikCompanionJpgSize || 4000) === opt.size
+                                ? "border-orange-500 bg-orange-500/10 text-orange-400 font-bold shadow-xs"
+                                : "border-border bg-background hover:bg-muted/40 text-foreground"
+                            )}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold">{opt.label}</span>
+                              {opt.badge && (
+                                <span className="text-[8px] font-black uppercase px-1 py-0.2 rounded bg-orange-500 text-white">
+                                  {opt.badge}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[9px] text-muted-foreground">{opt.desc}</span>
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Custom input */}
+                      <div className="pt-2 flex items-center gap-2">
+                        <span className="text-[11px] text-muted-foreground shrink-0">Custom Dimension:</span>
+                        <input
+                          type="number"
+                          min={1000}
+                          max={10000}
+                          step={500}
+                          value={settings.freepikCompanionJpgSize || 4000}
+                          onChange={(e) => setSettings(prev => ({ ...prev, freepikCompanionJpgSize: Math.max(1000, Math.min(10000, parseInt(e.target.value) || 4000)) }))}
+                          className="w-24 bg-background border border-border text-xs h-7 rounded px-2 outline-none focus:border-primary font-mono text-center"
+                        />
+                        <span className="text-[11px] text-muted-foreground">pixels (width / height)</span>
+                      </div>
+
+                      <div className="p-2.5 bg-background/80 rounded border border-border text-[11px] text-muted-foreground flex items-center gap-2">
+                        <span className="text-orange-400 font-bold shrink-0">📁 ZIP Structure:</span>
+                        <span>ZIP ফাইলে ভেক্টর (EPS) যেখানে থাকবে, ঠিক সেখানেই <strong>'jpg'</strong> নামের ফোল্ডার তৈরি হবে এবং তার ভেতরে শুধু <strong>.jpg</strong> ফাইলগুলো সুন্দরভাবে সাজানো থাকবে।</span>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

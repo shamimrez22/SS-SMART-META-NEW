@@ -89,6 +89,8 @@ export interface GeneratorSettings {
   savedKeywords: string[];
   autoSyncFilenameWithTitle?: boolean;
   filenameFormat?: 'exact_title' | 'kebab_case' | 'snake_case';
+  freepikCompanionJpg?: boolean;
+  freepikCompanionJpgSize?: number;
 }
 
 export interface HistoryItem {
