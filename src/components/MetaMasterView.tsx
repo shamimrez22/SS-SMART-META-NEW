@@ -586,12 +586,12 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
     if (activeScriptTab === 'illustrator') {
       return generateIllustratorScript(files, {
         companionImageSize: settings.freepikCompanionJpgSize || 4000,
-        generateCompanionJpg: settings.freepikCompanionJpg !== false
+        generateCompanionJpg: false
       });
     } else {
       return generatePhotoshopScript(files);
     }
-  }, [activeScriptTab, files, settings.freepikCompanionJpgSize, settings.freepikCompanionJpg]);
+  }, [activeScriptTab, files, settings.freepikCompanionJpgSize]);
   const [newLicenseKey, setNewLicenseKey] = useState('');
   const [isVerifyingKey, setIsVerifyingKey] = useState(false);
   const [currentLicense, setCurrentLicense] = useState<LicenseStatusResult>(checkCurrentLicenseStatus);
@@ -1211,17 +1211,18 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
           {/* Input Group */}
           <fieldset className={cn("border rounded px-2 py-0.5 flex items-center gap-1 shrink-0 flex-nowrap transition-colors", isBlue ? "border-[#2563eb] bg-[#0c2246]/95 shadow-[0_1px_4px_rgba(37,99,235,0.25)]" : (isDark ? "border-[#334b68] bg-[#162332]/90" : "border-[#359FA0]/50 bg-[#092226]/95 shadow-[0_1px_4px_rgba(53,159,160,0.25)]"))}>
             <legend className={cn("text-[10px] font-bold px-1 whitespace-nowrap", isBlue ? "text-cyan-200" : (isDark ? "text-white" : "text-[#359FA0]"))}>Input</legend>
-            <label 
-              htmlFor="file-upload"
+            <button 
+              type="button"
+              onClick={handleFileSelectDirect}
               className={cn(
                 "px-2.5 py-1 h-7 text-white font-bold text-[11px] rounded tracking-wide cursor-pointer active:scale-95 shadow-2xs transition-all whitespace-nowrap flex items-center gap-1 select-none",
                 isBlue ? "bg-[#1d4ed8] hover:bg-[#2563eb] border border-cyan-400" : "bg-[#0284c7] hover:bg-[#0369a1]"
               )}
-              title="সিঙ্গেল বা একাধিক ইমেজ, ভেক্টর (.eps, .ai, .svg) বা ভিডিও ফাইল সিলেক্ট করুন"
+              title="সিঙ্গেল বা একাধিক ইমেজ, ভেক্টর (.eps, .ai, .svg) বা ভিডিও ফাইল সিলেক্ট করে প্রথমেই পারমিশন নিন"
             >
               <Upload size={12} strokeWidth={2.5} />
               <span>SELECT FILE</span>
-            </label>
+            </button>
             <button 
               type="button"
               onClick={handleDirectorySelect}
@@ -1444,7 +1445,7 @@ export const MetaMasterView: React.FC<MetaMasterViewProps> = ({
             <button 
               type="button"
               onClick={() => handleEmbed('eps')}
-              title={`সব ভেক্টর ফাইলে (EPS, AI, SVG) সরাসরি XMP ও PostScript মেটাডাটা এম্বেড করুন ${settings.freepikCompanionJpg !== false ? `+ Freepik Companion JPG (${settings.freepikCompanionJpgSize || 4000}px)` : ''} (${vectorFilesCount}টি ফাইল)`}
+              title={`সব ভেক্টর ফাইলে (EPS, AI, SVG) সরাসরি XMP ও PostScript মেটাডাটা এম্বেড ও রিনেম করুন (${vectorFilesCount}টি ফাইল)`}
               className={cn(
                 "px-2.5 py-1 h-7 text-[11px] font-bold rounded cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 active:scale-95 shadow-2xs hover:brightness-110",
                 isBlue 

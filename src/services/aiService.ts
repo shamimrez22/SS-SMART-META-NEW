@@ -143,15 +143,20 @@ export function generateUniqueImageDescription(
     seed = (seed * 31 + filename.charCodeAt(i)) >>> 0;
   }
 
-  const cleanSubject = cleanName.trim() || 'Visual Subject';
+  const cleanSubject = (cleanName || '')
+    .replace(/\(\d+\)/g, '')
+    .replace(/\b\d+\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim() || 'Visual Subject';
+  const cleanWords = (words || []).filter(w => w && !/^\(?[\d]+\)?$/.test(w.trim()));
   const kwList = (context.keywords || '')
     .split(',')
     .map(k => k.trim())
     .filter(k => k && k.length > 2 && !['and', 'the', 'for', 'with', 'image', 'photo', 'vector'].includes(k.toLowerCase()));
 
-  const primaryDetail = kwList[0] || words[0] || 'focal subject characteristics';
-  const secondaryDetail = kwList[1] || words[1] || 'contextual visual elements';
-  const textureOrStyle = kwList[2] || words[2] || 'authentic surface textures';
+  const primaryDetail = kwList[0] || cleanWords[0] || 'focal subject characteristics';
+  const secondaryDetail = kwList[1] || cleanWords[1] || 'contextual visual elements';
+  const textureOrStyle = kwList[2] || cleanWords[2] || 'authentic surface textures';
   const environmentDetail = kwList[3] || kwList[4] || 'ambient surrounding background';
 
   // Dynamic openings, perspectives, and compositions
@@ -202,14 +207,14 @@ export function generateUniqueImageDescription(
   ];
 
   const opening = isVector 
-    ? vectorOpenings[seed % vectorOpenings.length] 
+    ? vectorOpenings[(seed >>> 0) % vectorOpenings.length] 
     : isVideo 
-    ? videoOpenings[seed % videoOpenings.length] 
-    : photoOpenings[seed % photoOpenings.length];
+    ? videoOpenings[(seed >>> 0) % videoOpenings.length] 
+    : photoOpenings[(seed >>> 0) % photoOpenings.length];
 
-  const comp = compositionClauses[(seed >> 3) % compositionClauses.length];
-  const env = environmentClauses[(seed >> 6) % environmentClauses.length];
-  const util = utilityClauses[(seed >> 9) % utilityClauses.length];
+  const comp = compositionClauses[(seed >>> 3) % compositionClauses.length];
+  const env = environmentClauses[(seed >>> 6) % environmentClauses.length];
+  const util = utilityClauses[(seed >>> 9) % utilityClauses.length];
 
   let sentence1 = `${opening}, ${comp}.`;
   let sentence2 = `The scene is ${env}, ${util}.`;
@@ -518,9 +523,13 @@ export async function callServerGemini(
         previewUrl: base64 && base64.startsWith('data:image/') ? base64 : undefined
       };
     }
+    throw new Error(data?.error || 'Server route returned invalid metadata');
   }
-  console.warn(`[AI Engine] Server route returned invalid format for ${file.name}, activating local smart metadata engine.`);
-  return buildLocalSmartMetadata(file.name, settings);
+  let errPayload: any = null;
+  try {
+    errPayload = await res.json();
+  } catch {}
+  throw new Error(errPayload?.error || `Server route failed with status ${res.status}`);
 }
 
 export async function generateMetadata(
@@ -594,26 +603,27 @@ export async function generateMetadata(
     if (provider.name === 'gemini') {
       // Call /api/generate-metadata with ALL configured Gemini keys for seamless automatic failover
       const activeGeminiKeys = allGeminiKeys.length > 0 ? allGeminiKeys : (provider.key ? [provider.key] : []);
+      let lastGeminiErr: any = null;
       try {
         const srvRes = await callServerGemini(file, settings, activeGeminiKeys, previewUrl, signal);
         if (srvRes && srvRes.title) return srvRes;
       } catch (serverErr: any) {
+        lastGeminiErr = serverErr;
         console.warn("Server route /api/generate-metadata failed:", serverErr?.message || serverErr);
       }
 
-      // If direct Gemini key was present and not tried yet, try each key in pool
+      // If direct Gemini key was present, try each key in pool directly
       for (const directKey of activeGeminiKeys) {
         try {
           const directRes = await generateWithGemini(file, settings, directKey);
           if (directRes && directRes.title) return directRes;
         } catch (directErr) {
+          lastGeminiErr = directErr;
           console.warn("Direct Gemini key fallback failed, trying next:", directErr);
         }
       }
 
-      // Seamless fallback to local smart metadata engine: 0 errors guaranteed
-      console.warn(`[AI Engine] Gemini vision and keys unavailable for ${file.name}, activating smart stock metadata engine.`);
-      return buildLocalSmartMetadata(file.name, settings);
+      throw lastGeminiErr || new Error(`Could not generate AI vision metadata for ${file.name}`);
     } else {
       const activeThirdPartyKeys = provider.name === 'groq'
         ? (allGroqKeys.length > 0 ? allGroqKeys : (provider.key ? [provider.key] : []))
@@ -630,16 +640,12 @@ export async function generateMetadata(
         }
       }
 
-      // If all configured keys failed, automatically recover using server Gemini or smart fallback
-      try {
-        return await callServerGemini(file, settings, allGeminiKeys, previewUrl);
-      } catch {
-        return buildLocalSmartMetadata(file.name, settings);
-      }
+      // If all configured 3P keys failed, automatically recover using server Gemini Vision
+      return await callServerGemini(file, settings, allGeminiKeys, previewUrl, signal);
     }
   } catch (error) {
-    console.warn("AI metadata generation encountered error, recovering with smart metadata:", error);
-    return buildLocalSmartMetadata(file.name, settings);
+    console.warn("AI metadata generation encountered error:", error);
+    throw error;
   }
 }
 
@@ -917,11 +923,11 @@ export async function extractEpsThumbnail(file: File, forAi: boolean = false): P
       } catch {}
     }
 
-    // 2. Server-Side Ghostscript Vector Rendering (/api/render-eps) - Only on-demand for preview modal, NEVER during AI generation batch!
-    if (!forAi && typeof window !== 'undefined' && file.size <= 50 * 1024 * 1024) {
+    // 2. Server-Side Ghostscript Vector Rendering (/api/render-eps) - Ensures 100% real visual preview for both preview modal and AI vision analysis!
+    if (typeof window !== 'undefined' && file.size <= 50 * 1024 * 1024) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
 
         const res = await fetch('/api/render-eps', {
           method: 'POST',

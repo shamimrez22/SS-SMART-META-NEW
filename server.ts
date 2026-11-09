@@ -513,9 +513,10 @@ const modelCooloffUntil = new Map<string, number>();
 function getAvailableGeminiModels(preferredModel?: string): string[] {
   // Ultra-fast, rock-solid production models verified for vision & stock SEO
   const allowed = [
+    "gemini-3.8-flash",
     "gemini-2.5-flash",
     "gemini-3.1-flash-lite",
-    "gemini-3.8-flash"
+    "gemini-flash-latest"
   ];
   let candidates: string[] = [];
   if (preferredModel && allowed.includes(preferredModel)) {
@@ -624,15 +625,20 @@ function generateUniqueStockDescription(
     seed = (seed * 31 + filename.charCodeAt(i)) >>> 0;
   }
 
-  const cleanSubject = cleanName.trim() || 'Visual Subject';
+  const cleanSubject = (cleanName || '')
+    .replace(/\(\d+\)/g, '')
+    .replace(/\b\d+\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim() || 'Visual Subject';
+  const cleanWords = (words || []).filter(w => w && !/^\(?[\d]+\)?$/.test(w.trim()));
   const kwList = (context.keywords || '')
     .split(',')
     .map(k => k.trim())
     .filter(k => k && k.length > 2 && !['and', 'the', 'for', 'with', 'image', 'photo', 'vector'].includes(k.toLowerCase()));
 
-  const primaryDetail = kwList[0] || words[0] || 'focal subject characteristics';
-  const secondaryDetail = kwList[1] || words[1] || 'contextual visual elements';
-  const textureOrStyle = kwList[2] || words[2] || 'authentic surface textures';
+  const primaryDetail = kwList[0] || cleanWords[0] || 'focal subject characteristics';
+  const secondaryDetail = kwList[1] || cleanWords[1] || 'contextual visual elements';
+  const textureOrStyle = kwList[2] || cleanWords[2] || 'authentic surface textures';
   const environmentDetail = kwList[3] || kwList[4] || 'ambient surrounding background';
 
   // Dynamic sentence openers and perspective variations
@@ -683,14 +689,14 @@ function generateUniqueStockDescription(
   ];
 
   const opening = isVector 
-    ? vectorOpenings[seed % vectorOpenings.length] 
+    ? vectorOpenings[(seed >>> 0) % vectorOpenings.length] 
     : isVideo 
-    ? videoOpenings[seed % videoOpenings.length] 
-    : openings[seed % openings.length];
+    ? videoOpenings[(seed >>> 0) % videoOpenings.length] 
+    : openings[(seed >>> 0) % openings.length];
 
-  const comp = compositionClauses[(seed >> 3) % compositionClauses.length];
-  const env = environmentClauses[(seed >> 6) % environmentClauses.length];
-  const util = utilityClauses[(seed >> 9) % utilityClauses.length];
+  const comp = compositionClauses[(seed >>> 3) % compositionClauses.length];
+  const env = environmentClauses[(seed >>> 6) % environmentClauses.length];
+  const util = utilityClauses[(seed >>> 9) % utilityClauses.length];
 
   let sentence1 = `${opening}, ${comp}.`;
   let sentence2 = `The scene is ${env}, ${util}.`;
@@ -1072,9 +1078,6 @@ Return ONLY valid JSON with keys:
             responseMimeType: "application/json",
             systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET. Every asset must produce its own unique title, keywords, category, and its own unique description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its subject, distinct objects, specific action, composition, colors, environment, and visible details. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (EXACTLY ${maxKeywords || 50} strictly comma-separated individual keywords), category, rating (5).`
           };
-          if (model.includes('3.8') || model.includes('3.1') || model.includes('3.7')) {
-            callConfig.thinkingConfig = { thinkingBudget: 0 };
-          }
           try {
             response = await ai.models.generateContent({
               model,
@@ -1088,7 +1091,7 @@ Return ONLY valid JSON with keys:
             lastErr = err;
             const errMsg = String(err?.message || err || '');
             const isQuotaError = err?.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('exceeded your current quota');
-            const isAuthError = err?.status === 400 || err?.status === 401 || err?.status === 403 || errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid') || errMsg.includes('UNAUTHENTICATED') || errMsg.includes('PERMISSION_DENIED');
+            const isAuthError = err?.status === 401 || err?.status === 403 || errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid') || errMsg.includes('UNAUTHENTICATED') || errMsg.includes('PERMISSION_DENIED');
             
             if (isAuthError) {
               console.warn(`[API] Gemini key auth error, immediately rotating to next key in pool:`, errMsg.slice(0, 120));
@@ -1239,33 +1242,18 @@ Return ONLY valid JSON with keys:
       }
 
       if (!parsed || !parsed.title) {
-        console.warn(`[API] Gemini vision did not produce valid JSON for ${filename}, activating smart stock metadata engine`);
-        const fallback = generateSmartFallbackMetadata(
-          filename,
-          minTitleWords,
-          maxTitleWords,
-          minDescriptionWords,
-          maxDescriptionWords,
-          maxKeywords
-        );
-        return res.json({ success: true, metadata: fallback, isFallback: true });
+        return res.status(500).json({
+          success: false,
+          error: lastErr?.message || "Gemini vision analysis did not return valid metadata. Please retry."
+        });
       }
 
       return res.json({ success: true, metadata: parsed });
     } catch (err: any) {
-      console.warn("Gemini Metadata Generation error, activating smart stock fallback:", err?.message || err);
-      const fallback = generateSmartFallbackMetadata(
-        req.body?.filename || 'stock_asset',
-        req.body?.minTitleWords || 7,
-        req.body?.maxTitleWords || 15,
-        req.body?.minDescriptionWords || 20,
-        req.body?.maxDescriptionWords || 45,
-        req.body?.maxKeywords || 50
-      );
-      return res.json({
-        success: true,
-        metadata: fallback,
-        isFallback: true
+      console.error("Gemini Metadata Generation error:", err?.message || err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || "Failed to generate AI vision metadata"
       });
     }
   });

@@ -1573,7 +1573,69 @@ export default function App() {
     }
   };
 
-  const handleFileSelectDirect = () => {
+  const handleFileSelectDirect = async () => {
+    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
+    if (!isInIframe && typeof window !== 'undefined' && 'showOpenFilePicker' in window) {
+      try {
+        // Take File Permission right at the start when selecting files ("file select ba folder select korar somoy agei permition nibe")
+        // @ts-ignore
+        const pickedHandles = await window.showOpenFilePicker({
+          multiple: true,
+          types: [
+            {
+              description: 'Images, Vectors & Videos',
+              accept: {
+                'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.svg', '.gif', '.bmp', '.tiff', '.tif'],
+                'application/postscript': ['.eps', '.ai'],
+                'video/*': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.wmv']
+              }
+            }
+          ]
+        });
+
+        if (pickedHandles && pickedHandles.length > 0) {
+          setIsLoadingFiles(true);
+          const collectedFiles: File[] = [];
+          const handlesMap: Record<string, any> = {};
+
+          for (const fh of pickedHandles) {
+            try {
+              if (typeof fh.queryPermission === 'function') {
+                const q = await fh.queryPermission({ mode: 'readwrite' });
+                if (q !== 'granted' && typeof fh.requestPermission === 'function') {
+                  await fh.requestPermission({ mode: 'readwrite' });
+                }
+              }
+            } catch {}
+
+            try {
+              const f = await fh.getFile();
+              try {
+                (f as any).handle = fh;
+              } catch {}
+              collectedFiles.push(f);
+              handlesMap[f.name] = fh;
+              handlesMap[f.name.toLowerCase().trim()] = fh;
+            } catch (readErr) {
+              console.warn("Could not read picked file:", readErr);
+            }
+          }
+
+          if (collectedFiles.length > 0) {
+            handleFilesAdded(collectedFiles, handlesMap);
+            showNotification(`✓ ${collectedFiles.length}টি ফাইল এডিট পারমিশনসহ যুক্ত হয়েছে!`, 'success');
+          } else {
+            setIsLoadingFiles(false);
+          }
+          return;
+        }
+        return;
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        console.warn("showOpenFilePicker error, falling back to input:", err);
+      }
+    }
+
     const input = document.getElementById('file-upload') as HTMLInputElement | null;
     if (input) {
       input.value = '';
@@ -1751,30 +1813,6 @@ export default function App() {
         ? metadata.rating
         : (fileMetadata.rating !== undefined && fileMetadata.rating > 0) ? fileMetadata.rating : 5;
 
-      // Automatically generate full smart stock metadata if title or keywords are missing or generic (e.g. Untitled-1, 1 (1))
-      const isGenericTitle = !titleVal || /^untitled[\s\-_0-9]*$/i.test(titleVal) || /^stock[\s\-_]*asset/i.test(titleVal) || /^[\d\s\(\)\-_]+$/i.test(titleVal);
-      const isKwMissing = !kwVal || kwVal.split(',').filter(Boolean).length < 5;
-
-      if (isGenericTitle || isKwMissing) {
-        try {
-          const smartMeta = buildLocalSmartMetadata(originalFilename, settings);
-          if (isGenericTitle && smartMeta.title) {
-            titleVal = smartMeta.title;
-          }
-          if (isKwMissing && smartMeta.keywords) {
-            kwVal = smartMeta.keywords;
-          }
-          if (!descVal || isGenericTitle) {
-            descVal = smartMeta.description || titleVal;
-          }
-          if (!catVal && smartMeta.category) {
-            catVal = smartMeta.category;
-          }
-        } catch (autoErr) {
-          console.warn("Auto smart metadata fallback error:", autoErr);
-        }
-      }
-
       if (!titleVal) {
         titleVal = (fileMetadata.originalFilename || fileMetadata.filename || 'stock_asset')
           .replace(/\.[^/.]+$/, '')
@@ -1886,46 +1924,8 @@ export default function App() {
 
       let writtenInPlace = false;
       let renamedOnDisk = false;
-      let companionJpgBlobResult: Blob | null = null;
-      let companionJpgFilenameResult: string | undefined = undefined;
-
-      // Accurate vector asset detection without extension shadowing
-      const nameExt = (targetFilename || fileMetadata.filename || originalFilename || '').split('.').pop()?.toLowerCase() || '';
-      const typeExt = (fileMetadata.fileType || '').toLowerCase();
-      const isVec = ['eps', 'ai', 'svg'].includes(nameExt) || ['eps', 'ai', 'svg', 'vector'].includes(typeExt);
-
-      // Auto-generate High-Resolution Companion JPG for Freepik / Stock Agencies (4000px standard)
-      if (isVec) {
-        try {
-          const baseName = targetFilename.replace(/\.[^/.]+$/, '');
-          const rawCompName = `${baseName}.jpg`;
-          const targetSize = Number(settings.freepikCompanionJpgSize) || 4000;
-          const fileForJpg = actualFile || new File([outputBlob], targetFilename, { type: 'application/postscript' });
-
-          const companionJpg = await generateCompanionJpgBlob(
-            fileForJpg,
-            {
-              ...fileMetadata,
-              ...metadata,
-              filename: rawCompName,
-              title: titleVal,
-              description: descVal,
-              keywords: kwVal,
-              category: catVal,
-              rating: ratingVal
-            },
-            targetSize,
-            fileMetadata.previewUrl
-          );
-
-          if (companionJpg) {
-            companionJpgBlobResult = companionJpg;
-            companionJpgFilenameResult = `jpg/${rawCompName}`;
-          }
-        } catch (compErr) {
-          console.error("Companion Freepik JPG generation error:", compErr);
-        }
-      }
+      const companionJpgBlobResult: Blob | null = null;
+      const companionJpgFilenameResult: string | undefined = undefined;
 
       // 3. In-place disk write to Directory handle (TOP PRIORITY for full renaming & in-place replacement)
       if (targetDir && typeof targetDir.getFileHandle === 'function') {
@@ -1996,34 +1996,6 @@ export default function App() {
             (fileMetadata as any).currentDiskFilename = targetFilename;
             fileMetadata.filename = targetFilename;
             fileMetadata.initialDiskFilename = targetFilename;
-
-            // If companion JPG was generated for vector, save directly inside 'jpg' folder on disk
-            if (companionJpgBlobResult) {
-              try {
-                const baseName = targetFilename.replace(/\.[^/.]+$/, '');
-                const rawCompName = `${baseName}.jpg`;
-                const jpgDir = await targetDir.getDirectoryHandle('jpg', { create: true });
-                const compHandle = await jpgDir.getFileHandle(rawCompName, { create: true });
-                if (compHandle && typeof compHandle.createWritable === 'function') {
-                  const cw = await compHandle.createWritable({ keepExistingData: false });
-                  await cw.write(companionJpgBlobResult);
-                  await cw.close();
-                }
-
-                // If renamed from original filename, safely clean up old companion JPG from 'jpg' folder
-                if (originalFilename && targetFilename !== originalFilename) {
-                  const oldBase = originalFilename.replace(/\.[^/.]+$/, '');
-                  const oldCompName = `${oldBase}.jpg`;
-                  if (oldCompName.toLowerCase() !== rawCompName.toLowerCase()) {
-                    try {
-                      await jpgDir.removeEntry(oldCompName);
-                    } catch {}
-                  }
-                }
-              } catch (subDirErr) {
-                console.error("Failed to write to jpg/ subfolder on disk:", subDirErr);
-              }
-            }
           }
         } catch (dirErr: any) {
           console.warn("DirHandle embed write warning:", dirErr);
@@ -2113,18 +2085,18 @@ export default function App() {
     const targetSize = Number(settings.freepikCompanionJpgSize) || 4000;
     const scriptContent = generateIllustratorScript(epsFiles, {
       companionImageSize: targetSize,
-      generateCompanionJpg: settings.freepikCompanionJpg !== false
+      generateCompanionJpg: false
     });
     const blob = new Blob([scriptContent], { type: 'application/javascript;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Illustrator_Freepik_AutoEmbed_${targetSize}px.jsx`;
+    a.download = `Illustrator_AutoEmbed_Rename.jsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showNotification(`Downloaded Illustrator_Freepik_AutoEmbed_${targetSize}px.jsx! Run in Illustrator (File > Scripts > Other Script)`, 'success');
+    showNotification(`Downloaded Illustrator_AutoEmbed_Rename.jsx! Run in Illustrator (File > Scripts > Other Script)`, 'success');
   };
 
   const handleDownloadZip = async () => {
@@ -2141,7 +2113,6 @@ export default function App() {
       const file = fileObjects[item.id] || fileObjectsRef.current[item.id];
       if (!file) continue;
 
-      const ext = item.fileType.toLowerCase();
       const targetFilename = item.filename;
 
       try {
@@ -2150,29 +2121,6 @@ export default function App() {
       } catch (e) {
         console.warn(`Error bundling ${targetFilename}:`, e);
         zip.file(targetFilename, file);
-      }
-
-      // If vector asset and freepikCompanionJpg enabled, create a "jpg" folder where EPS file is located and place only JPG files inside it!
-      if (['eps', 'ai', 'svg'].includes(ext) && settings.freepikCompanionJpg !== false) {
-        try {
-          const lastSlash = targetFilename.lastIndexOf('/');
-          const dirPrefix = lastSlash !== -1 ? targetFilename.slice(0, lastSlash + 1) : '';
-          const bareFilename = lastSlash !== -1 ? targetFilename.slice(lastSlash + 1) : targetFilename;
-          const baseName = bareFilename.replace(/\.[^/.]+$/, '');
-          const companionFilename = `${dirPrefix}jpg/${baseName}.jpg`;
-          const targetSize = Number(settings.freepikCompanionJpgSize) || 4000;
-          const companionBlob = await generateCompanionJpgBlob(
-            file,
-            item,
-            targetSize,
-            item.previewUrl
-          );
-          if (companionBlob) {
-            zip.file(companionFilename, companionBlob);
-          }
-        } catch (compZipErr) {
-          console.warn("ZIP companion JPG packaging warning:", compZipErr);
-        }
       }
 
       // Micro-yield to prevent browser hang on huge zip batches
@@ -2188,9 +2136,9 @@ export default function App() {
       const targetSize = Number(settings.freepikCompanionJpgSize) || 4000;
       const aiScript = generateIllustratorScript(epsFiles, {
         companionImageSize: targetSize,
-        generateCompanionJpg: settings.freepikCompanionJpg !== false
+        generateCompanionJpg: false
       });
-      zip.file(`Run_in_Adobe_Illustrator_${targetSize}px.jsx`, aiScript);
+      zip.file(`Run_in_Adobe_Illustrator.jsx`, aiScript);
     }
 
     const zipBlob = await zip.generateAsync({ type: 'blob' });
@@ -2368,54 +2316,16 @@ export default function App() {
       // 3. Auto-save in-place to local file handle or folder silently
       const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
       await saveMetadataToLocalFile(id, updatedMetadata, activeDir, false);
+      showNotification(`✓ "${updatedMetadata.filename}" মেটাডাটা সফলভাবে সংরক্ষিত হয়েছে!`, 'success');
     } catch (error: any) {
-      console.warn("Regenerate encountered error, seamlessly applying smart stock metadata:", error);
-      const fallbackResult = buildLocalSmartMetadata(actualFile.name, settings);
-      const cleanFallbackTitle = enforceStockTitleWordLimits(
-        fallbackResult.title,
-        settings?.minTitleWords || 7,
-        settings?.maxTitleWords || 15,
-        {
-          filename: actualFile.name,
-          isVector: ['eps', 'ai', 'svg'].includes((fileMetadata.fileType || '').toLowerCase()) || fileMetadata.fileType === 'vector',
-          isVideo: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv'].includes((fileMetadata.fileType || '').toLowerCase()) || fileMetadata.fileType === 'video',
-          category: fallbackResult.category,
-          keywords: fallbackResult.keywords
-        }
-      );
-      const newFilename = sanitizeStockFilename(cleanFallbackTitle, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg', settings.filenameFormat || 'exact_title');
-      const activeKwStyle = settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed');
-      const sanitizedKwObj = sanitizeStockKeywords(
-        fallbackResult.keywords || '',
-        cleanFallbackTitle,
-        settings?.maxKeywords || 50,
-        settings?.singleWordKeywords,
-        activeKwStyle
-      );
-      const recoveredMetadata: StockMetadata = { 
-        ...fileMetadata, 
-        ...fallbackResult, 
-        title: cleanFallbackTitle,
-        keywords: sanitizedKwObj.keywords,
-        previewUrl: customFrameUrl || fileMetadata.previewUrl,
-        originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
-        filename: newFilename,
-        status: 'saved',
-        errorMessage: undefined
-      };
-      setFiles(prev => prev.map(f => f.id === id ? recoveredMetadata : f));
+      console.error("Regenerate encountered error:", error);
+      const errMsg = error?.message || "AI Vision analysis failed. Please click Retry.";
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'error', errorMessage: errMsg } : f));
       const fIndex = filesRef.current.findIndex(f => f.id === id);
       if (fIndex !== -1) {
-        filesRef.current[fIndex] = recoveredMetadata;
+        filesRef.current[fIndex] = { ...filesRef.current[fIndex], status: 'error', errorMessage: errMsg };
       }
-      try {
-        const embeddedBlob = await prepareEmbeddedBlob(actualFile, recoveredMetadata);
-        const updatedFile = new File([embeddedBlob], newFilename, { type: actualFile.type });
-        setFileObjects(prev => ({ ...prev, [id]: updatedFile }));
-      } catch {}
-      const activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-      await saveMetadataToLocalFile(id, recoveredMetadata, activeDir, false);
-      showNotification(`✓ "${recoveredMetadata.filename}" মেটাডাটা সফলভাবে সংরক্ষিত হয়েছে!`, 'success');
+      showNotification(`⚠️ "${fileMetadata.filename}" মেটাডাটা তৈরিতে সমস্যা হয়েছে। অনুগ্রহ করে Retry ক্লিক করুন।`, 'error');
     }
   };
 
@@ -2496,25 +2406,8 @@ export default function App() {
 
     if (pendingFiles.length === 0) return;
 
-    // Proactively acquire folder permission right at the beginning under this click gesture!
+    // Use existing connected folder handle if present
     let activeDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-    if (!activeDir && typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
-      try {
-        const pickedDir = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-        if (pickedDir) {
-          activeDir = pickedDir;
-          setDirectoryHandle(pickedDir);
-          directoryHandleRef.current = pickedDir;
-          if (typeof window !== 'undefined') (window as any).__ss_active_dir = pickedDir;
-          setFolderName(pickedDir.name);
-          if (typeof pickedDir.requestPermission === 'function') {
-            await pickedDir.requestPermission({ mode: 'readwrite' });
-          }
-        }
-      } catch (dErr) {
-        console.warn("Folder picker in startGeneration:", dErr);
-      }
-    }
 
     if (activeDir && typeof activeDir.requestPermission === 'function') {
       try {
@@ -2725,57 +2618,17 @@ export default function App() {
               await new Promise(r => setTimeout(r, isRateLimit ? 3500 : 1200));
               continue; // Retry AI analysis
             }
-            console.warn(`[Batch Engine] Vision AI fell back to smart metadata engine for ${fileMetadata.filename}`);
-            const fallbackResult = buildLocalSmartMetadata(actualFile.name, settings);
-            const cleanFallbackTitle = enforceStockTitleWordLimits(
-              fallbackResult.title,
-              settings?.minTitleWords || 7,
-              settings?.maxTitleWords || 15,
-              {
-                filename: actualFile.name,
-                isVector: isVector(fileMetadata),
-                isVideo: isVideo(fileMetadata),
-                category: fallbackResult.category,
-                keywords: fallbackResult.keywords
-              }
-            );
-            const newFilename = sanitizeStockFilename(cleanFallbackTitle, fileMetadata.originalFilename || fileMetadata.filename, fileMetadata.fileType || 'jpg', settings.filenameFormat || 'exact_title');
-            const activeKwStyle = settings?.keywordStyle || (settings?.singleWordKeywords ? 'single' : 'mixed');
-            const sanitizedKwObj = sanitizeStockKeywords(
-              fallbackResult.keywords || '',
-              cleanFallbackTitle,
-              settings?.maxKeywords || 50,
-              settings?.singleWordKeywords,
-              activeKwStyle
-            );
-            const recoveredMetadata: StockMetadata = { 
-              ...fileMetadata, 
-              ...fallbackResult,
-              title: cleanFallbackTitle,
-              keywords: sanitizedKwObj.keywords,
-              originalFilename: fileMetadata.originalFilename || fileMetadata.filename,
-              filename: newFilename,
-              status: 'completed' as const,
-              errorMessage: undefined
+            console.warn(`[Batch Engine] Vision AI failed after retries for ${fileMetadata.filename}:`, errStr);
+            const errorUpdated: StockMetadata = {
+              ...fileMetadata,
+              status: 'error',
+              errorMessage: errStr || 'AI Vision analysis failed. Click Retry.'
             };
-
-            setFiles(prev => prev.map(f => (f.id === fileMetadata.id ? recoveredMetadata : f)));
-
+            setFiles(prev => prev.map(f => (f.id === fileMetadata.id ? errorUpdated : f)));
             const fIndex = filesRef.current.findIndex(f => f.id === fileMetadata.id);
             if (fIndex !== -1) {
-              filesRef.current[fIndex] = recoveredMetadata;
+              filesRef.current[fIndex] = errorUpdated;
             }
-
-            const currentDir = directoryHandleRef.current || directoryHandle || (typeof window !== 'undefined' ? (window as any).__ss_active_dir : null);
-            const hasDirectDiskHandle = Boolean(currentDir || fileMetadata.handle || fileHandlesRef.current[fileMetadata.id]);
-            if (hasDirectDiskHandle) {
-              try {
-                await saveMetadataToLocalFile(fileMetadata.id, recoveredMetadata, currentDir, false);
-              } catch (saveErr) {
-                console.warn("Embed metadata save error:", saveErr);
-              }
-            }
-
             setProgress(prev => ({ ...prev, current: prev.current + 1 }));
             break;
           }
