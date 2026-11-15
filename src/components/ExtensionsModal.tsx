@@ -582,31 +582,23 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
     }
     setIsExpanding(true);
     try {
-      const geminiKey = apiConfig?.gemini?.find((k) => k && k.trim()) || (process.env.GEMINI_API_KEY as string);
-      if (!geminiKey) throw new Error('Gemini API key is required in Settings.');
-
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-
-      const prompt = `You are an expert generative AI prompt engineer.
-Expand this brief idea into 3 masterfully crafted, hyper-detailed prompt variations:
-Brief Idea: "${expanderIdea}"
-
-Return ONLY a JSON object:
-{
-  "midjourney": "detailed Midjourney v6.1 prompt with style, lighting, camera and --ar 16:9 --style raw --v 6.1 --stylize 250",
-  "photorealistic": "hyperrealistic stock photography prompt, Hasselblad 8k shot, studio lighting, depth of field",
-  "cinematic": "cinematic film still, 35mm anamorphic lens, volumetric lighting, epic mood and grading"
-}`;
-
-      const res = await ai.models.generateContent({
-        model: selectedModel || 'gemini-3.8-flash',
-        contents: prompt,
+      const geminiKeys = (apiConfig?.gemini || []).map((k) => k?.trim()).filter(Boolean);
+      const res = await fetch('/api/expand-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: expanderIdea,
+          modelName: selectedModel || 'gemini-3.8-flash',
+          apiKeys: geminiKeys,
+        }),
       });
 
-      const cleaned = (res.text || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-      const parsed = JSON.parse(cleaned);
-      setExpandedResults(parsed);
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.result) {
+        throw new Error(data?.error?.message || 'Failed to expand prompt');
+      }
+
+      setExpandedResults(data.result);
       showNotification('Expanded prompts generated!', 'success');
     } catch (err: any) {
       showNotification(err.message || 'Failed to expand prompt', 'error');
@@ -641,23 +633,9 @@ Return ONLY a JSON object:
         {/* Header Actions */}
         <div className="flex items-center gap-3">
           {/* Gemini API Key indicator */}
-          <div className={cn(
-            "hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold",
-            activeGeminiKey 
-              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" 
-              : "bg-amber-500/10 text-amber-400 border-amber-500/30"
-          )}>
-            {activeGeminiKey ? (
-              <>
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span>Gemini API Connected {activeKey ? `(#${activeKey.index + 1})` : ''}</span>
-              </>
-            ) : (
-              <>
-                <AlertCircle size={13} className="text-amber-400" />
-                <span>Gemini Key Needed (Settings)</span>
-              </>
-            )}
+          <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>Gemini API Connected {activeGeminiKey && activeKey ? `(#${activeKey.index + 1})` : '(Server Ready)'}</span>
           </div>
 
           <button

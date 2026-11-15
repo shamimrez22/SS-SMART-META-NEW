@@ -1463,109 +1463,7 @@ export default function App() {
     navigator.clipboard.writeText(text);
   };
 
-  const handleDirectorySelect = async () => {
-    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
-
-    if (!isInIframe && 'showDirectoryPicker' in window) {
-      try {
-        // Take readwrite Folder Permission right at the beginning ("prothomei folder permition niye nibe")
-        // Do NOT call handle.requestPermission() after showDirectoryPicker resolves, because showDirectoryPicker({ mode: 'readwrite' })
-        // already requests permission and calling requestPermission() after dialog close hangs when userActivation expires!
-        let handle: any = null;
-        try {
-          // @ts-ignore
-          handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        } catch (firstErr: any) {
-          if (firstErr?.name === 'AbortError') return;
-          const firstMsg = String(firstErr?.message || firstErr || '').toLowerCase();
-          if (firstMsg.includes('system') || firstMsg.includes('restricted') || firstMsg.includes('sandboxed') || firstErr?.name === 'SecurityError' || firstErr?.name === 'NotAllowedError') {
-            throw firstErr;
-          }
-          // @ts-ignore
-          handle = await window.showDirectoryPicker();
-        }
-        if (!handle) return;
-
-        setIsLoadingFiles(true);
-        setDirectoryHandle(handle);
-        directoryHandleRef.current = handle;
-        if (typeof window !== 'undefined') (window as any).__ss_active_dir = handle;
-        setFolderName(handle.name);
-
-        // Reset workspace when connecting a folder so old files never duplicate with new ones
-        filesRef.current = [];
-        fileObjectsRef.current = {};
-        fileHandlesRef.current = {};
-        setFiles([]);
-        setFileObjects({});
-
-        const collectedFiles: File[] = [];
-        const handlesMap: Record<string, any> = {};
-
-        const scanDir = async (dirHandle: any, depth = 0) => {
-          if (depth > 2) return;
-          const iterator = typeof dirHandle.values === 'function' ? dirHandle.values() : dirHandle.entries();
-          for await (const rawEntry of iterator) {
-            const entry = Array.isArray(rawEntry) ? rawEntry[1] : rawEntry;
-            if (!entry) continue;
-            if (entry.kind === 'file') {
-              try {
-                const file = await entry.getFile();
-                const lowerName = file.name.toLowerCase().trim();
-                if (lowerName === 'desktop.ini' || lowerName === 'thumbs.db' || lowerName === '.ds_store') {
-                  continue;
-                }
-                try {
-                  (file as any).handle = entry;
-                } catch {}
-                collectedFiles.push(file);
-                handlesMap[file.name] = entry;
-                handlesMap[lowerName] = entry;
-              } catch (fileErr) {
-                console.warn("Could not read file from directory entry:", fileErr);
-              }
-            } else if (entry.kind === 'directory' && String(entry.name || '').toLowerCase() !== 'jpg') {
-              try {
-                await scanDir(entry, depth + 1);
-              } catch {}
-            }
-          }
-        };
-
-        await scanDir(handle, 0);
-
-        if (collectedFiles.length === 0) {
-          setIsLoadingFiles(false);
-          showNotification(`"${handle.name}" ফোল্ডারে কোনো ছবি, ভেক্টর বা ভিডিও ফাইল পাওয়া যায়নি।`, 'info');
-          return;
-        }
-
-        handleFilesAdded(collectedFiles, handlesMap);
-        showNotification(`✓ ফোল্ডার "${handle.name}" এডিট পারমিশনসহ যুক্ত হয়েছে (${collectedFiles.length}টি ফাইল)!`, 'success');
-        return;
-      } catch (err: any) {
-        if (err?.name === 'AbortError') return;
-        console.warn("Folder picker error:", err);
-        const errMsg = String(err?.message || err || '');
-        const lowerMsg = errMsg.toLowerCase();
-
-        // If Chrome blocked a Windows system/Downloads folder after the user selected it in the dialog:
-        if (lowerMsg.includes('system') || lowerMsg.includes('restricted') || !(navigator as any).userActivation?.isActive) {
-          const msg = `Chrome ব্রাউজারের সিকিউরিটি নিয়মের কারণে Windows-এর "Downloads" ফোল্ডারের ভেতরে ("PC > Downloads > 1") সরাসরি ফোল্ডার পারমিশন (Edit Permission) বা ফাইল রিনেম করার অনুমতি দেওয়া হয় না!\n\nসমাধান ১ (Full Edit Permission): আপনার ফোল্ডারটি "Downloads" থেকে কাট/কপি করে "Desktop" অথবা অন্য কোনো ড্রাইভে (যেমন D:\\ বা E:\\) রেখে "SELECT FOLDER" ক্লিক করুন — তাহলেই প্রথমেই Folder Permission নিবে এবং মেইন ফাইলে মেটাডেটা, রিনেম ও "jpg" ফোল্ডার সরাসরি তৈরি হবে!\n\nসমাধান ২: নিচের সবুজ বাটনে ক্লিক করে এখনই এই ফোল্ডারের ফাইলগুলো টেবিলে লোড করতে পারেন।`;
-          setErrorModal({
-            isOpen: true,
-            filename: 'Folder Permission Blocked (Downloads Folder)',
-            message: msg
-          });
-          showNotification(`⚠️ "Downloads" ফোল্ডারে Chrome এডিট পারমিশন দেয় না! ফোল্ডারটি Desktop বা অন্য ড্রাইভে রাখুন অথবা নিচের বাটনে লোড করুন।`, 'error');
-          setIsLoadingFiles(false);
-          return;
-        }
-      } finally {
-        setIsLoadingFiles(false);
-      }
-    }
-
+  const handleDirectorySelect = () => {
     const folderInput = document.getElementById('folder-upload') as HTMLInputElement | null;
     if (folderInput) {
       folderInput.value = '';
@@ -1573,69 +1471,7 @@ export default function App() {
     }
   };
 
-  const handleFileSelectDirect = async () => {
-    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
-    if (!isInIframe && typeof window !== 'undefined' && 'showOpenFilePicker' in window) {
-      try {
-        // Take File Permission right at the start when selecting files ("file select ba folder select korar somoy agei permition nibe")
-        // @ts-ignore
-        const pickedHandles = await window.showOpenFilePicker({
-          multiple: true,
-          types: [
-            {
-              description: 'Images, Vectors & Videos',
-              accept: {
-                'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.svg', '.gif', '.bmp', '.tiff', '.tif'],
-                'application/postscript': ['.eps', '.ai'],
-                'video/*': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.wmv']
-              }
-            }
-          ]
-        });
-
-        if (pickedHandles && pickedHandles.length > 0) {
-          setIsLoadingFiles(true);
-          const collectedFiles: File[] = [];
-          const handlesMap: Record<string, any> = {};
-
-          for (const fh of pickedHandles) {
-            try {
-              if (typeof fh.queryPermission === 'function') {
-                const q = await fh.queryPermission({ mode: 'readwrite' });
-                if (q !== 'granted' && typeof fh.requestPermission === 'function') {
-                  await fh.requestPermission({ mode: 'readwrite' });
-                }
-              }
-            } catch {}
-
-            try {
-              const f = await fh.getFile();
-              try {
-                (f as any).handle = fh;
-              } catch {}
-              collectedFiles.push(f);
-              handlesMap[f.name] = fh;
-              handlesMap[f.name.toLowerCase().trim()] = fh;
-            } catch (readErr) {
-              console.warn("Could not read picked file:", readErr);
-            }
-          }
-
-          if (collectedFiles.length > 0) {
-            handleFilesAdded(collectedFiles, handlesMap);
-            showNotification(`✓ ${collectedFiles.length}টি ফাইল এডিট পারমিশনসহ যুক্ত হয়েছে!`, 'success');
-          } else {
-            setIsLoadingFiles(false);
-          }
-          return;
-        }
-        return;
-      } catch (err: any) {
-        if (err?.name === 'AbortError') return;
-        console.warn("showOpenFilePicker error, falling back to input:", err);
-      }
-    }
-
+  const handleFileSelectDirect = () => {
     const input = document.getElementById('file-upload') as HTMLInputElement | null;
     if (input) {
       input.value = '';
@@ -4707,6 +4543,9 @@ export default function App() {
         id="file-upload" 
         multiple 
         className="sr-only" 
+        onClick={(e) => {
+          try { (e.currentTarget as HTMLInputElement).value = ''; } catch {}
+        }}
         onChange={(e) => {
           const inputEl = e.currentTarget;
           const fileList = inputEl.files;
@@ -4725,6 +4564,9 @@ export default function App() {
         {...{ webkitdirectory: "", directory: "" }}
         multiple 
         className="sr-only" 
+        onClick={(e) => {
+          try { (e.currentTarget as HTMLInputElement).value = ''; } catch {}
+        }}
         onChange={(e) => {
           const inputEl = e.currentTarget;
           const fileList = inputEl.files;

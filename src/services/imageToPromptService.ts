@@ -1,5 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
-
 export interface ImagePromptResult {
   // Master Comprehensive Prompt
   masterPrompt: string;
@@ -202,11 +200,8 @@ function cleanJsonText(raw: string): string {
 }
 
 /**
- * Resolves the active Gemini API key from various configuration points:
- * 1. Explicitly passed apiKey
- * 2. User's configured Gemini keys in apiConfig (from metadata settings)
- * 3. LocalStorage saved settings (STOCK_AI_STUDIO_CONFIG_V2)
- * 4. process.env.GEMINI_API_KEY
+ * Resolves any user-configured Gemini API key from settings or localStorage.
+ * If none is set, the server automatically uses its configured GEMINI_API_KEY.
  */
 export function resolveGeminiApiKey(options?: { apiKey?: string; apiConfig?: { gemini?: string[] } }): string {
   if (options?.apiKey && options.apiKey.trim()) {
@@ -232,11 +227,6 @@ export function resolveGeminiApiKey(options?: { apiKey?: string; apiConfig?: { g
     } catch (e) {
       // Ignore storage errors
     }
-  }
-
-  // Fallback to process.env if injected by build
-  if (typeof process !== "undefined" && process.env?.GEMINI_API_KEY) {
-    return process.env.GEMINI_API_KEY;
   }
 
   return "";
@@ -308,8 +298,9 @@ Return valid JSON with this exact structure:
   }
 }`;
 
-  // 4. Try server-side Gemini route first (Zero-config, fast, full-fidelity)
+  // 4. Call server-side Gemini route (uses optional user keys + server GEMINI_API_KEY fallback)
   try {
+    const allUserKeys = (apiConfig?.gemini || []).map((k) => k?.trim()).filter(Boolean);
     const srvRes = await fetch("/api/image-to-prompt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -318,7 +309,10 @@ Return valid JSON with this exact structure:
         mimeType: prepared.mimeType,
         systemInstruction,
         customInstructions,
-        aspectRatio: prepared.aspectRatio
+        aspectRatio: prepared.aspectRatio,
+        apiKey: geminiKey,
+        apiKeys: allUserKeys,
+        modelName
       })
     });
     if (srvRes.ok) {
@@ -329,62 +323,6 @@ Return valid JSON with this exact structure:
     }
   } catch (srvErr) {
     console.warn("Server image-to-prompt error:", srvErr);
-  }
-
-  // 5. Try client-side Gemini if user provided an API key
-  if (geminiKey) {
-    const ai = new GoogleGenAI({ apiKey: geminiKey });
-    const modelsToTry = [
-       modelName || "gemini-3.8-flash",
-       "gemini-3.8-flash",
-       "gemini-3.7-flash",
-       "gemini-2.5-flash"
-    ];
-
-    const uniqueModels = Array.from(new Set(modelsToTry));
-
-    let lastError: any = null;
-    for (const m of uniqueModels) {
-      try {
-        const callPromise = ai.models.generateContent({
-          model: m,
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  inlineData: {
-                    data: prepared.base64Data,
-                    mimeType: prepared.mimeType,
-                  },
-                },
-                {
-                  text: systemInstruction,
-                },
-              ],
-            },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.35,
-          },
-        });
-
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Model ${m} timed out after 20s`)), 20000)
-        );
-
-        const response = await Promise.race([callPromise, timeoutPromise]);
-        const text = response.text || "";
-        if (!text) continue;
-
-        const parsed = JSON.parse(cleanJsonText(text)) as ImagePromptResult;
-        return sanitizePromptResult(parsed, prepared.aspectRatio);
-      } catch (err: any) {
-        console.warn(`Gemini model ${m} failed for fast prompt extraction:`, err?.message || err);
-        lastError = err;
-      }
-    }
   }
 
   // 5. Fallback to Groq Vision if configured

@@ -1261,16 +1261,24 @@ Return ONLY valid JSON with keys:
   // Native Server-Side Image-to-Prompt Vision Reverse Engineering Endpoint
   app.post("/api/image-to-prompt", async (req, res) => {
     try {
-      const { base64Data, mimeType, systemInstruction, customInstructions, aspectRatio } = req.body;
+      const { base64Data, mimeType, systemInstruction, customInstructions, apiKey, apiKeys, modelName } = req.body;
       const serverEnvKey = (process.env.GEMINI_API_KEY || '').trim();
-      if (!serverEnvKey) {
+      const keysToTry: string[] = [];
+      if (Array.isArray(apiKeys)) {
+        for (const k of apiKeys) {
+          const clean = String(k || '').trim();
+          if (clean.length > 10 && !keysToTry.includes(clean)) keysToTry.push(clean);
+        }
+      }
+      if (typeof apiKey === 'string' && apiKey.trim().length > 10 && !keysToTry.includes(apiKey.trim())) {
+        keysToTry.push(apiKey.trim());
+      }
+      if (serverEnvKey && !keysToTry.includes(serverEnvKey)) {
+        keysToTry.push(serverEnvKey);
+      }
+      if (keysToTry.length === 0) {
         return res.status(500).json({ error: { message: "GEMINI_API_KEY not configured on server" } });
       }
-
-      const ai = new GoogleGenAI({
-        apiKey: serverEnvKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-      });
 
       const cleanB64 = (base64Data || '').replace(/^data:[^;]+;base64,/, '').trim();
       const parts: any[] = [];
@@ -1286,23 +1294,36 @@ Return ONLY valid JSON with keys:
       const promptText = `${systemInstruction || 'Analyze this image and generate detailed creative prompts.'}\n${customInstructions ? `USER CUSTOM INSTRUCTION: ${customInstructions}` : ""}`;
       parts.push({ text: promptText });
 
-      const modelsToTry = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-2.5-flash"];
+      const modelsToTry = Array.from(new Set([
+        ...(modelName ? [modelName] : []),
+        "gemini-3.8-flash",
+        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite"
+      ]));
       let response: any = null;
       let lastErr: any = null;
 
-      for (const m of modelsToTry) {
-        try {
-          response = await ai.models.generateContent({
-            model: m,
-            contents: parts,
-            config: {
-              responseMimeType: "application/json"
-            }
-          });
-          if (response?.text) break;
-        } catch (e: any) {
-          lastErr = e;
+      for (const activeKey of keysToTry) {
+        const ai = new GoogleGenAI({
+          apiKey: activeKey,
+          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+        });
+
+        for (const m of modelsToTry) {
+          try {
+            response = await ai.models.generateContent({
+              model: m,
+              contents: parts,
+              config: {
+                responseMimeType: "application/json"
+              }
+            });
+            if (response?.text) break;
+          } catch (e: any) {
+            lastErr = e;
+          }
         }
+        if (response?.text) break;
       }
 
       if (!response?.text) {
@@ -1315,6 +1336,89 @@ Return ONLY valid JSON with keys:
     } catch (err: any) {
       console.warn("Server image-to-prompt error:", err?.message || err);
       return res.status(500).json({ error: { message: err?.message || "Failed to analyze image" } });
+    }
+  });
+
+  // Server-Side Text Prompt Expander Endpoint
+  app.post("/api/expand-prompt", async (req, res) => {
+    try {
+      const { idea, modelName, apiKey, apiKeys } = req.body;
+      if (!idea || !String(idea).trim()) {
+        return res.status(400).json({ error: { message: "Idea is required" } });
+      }
+
+      const serverEnvKey = (process.env.GEMINI_API_KEY || '').trim();
+      const keysToTry: string[] = [];
+      if (Array.isArray(apiKeys)) {
+        for (const k of apiKeys) {
+          const clean = String(k || '').trim();
+          if (clean.length > 10 && !keysToTry.includes(clean)) keysToTry.push(clean);
+        }
+      }
+      if (typeof apiKey === 'string' && apiKey.trim().length > 10 && !keysToTry.includes(apiKey.trim())) {
+        keysToTry.push(apiKey.trim());
+      }
+      if (serverEnvKey && !keysToTry.includes(serverEnvKey)) {
+        keysToTry.push(serverEnvKey);
+      }
+      if (keysToTry.length === 0) {
+        return res.status(500).json({ error: { message: "GEMINI_API_KEY not configured on server" } });
+      }
+
+      const prompt = `You are an expert generative AI prompt engineer.
+Expand this brief idea into 3 masterfully crafted, hyper-detailed prompt variations:
+Brief Idea: "${String(idea).trim()}"
+
+Return ONLY a JSON object:
+{
+  "midjourney": "detailed Midjourney v6.1 prompt with style, lighting, camera and --ar 16:9 --style raw --v 6.1 --stylize 250",
+  "photorealistic": "hyperrealistic stock photography prompt, Hasselblad 8k shot, studio lighting, depth of field",
+  "cinematic": "cinematic film still, 35mm anamorphic lens, volumetric lighting, epic mood and grading"
+}`;
+
+      const modelsToTry = Array.from(new Set([
+        ...(modelName ? [modelName] : []),
+        "gemini-3.8-flash",
+        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite"
+      ]));
+
+      let response: any = null;
+      let lastErr: any = null;
+
+      for (const activeKey of keysToTry) {
+        const ai = new GoogleGenAI({
+          apiKey: activeKey,
+          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+        });
+
+        for (const m of modelsToTry) {
+          try {
+            response = await ai.models.generateContent({
+              model: m,
+              contents: prompt,
+              config: {
+                responseMimeType: "application/json"
+              }
+            });
+            if (response?.text) break;
+          } catch (e: any) {
+            lastErr = e;
+          }
+        }
+        if (response?.text) break;
+      }
+
+      if (!response?.text) {
+        throw lastErr || new Error("Failed to expand prompt");
+      }
+
+      const cleaned = (response.text || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
+      return res.json({ success: true, result: parsed });
+    } catch (err: any) {
+      console.warn("Server expand-prompt error:", err?.message || err);
+      return res.status(500).json({ error: { message: err?.message || "Failed to expand prompt" } });
     }
   });
 
