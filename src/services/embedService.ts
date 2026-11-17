@@ -1,5 +1,7 @@
-import * as piexif from "piexifjs";
+import * as piexifNamespace from "piexifjs";
 import { StockMetadata } from '../types';
+
+const piexif: any = (piexifNamespace as any).default || (piexifNamespace as any).piexif || piexifNamespace;
 
 // Helper to convert string to UTF-16LE byte array for Windows/Exif metadata
 export function toUtf16Le(str: string): number[] {
@@ -96,13 +98,14 @@ export function createXmpPacket(
   mimeType: string = 'image/jpeg'
 ): string {
   const title = escapeXml(metadata.title || '');
-  const description = escapeXml(metadata.description || '');
+  const description = escapeXml(metadata.description || metadata.title || '');
   const category = escapeXml(metadata.category || 'Commercial');
   const keywordsList = (metadata.keywords || '')
     .split(',')
     .map(k => k.trim())
     .filter(Boolean);
   const rating = (metadata.rating !== undefined && metadata.rating > 0) ? metadata.rating : 5;
+  const ratingPercent = rating >= 5 ? 99 : rating === 4 ? 75 : rating === 3 ? 50 : rating === 2 ? 25 : 1;
 
   return `<?xpacket begin="\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00">
@@ -113,6 +116,8 @@ export function createXmpPacket(
     xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"
     xmlns:xmpRights="http://ns.adobe.com/xap/1.0/rights/"
     xmlns:Iptc4xmpCore="http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/"
+    xmlns:MicrosoftPhoto="http://ns.microsoft.com/photo/1.0/"
+    xmlns:exif="http://ns.adobe.com/exif/1.0/"
     xmlns:tiff="http://ns.adobe.com/tiff/1.0/">
    <dc:format>${mimeType}</dc:format>
    <dc:title>
@@ -130,18 +135,29 @@ export function createXmpPacket(
      ${keywordsList.map(k => `<rdf:li>${escapeXml(k)}</rdf:li>`).join('\n     ')}
     </rdf:Bag>
    </dc:subject>
+   <MicrosoftPhoto:LastKeywordXMP>
+    <rdf:Bag>
+     ${keywordsList.map(k => `<rdf:li>${escapeXml(k)}</rdf:li>`).join('\n     ')}
+    </rdf:Bag>
+   </MicrosoftPhoto:LastKeywordXMP>
    <dc:creator>
     <rdf:Seq>
      <rdf:li>Stock Contributor</rdf:li>
     </rdf:Seq>
    </dc:creator>
    <xmp:Rating>${rating}</xmp:Rating>
-   <xmp:RatingPercent>99</xmp:RatingPercent>
+   <xmp:RatingPercent>${ratingPercent}</xmp:RatingPercent>
+   <MicrosoftPhoto:Rating>${ratingPercent}</MicrosoftPhoto:Rating>
    <xmp:Label>Select</xmp:Label>
    <photoshop:Headline>${title}</photoshop:Headline>
    <photoshop:Credit>Stock Contributor</photoshop:Credit>
    <photoshop:CaptionWriter>Stock Contributor</photoshop:CaptionWriter>
    <photoshop:Category>${category}</photoshop:Category>
+   <exif:UserComment>
+    <rdf:Alt>
+     <rdf:li xml:lang="x-default">${description}</rdf:li>
+    </rdf:Alt>
+   </exif:UserComment>
    <tiff:ImageDescription>${description}</tiff:ImageDescription>
   </rdf:Description>
  </rdf:RDF>
@@ -338,19 +354,82 @@ export async function embedMetadataInImageBlob(
   metadata: Partial<StockMetadata>
 ): Promise<Blob> {
   try {
-    const buffer = await file.arrayBuffer();
-    const jpegBytes = new Uint8Array(buffer);
+    let buffer = await file.arrayBuffer();
+    let jpegBytes = new Uint8Array(buffer);
+
+    // If an upscaled image has a .jpg/.jpeg extension but is actually PNG or WebP bytes, transcode to real JPEG via Canvas first
+    if ((jpegBytes.length < 4 || jpegBytes[0] !== 0xFF || jpegBytes[1] !== 0xD8) && typeof document !== 'undefined') {
+      try {
+        const transcodeBlob = await new Promise<Blob | null>((resolve) => {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = () => {
+            const tryRender = (scale: number) => {
+              try {
+                const rawW = Math.max(1, img.naturalWidth || img.width || 1000);
+                const rawH = Math.max(1, img.naturalHeight || img.height || 1000);
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(rawW * scale));
+                canvas.height = Math.max(1, Math.round(rawH * scale));
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.fillStyle = '#ffffff';
+                  ctx.fillRect(0, 0, canvas.width, canvas.height);
+                  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                  canvas.toBlob((b) => {
+                    if (b && b.size > 100) {
+                      URL.revokeObjectURL(url);
+                      resolve(b);
+                    } else if (scale > 0.5) {
+                      tryRender(0.5);
+                    } else {
+                      URL.revokeObjectURL(url);
+                      resolve(null);
+                    }
+                  }, 'image/jpeg', 0.96);
+                  return;
+                }
+              } catch {
+                if (scale > 0.5) {
+                  tryRender(0.5);
+                  return;
+                }
+              }
+              URL.revokeObjectURL(url);
+              resolve(null);
+            };
+            tryRender(1);
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(null);
+          };
+          img.src = url;
+        });
+        if (transcodeBlob && transcodeBlob.size > 100) {
+          buffer = await transcodeBlob.arrayBuffer();
+          jpegBytes = new Uint8Array(buffer);
+        }
+      } catch {}
+    }
 
     // Validate JPEG SOI marker (0xFF, 0xD8)
     if (jpegBytes.length < 4 || jpegBytes[0] !== 0xFF || jpegBytes[1] !== 0xD8) {
+      if (jpegBytes.length >= 8 && jpegBytes[0] === 0x89 && jpegBytes[1] === 0x50) {
+        return await embedMetadataInPngBlob(file, metadata);
+      }
+      if (jpegBytes.length >= 12 && jpegBytes[0] === 0x52 && jpegBytes[1] === 0x49) {
+        return await embedMetadataInWebpBlob(file, metadata);
+      }
       console.warn("Not a valid JPEG, returning original file");
       return file;
     }
 
     const title = (metadata.title || '').trim();
-    const description = (metadata.description || '').trim();
+    const description = (metadata.description || title || '').trim();
     const rawKeywords = (metadata.keywords || '').trim();
     const rating = (metadata.rating !== undefined && metadata.rating > 0) ? metadata.rating : 5;
+    const ratingPercent = rating >= 5 ? 99 : rating === 4 ? 75 : rating === 3 ? 50 : rating === 2 ? 25 : 1;
 
     // Windows Explorer requires semicolons between keywords in XPKeywords
     const windowsKeywords = rawKeywords
@@ -359,8 +438,8 @@ export async function embedMetadataInImageBlob(
       .filter(Boolean)
       .join('; ');
 
-    // 1. Prepare Standard Exif tags (Windows Explorer Properties -> Details & Adobe)
-    let exifObj: any = { '0th': {}, Exif: {}, GPS: {} };
+    // 1. Preserve valid Orientation (1..8) if present in original EXIF, and build a 100% clean EXIF 0th IFD
+    let preservedOrientation: number | undefined;
     try {
       let scanPos = 2;
       while (scanPos < jpegBytes.length - 4) {
@@ -378,8 +457,9 @@ export async function embedMetadataInImageBlob(
               rawExifBinary += String.fromCharCode(...chunk);
             }
             const loaded = piexif.load(rawExifBinary);
-            if (loaded && loaded['0th']) {
-              exifObj = loaded;
+            const orient = loaded?.['0th']?.[piexif.ImageIFD.Orientation];
+            if (typeof orient === 'number' && orient >= 1 && orient <= 8) {
+              preservedOrientation = orient;
             }
             break;
           }
@@ -394,42 +474,23 @@ export async function embedMetadataInImageBlob(
       // ignore parse errors, start fresh
     }
 
-    if (!exifObj['0th']) exifObj['0th'] = {};
-    if (!exifObj.Exif) exifObj.Exif = {};
-    if (!exifObj.GPS) exifObj.GPS = {};
-    delete exifObj['1st'];
-    delete exifObj.thumbnail;
-
-    exifObj['0th'][piexif.ImageIFD.ImageDescription] = description;
-    exifObj['0th'][piexif.ImageIFD.XPTitle] = toUtf16Le(title);
-    exifObj['0th'][piexif.ImageIFD.XPSubject] = toUtf16Le(title);
-    exifObj['0th'][piexif.ImageIFD.XPKeywords] = toUtf16Le(windowsKeywords);
-    exifObj['0th'][piexif.ImageIFD.XPComment] = toUtf16Le(description);
-    exifObj['0th'][piexif.ImageIFD.XPAuthor] = toUtf16Le('Stock Contributor');
-    exifObj['0th'][piexif.ImageIFD.Rating] = rating;               // Tag 18246 (1-5 stars)
-    exifObj['0th'][piexif.ImageIFD.RatingPercent] = 99;           // Tag 18249 (99% = 5 stars in Windows Explorer)
-    exifObj['0th'][piexif.ImageIFD.Artist] = 'Stock Contributor';
-    // Copyright field left blank per user requirement ("COPY RIGTHER GHOR FAKA THAKBE")
-    delete exifObj['0th'][piexif.ImageIFD.Copyright];
-
-    let exifDump = '';
-    try {
-      exifDump = piexif.dump(exifObj);
-    } catch (dumpErr) {
-      console.warn("Existing EXIF dump failed, fallback to clean stock tags:", dumpErr);
-      const cleanZeroth: any = {
-        [piexif.ImageIFD.ImageDescription]: description,
-        [piexif.ImageIFD.XPTitle]: toUtf16Le(title),
-        [piexif.ImageIFD.XPSubject]: toUtf16Le(title),
-        [piexif.ImageIFD.XPKeywords]: toUtf16Le(windowsKeywords),
-        [piexif.ImageIFD.XPComment]: toUtf16Le(description),
-        [piexif.ImageIFD.XPAuthor]: toUtf16Le('Stock Contributor'),
-        [piexif.ImageIFD.Rating]: rating,
-        [piexif.ImageIFD.RatingPercent]: 99,
-        [piexif.ImageIFD.Artist]: 'Stock Contributor'
-      };
-      exifDump = piexif.dump({ '0th': cleanZeroth, Exif: {}, GPS: {} });
+    const asciiDescription = (description || title).replace(/[^\x20-\x7E]/g, ' ').trim();
+    const cleanZeroth: any = {
+      [piexif.ImageIFD.ImageDescription]: asciiDescription,
+      [piexif.ImageIFD.XPTitle]: toUtf16Le(title),
+      [piexif.ImageIFD.XPSubject]: toUtf16Le(description || title),
+      [piexif.ImageIFD.XPKeywords]: toUtf16Le(windowsKeywords),
+      [piexif.ImageIFD.XPComment]: toUtf16Le(description || title),
+      [piexif.ImageIFD.XPAuthor]: toUtf16Le('Stock Contributor'),
+      [piexif.ImageIFD.Rating]: rating,
+      [piexif.ImageIFD.RatingPercent]: ratingPercent,
+      [piexif.ImageIFD.Artist]: 'Stock Contributor'
+    };
+    if (preservedOrientation) {
+      cleanZeroth[piexif.ImageIFD.Orientation] = preservedOrientation;
     }
+
+    const exifDump = piexif.dump({ '0th': cleanZeroth, Exif: {}, GPS: {} });
 
     // Convert exifDump string directly into binary bytes for APP1 segment (0xFF, 0xE1)
     const exifDumpBytes = new Uint8Array(exifDump.length);

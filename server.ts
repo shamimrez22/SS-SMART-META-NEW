@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -455,7 +456,16 @@ async function startServer() {
     try {
       if (fs.existsSync(USER_SETTINGS_FILE)) {
         const raw = await fs.promises.readFile(USER_SETTINGS_FILE, "utf-8");
-        return res.json({ success: true, settings: JSON.parse(raw) });
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && ("settings" in parsed || "apiConfig" in parsed)) {
+          return res.json({
+            success: true,
+            settings: parsed.settings || null,
+            apiConfig: parsed.apiConfig || null,
+            activeKey: parsed.activeKey || null
+          });
+        }
+        return res.json({ success: true, settings: parsed });
       }
       return res.json({ success: true, settings: null });
     } catch (e: any) {
@@ -467,10 +477,95 @@ async function startServer() {
     try {
       const data = req.body;
       if (data && typeof data === 'object') {
-        await fs.promises.writeFile(USER_SETTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
+        let existing: any = {};
+        try {
+          if (fs.existsSync(USER_SETTINGS_FILE)) {
+            existing = JSON.parse(await fs.promises.readFile(USER_SETTINGS_FILE, "utf-8"));
+          }
+        } catch {}
+
+        let toSave: any;
+        if ("settings" in data || "apiConfig" in data) {
+          toSave = {
+            settings: data.settings || existing.settings || existing,
+            apiConfig: data.apiConfig || existing.apiConfig || undefined,
+            activeKey: data.activeKey || existing.activeKey || undefined
+          };
+        } else {
+          toSave = {
+            settings: data,
+            apiConfig: existing.apiConfig || undefined,
+            activeKey: existing.activeKey || undefined
+          };
+        }
+        await fs.promises.writeFile(USER_SETTINGS_FILE, JSON.stringify(toSave, null, 2), "utf-8");
         return res.json({ success: true, message: "Settings saved to disk permanently" });
       }
       return res.status(400).json({ success: false, error: "Invalid settings payload" });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Shared Workspace Session Sync between AI Studio Preview iframe and New Tab (disk-persisted)
+  const WORKSPACE_SESSION_FILE = path.join(process.cwd(), "workspace-session.json");
+  let activeWorkspaceSession: {
+    files: any[];
+    folderName: string;
+    mode: string;
+    updatedAt: number;
+  } = (() => {
+    try {
+      if (fs.existsSync(WORKSPACE_SESSION_FILE)) {
+        const raw = fs.readFileSync(WORKSPACE_SESSION_FILE, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.files)) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return {
+      files: [],
+      folderName: '',
+      mode: 'all',
+      updatedAt: 0
+    };
+  })();
+
+  app.get("/api/workspace-session", (_req, res) => {
+    return res.json({
+      success: true,
+      session: activeWorkspaceSession
+    });
+  });
+
+  app.post("/api/workspace-session", (req, res) => {
+    try {
+      const { files, folderName, mode } = req.body || {};
+      if (Array.isArray(files)) {
+        activeWorkspaceSession = {
+          files: files.map((f: any) => ({
+            id: f.id,
+            filename: f.filename,
+            originalFilename: f.originalFilename || f.filename,
+            initialDiskFilename: f.initialDiskFilename || f.originalFilename || f.filename,
+            currentDiskFilename: f.currentDiskFilename || f.originalFilename || f.filename,
+            title: f.title || '',
+            description: f.description || '',
+            keywords: f.keywords || '',
+            category: f.category || '',
+            rating: f.rating || 5,
+            status: (f.status === 'generating' || f.status === 'retrying') ? 'pending' : (f.status || 'pending'),
+            fileType: f.fileType || 'jpg',
+            previewUrl: (typeof f.previewUrl === 'string' && f.previewUrl.startsWith('data:image/') && f.previewUrl.length < 150000) ? f.previewUrl : undefined
+          })),
+          folderName: typeof folderName === 'string' ? folderName : activeWorkspaceSession.folderName,
+          mode: typeof mode === 'string' ? mode : activeWorkspaceSession.mode,
+          updatedAt: Date.now()
+        };
+        fs.promises.writeFile(WORKSPACE_SESSION_FILE, JSON.stringify(activeWorkspaceSession), "utf-8").catch(() => {});
+      }
+      return res.json({ success: true });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });
     }
@@ -507,25 +602,42 @@ async function startServer() {
     }
   });
 
-// Model cooloff tracker for models experiencing 429 (Quota Exceeded) or 503 (High Demand)
+// Model and key cooloff trackers for 429 (Quota Exceeded), 503 (High Demand), or invalid keys
 const modelCooloffUntil = new Map<string, number>();
+const invalidKeyCooloffUntil = new Map<string, number>();
+let lastWorkingGeminiKey = '';
 
-function getAvailableGeminiModels(preferredModel?: string): string[] {
-  // Ultra-fast, rock-solid production models verified for vision & stock SEO
-  const allowed = [
-    "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-3.1-flash-lite",
-    "gemini-flash-latest"
-  ];
-  let candidates: string[] = [];
-  if (preferredModel && allowed.includes(preferredModel)) {
-    candidates = [preferredModel, ...allowed.filter(m => m !== preferredModel)];
-  } else {
-    candidates = allowed;
+function normalizeGeminiModelName(rawModel?: string): string {
+  const m = String(rawModel || '').trim().toLowerCase();
+  if (m === 'gemini-2.5-flash-lite' || m === 'gemini-3.5-flash') {
+    return 'gemini-2.5-flash-lite';
   }
+  if (m === 'gemini-3.1-flash-lite') {
+    return 'gemini-3.1-flash-lite';
+  }
+  // Map all other aliases (including gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-flash-latest) to verified fast gemini-2.5-flash
+  return 'gemini-2.5-flash';
+}
+
+function getAvailableGeminiModels(preferredModel?: string, activeKey?: string): string[] {
+  // Verified ultra-fast production models (~0.8s - 2.0s response time) with independent quota buckets
+  const allowed = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite"
+  ];
+  const normalizedPreferred = normalizeGeminiModelName(preferredModel);
+  const candidates = [
+    normalizedPreferred,
+    ...allowed.filter(m => m !== normalizedPreferred)
+  ];
   const now = Date.now();
-  const available = candidates.filter(m => (modelCooloffUntil.get(m) || 0) <= now);
+  const keyTag = activeKey ? activeKey.slice(-6) : 'global';
+  const available = candidates.filter(m => {
+    const perKeyUntil = modelCooloffUntil.get(`${keyTag}:${m}`) || 0;
+    const globalUntil = modelCooloffUntil.get(m) || 0;
+    return perKeyUntil <= now && globalUntil <= now;
+  });
   return available.length > 0 ? available : candidates;
 }
 
@@ -847,15 +959,19 @@ function generateSmartFallbackMetadata(
         });
 
         // Fast direct SDK test with primary model (gemini-2.5-flash)
-        const testModels = ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+        const testModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"];
         let lastError: any = null;
 
         for (const model of testModels) {
           try {
-            await ai.models.generateContent({
-              model,
-              contents: "hello"
-            });
+            await Promise.race([
+              ai.models.generateContent({
+                model,
+                contents: "hello",
+                config: model.startsWith("gemini-2.5-") ? { thinkingConfig: { thinkingBudget: 0 } } : undefined
+              }),
+              new Promise((_, r) => setTimeout(() => r(new Error("Timeout")), 6000))
+            ]);
             return res.json({ 
               success: true, 
               message: `✓ Connected to Google Gemini (${model}) successfully! Key is active and authorized.` 
@@ -943,10 +1059,19 @@ function generateSmartFallbackMetadata(
         maxDescriptionWords = 45,
         maxKeywords = 50
       } = req.body;
-      const serverEnvKey = (process.env.GEMINI_API_KEY || '').trim();
+      const serverEnvKey = (
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY ||
+        process.env.API_KEY ||
+        ''
+      ).trim();
       
-      // Multi-key failover pool: Collect all configured user keys (up to 5 slots)
-      const keysToTry: string[] = [];
+      // Multi-key failover pool: Prioritize active server env key first, then all configured user keys + disk-saved keys
+      const rawCandidateKeys: string[] = [];
+      if (serverEnvKey) {
+        rawCandidateKeys.push(serverEnvKey);
+      }
+
       const inputKeys: any[] = [];
       if (Array.isArray(req.body.apiKeys)) {
         inputKeys.push(...req.body.apiKeys);
@@ -955,19 +1080,31 @@ function generateSmartFallbackMetadata(
         inputKeys.push(req.body.apiKey);
       }
 
+      // Also include any Gemini keys persisted in user-settings.json on disk
+      try {
+        if (fs.existsSync(USER_SETTINGS_FILE)) {
+          const savedDisk = JSON.parse(await fs.promises.readFile(USER_SETTINGS_FILE, "utf-8"));
+          if (Array.isArray(savedDisk?.apiConfig?.gemini)) {
+            inputKeys.push(...savedDisk.apiConfig.gemini);
+          }
+        }
+      } catch {}
+
       for (const k of inputKeys) {
         if (!k || typeof k !== 'string') continue;
         let c = k.trim().replace(/^["']|["']$/g, '');
         if (c.toLowerCase().startsWith('bearer ')) c = c.slice(7).trim();
-        if (c && !keysToTry.includes(c)) {
-          keysToTry.push(c);
+        if (c && c.length >= 20 && !rawCandidateKeys.includes(c)) {
+          rawCandidateKeys.push(c);
         }
       }
 
-      // Prioritize keys starting with AIza, and add serverEnvKey as trusted failover
-      if (serverEnvKey && !keysToTry.includes(serverEnvKey)) {
-        keysToTry.push(serverEnvKey);
-      }
+      const nowTs = Date.now();
+      const nonInvalidKeys = rawCandidateKeys.filter(k => (invalidKeyCooloffUntil.get(k) || 0) <= nowTs);
+      const baseKeysToTry = nonInvalidKeys.length > 0 ? nonInvalidKeys : rawCandidateKeys;
+      const keysToTry = lastWorkingGeminiKey && baseKeysToTry.includes(lastWorkingGeminiKey)
+        ? [lastWorkingGeminiKey, ...baseKeysToTry.filter(k => k !== lastWorkingGeminiKey)]
+        : baseKeysToTry;
 
       if (keysToTry.length === 0) {
         return res.status(400).json({ error: { message: "No Gemini API key available" } });
@@ -1061,62 +1198,85 @@ Return ONLY valid JSON with keys:
 
       let response: any = null;
       let lastErr: any = null;
-      const modelsToTry = getAvailableGeminiModels(requestedModel);
 
-      // Try each key (user key first, then server fallback key)
-      for (const activeKey of keysToTry) {
-        const ai = new GoogleGenAI({ 
-          apiKey: activeKey,
-          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-        });
+      const tryGenerateAcrossPool = async (ignoreCooloff: boolean = false) => {
+        for (const activeKey of keysToTry) {
+          const ai = new GoogleGenAI({ 
+            apiKey: activeKey,
+            httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+          });
 
-        let keyFailed = false;
+          const modelsToTry = ignoreCooloff
+            ? ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.1-flash-lite"]
+            : getAvailableGeminiModels(requestedModel, activeKey);
 
-        // Try vision models with the visual image
-        for (const model of modelsToTry) {
-          const callConfig: any = {
-            responseMimeType: "application/json",
-            systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET. Every asset must produce its own unique title, keywords, category, and its own unique description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its subject, distinct objects, specific action, composition, colors, environment, and visible details. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (EXACTLY ${maxKeywords || 50} strictly comma-separated individual keywords), category, rating (5).`
-          };
-          try {
-            response = await ai.models.generateContent({
-              model,
-              contents: parts,
-              config: callConfig
-            });
-            if (response?.text) {
-              break;
+          for (const model of modelsToTry) {
+            const callConfig: any = {
+              responseMimeType: "application/json",
+              systemInstruction: `You are an elite Stock Photography, Footage & Vector Metadata SEO Specialist. You MUST analyze THIS SPECIFIC ASSET. Every asset must produce its own unique title, keywords, category, and its own unique description (${minDescriptionWords}-${maxDescriptionWords} words) based specifically on its subject, distinct objects, specific action, composition, colors, environment, and visible details. Return ONLY valid JSON with keys: title (strictly ${minTitleWords}-${maxTitleWords} commercial words), description (${minDescriptionWords}-${maxDescriptionWords} words), keywords (EXACTLY ${maxKeywords || 50} strictly comma-separated individual keywords), category, rating (5).`
+            };
+            if (model.startsWith("gemini-2.5-")) {
+              callConfig.thinkingConfig = { thinkingBudget: 0 };
             }
-          } catch (err: any) {
-            lastErr = err;
-            const errMsg = String(err?.message || err || '');
-            const isQuotaError = err?.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('exceeded your current quota');
-            const isAuthError = err?.status === 401 || err?.status === 403 || errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid') || errMsg.includes('UNAUTHENTICATED') || errMsg.includes('PERMISSION_DENIED');
-            
-            if (isAuthError) {
-              console.warn(`[API] Gemini key auth error, immediately rotating to next key in pool:`, errMsg.slice(0, 120));
-              keyFailed = true;
-              break; // Rotate to next API key in pool
-            }
+            try {
+              response = await Promise.race([
+                ai.models.generateContent({
+                  model,
+                  contents: parts,
+                  config: callConfig
+                }),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error(`Model ${model} timed out after 10s`)), 10000)
+                )
+              ]);
+              if (response?.text) {
+                lastWorkingGeminiKey = activeKey;
+                return;
+              }
+            } catch (err: any) {
+              lastErr = err;
+              const errMsg = String(err?.message || err || '');
+              const isQuotaError = err?.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('exceeded your current quota');
+              const isAuthError = err?.status === 400 && errMsg.includes('API_KEY_INVALID') || err?.status === 401 || err?.status === 403 || errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid') || errMsg.includes('UNAUTHENTICATED') || errMsg.includes('PERMISSION_DENIED');
+              
+              if (isAuthError) {
+                console.warn(`[API] Gemini key auth error, cooling off key and rotating to next key in pool:`, errMsg.slice(0, 120));
+                invalidKeyCooloffUntil.set(activeKey, Date.now() + 10 * 60 * 1000);
+                if (lastWorkingGeminiKey === activeKey) lastWorkingGeminiKey = '';
+                break; // Rotate to next API key in pool
+              }
 
-            if (isQuotaError) {
-              console.warn(`[API] Gemini key quota exceeded (429), immediately failing over to next key in pool:`, errMsg.slice(0, 120));
-              keyFailed = true;
-              break; // Rotate immediately to next key in pool or server fallback!
-            }
+              if (isQuotaError) {
+                const keyTag = activeKey.slice(-6);
+                console.warn(`[API] Quota 429 on model ${model} (key ...${keyTag}), failing over to next model/key:`, errMsg.slice(0, 100));
+                modelCooloffUntil.set(`${keyTag}:${model}`, Date.now() + 30000);
+                continue; // Try next model (e.g. gemini-2.5-flash-lite / gemini-3.1-flash-lite) on this key, then next key!
+              }
 
-            const is503 = err?.status === 503 || errMsg.includes('503') || errMsg.includes('UNAVAILABLE');
-            const is404 = err?.status === 404 || errMsg.includes('404') || errMsg.includes('no longer');
+              const is503OrTimeout = err?.status === 503 || errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('timed out');
+              const is404 = err?.status === 404 || errMsg.includes('404') || errMsg.includes('no longer');
 
-            if (is404 || is503) {
-              modelCooloffUntil.set(model, Date.now() + 30000);
-              continue;
+              if (is404 || is503OrTimeout) {
+                modelCooloffUntil.set(model, Date.now() + 25000);
+                continue;
+              }
             }
           }
+          if (response?.text) return;
+          // All models on this key failed (e.g. daily quota exhausted on this key) -> cool off key for 90s if other keys exist
+          if (keysToTry.length > 1) {
+            invalidKeyCooloffUntil.set(activeKey, Date.now() + 90 * 1000);
+            if (lastWorkingGeminiKey === activeKey) lastWorkingGeminiKey = '';
+          }
         }
+      };
 
-        if (response?.text) break;
-        if (keyFailed) continue;
+      await tryGenerateAcrossPool(false);
+
+      // If all models/keys experienced a brief 429 burst, pause 1.8s and run one recovery pass
+      if (!response?.text) {
+        await new Promise(r => setTimeout(r, 1800));
+        await tryGenerateAcrossPool(true);
       }
 
       let parsed: any = null;
@@ -1294,12 +1454,7 @@ Return ONLY valid JSON with keys:
       const promptText = `${systemInstruction || 'Analyze this image and generate detailed creative prompts.'}\n${customInstructions ? `USER CUSTOM INSTRUCTION: ${customInstructions}` : ""}`;
       parts.push({ text: promptText });
 
-      const modelsToTry = Array.from(new Set([
-        ...(modelName ? [modelName] : []),
-        "gemini-3.8-flash",
-        "gemini-2.5-flash",
-        "gemini-3.1-flash-lite"
-      ]));
+      const modelsToTry = getAvailableGeminiModels(modelName);
       let response: any = null;
       let lastErr: any = null;
 
@@ -1311,13 +1466,17 @@ Return ONLY valid JSON with keys:
 
         for (const m of modelsToTry) {
           try {
-            response = await ai.models.generateContent({
-              model: m,
-              contents: parts,
-              config: {
-                responseMimeType: "application/json"
-              }
-            });
+            response = await Promise.race([
+              ai.models.generateContent({
+                model: m,
+                contents: parts,
+                config: {
+                  responseMimeType: "application/json",
+                  ...(m.startsWith("gemini-2.5-") ? { thinkingConfig: { thinkingBudget: 0 } } : {})
+                }
+              }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout on ${m}`)), 15000))
+            ]);
             if (response?.text) break;
           } catch (e: any) {
             lastErr = e;
@@ -1347,7 +1506,12 @@ Return ONLY valid JSON with keys:
         return res.status(400).json({ error: { message: "Idea is required" } });
       }
 
-      const serverEnvKey = (process.env.GEMINI_API_KEY || '').trim();
+      const serverEnvKey = (
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY ||
+        process.env.API_KEY ||
+        ''
+      ).trim();
       const keysToTry: string[] = [];
       if (Array.isArray(apiKeys)) {
         for (const k of apiKeys) {
@@ -1376,12 +1540,7 @@ Return ONLY a JSON object:
   "cinematic": "cinematic film still, 35mm anamorphic lens, volumetric lighting, epic mood and grading"
 }`;
 
-      const modelsToTry = Array.from(new Set([
-        ...(modelName ? [modelName] : []),
-        "gemini-3.8-flash",
-        "gemini-2.5-flash",
-        "gemini-3.1-flash-lite"
-      ]));
+      const modelsToTry = getAvailableGeminiModels(modelName);
 
       let response: any = null;
       let lastErr: any = null;
@@ -1394,13 +1553,17 @@ Return ONLY a JSON object:
 
         for (const m of modelsToTry) {
           try {
-            response = await ai.models.generateContent({
-              model: m,
-              contents: prompt,
-              config: {
-                responseMimeType: "application/json"
-              }
-            });
+            response = await Promise.race([
+              ai.models.generateContent({
+                model: m,
+                contents: prompt,
+                config: {
+                  responseMimeType: "application/json",
+                  ...(m.startsWith("gemini-2.5-") ? { thinkingConfig: { thinkingBudget: 0 } } : {})
+                }
+              }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout on ${m}`)), 15000))
+            ]);
             if (response?.text) break;
           } catch (e: any) {
             lastErr = e;

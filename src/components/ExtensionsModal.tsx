@@ -64,7 +64,7 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
   fileObjects,
   apiConfig,
   activeKey,
-  activeModel = 'gemini-3.8-flash',
+  activeModel = 'gemini-2.5-flash',
   showNotification,
   initialTab = 'hub',
   onOpenAdmin,
@@ -109,7 +109,7 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
   const [targetEngine, setTargetEngine] = useState<'universal' | 'midjourney' | 'flux' | 'photorealistic' | 'cinematic' | 'vector'>('universal');
   const [detailLevel, setDetailLevel] = useState<'standard' | 'hyper_detailed' | 'masterpiece'>('hyper_detailed');
   const [customInstructions, setCustomInstructions] = useState('');
-  const [selectedModel, setSelectedModel] = useState<string>(activeModel || 'gemini-3.8-flash');
+  const [selectedModel, setSelectedModel] = useState<string>(activeModel || 'gemini-2.5-flash');
   const [concurrency, setConcurrency] = useState<number>(4);
 
   // Text Prompt Expander Tab State
@@ -588,7 +588,7 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idea: expanderIdea,
-          modelName: selectedModel || 'gemini-3.8-flash',
+          modelName: selectedModel || 'gemini-2.5-flash',
           apiKeys: geminiKeys,
         }),
       });
@@ -1183,9 +1183,9 @@ export const ExtensionsModal: React.FC<ExtensionsModalProps> = ({
                       onChange={(e) => setSelectedModel(e.target.value)}
                       className="w-full bg-secondary border border-border rounded-lg text-xs h-8 px-2 text-foreground font-bold cursor-pointer"
                     >
-                      <option value="gemini-3.8-flash">Gemini 3.8 Flash (High Accuracy)</option>
-                      <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (Max Speed)</option>
-                      <option value="gemini-flash-latest">Gemini Flash Latest (Auto)</option>
+                      <option value="gemini-2.5-flash">Gemini 2.5 Flash (High Accuracy)</option>
+                      <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Max Speed)</option>
+                      <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (Failover)</option>
                     </select>
                   </div>
 

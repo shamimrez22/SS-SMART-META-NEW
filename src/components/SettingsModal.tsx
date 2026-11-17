@@ -319,8 +319,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         singleWordKeywords: false,
                         autoSyncFilenameWithTitle: true,
                         filenameFormat: 'exact_title',
-                        aiModel: 'gemini-3.6-flash',
-                        concurrency: 3
+                        aiModel: 'gemini-2.5-flash',
+                        concurrency: 2
                       }));
                       showNotification("✓ Standard Stock Metadata Applied: 50 Keywords, 7-15 Word Title, 20-45 Word Description (100% Adobe Stock & Shutterstock Compliant)", "success");
                     }}
@@ -1014,7 +1014,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                   <div className="flex items-center gap-2.5">
                     <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                      {settings.aiModel || 'gemini-3.8-flash'}
+                      {settings.aiModel || 'gemini-2.5-flash'}
                     </span>
                     {openDropdowns.aiModel ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </div>
@@ -1023,11 +1023,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {openDropdowns.aiModel && (
                   <div className="p-4 border-t border-border bg-background/50 space-y-2 animate-in slide-in-from-top-1 duration-150">
                     {[
-                      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', tag: 'RECOMMENDED', speed: '⚡ Fast (0.7s)', desc: 'Official next-generation flagship vision model with unmatched multimodal accuracy and fresh quota.' },
-                      { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', tag: 'STABLE', speed: '⚡ Fast (0.8s)', desc: 'High-accuracy multimodal stock photo inspector with deep visual reasoning.' },
-                      { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', tag: 'HIGH-SPEED', speed: '🚀 Ultra Fast (0.5s)', desc: 'Lightweight high-efficiency model for fast bulk metadata generation.' },
-                      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', tag: 'LITE', speed: '🚀 Ultra Fast (0.4s)', desc: 'Lowest latency lightweight model for ultra-high throughput processing.' },
-                      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', tag: 'LEGACY', speed: '⚡ Standard (1.0s)', desc: 'Previous generation model (subject to free-tier rate limits).' }
+                      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Vision Pro)', tag: 'RECOMMENDED', speed: '⚡ Fast (1.5s)', desc: 'Official flagship multimodal vision model with highest accuracy for stock metadata & keywords.' },
+                      { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite (Turbo)', tag: 'HIGH-SPEED', speed: '🚀 Ultra Fast (0.9s)', desc: 'Ultra-fast lightweight vision model with separate quota pool for large batch processing.' },
+                      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', tag: 'FAILOVER', speed: '⚡ Fast (1.8s)', desc: 'Secondary high-throughput vision failover model.' }
                     ].map(model => (
                       <div
                         key={model.id}

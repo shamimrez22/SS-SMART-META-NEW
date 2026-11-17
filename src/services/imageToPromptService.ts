@@ -240,7 +240,7 @@ export async function generateDetailedPromptsFromImage(options: PromptGenOptions
     customInstructions = "",
     apiConfig,
     apiKey,
-    modelName = "gemini-3.8-flash",
+    modelName = "gemini-2.5-flash",
     turboSpeed = true,
   } = options;
 
